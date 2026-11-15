@@ -19,6 +19,7 @@ pub mod cpu;
 mod heap;
 mod imports;
 pub mod mem;
+pub mod x87trig;
 
 pub use cpu::Cpu;
 pub use mem::GuestMemory;
@@ -328,7 +329,8 @@ pub extern "C" fn rt_note_indirect(target: u32, site: u32) {
 
 /// x87 behaviour the binary64 machine model cannot reproduce exactly
 /// (precision control other than 53 bits, non-nearest rounding in arithmetic,
-/// stack overflow, transcendental results, 80-bit memory operands).
+/// stack overflow, FPATAN via libm, 80-bit memory operands, and FSIN/FCOS/FPTAN
+/// results whose 64-bit significand is not representable in binary64).
 /// Recorded in `Cpu::x87_notes`; with `BUGATRON_X87_STRICT=1` the first
 /// occurrence of each kind stops execution with a diagnostic.
 #[no_mangle]
@@ -345,14 +347,77 @@ fn x87_strict() -> bool {
     *STRICT.get_or_init(|| std::env::var("BUGATRON_X87_STRICT").is_ok_and(|v| v == "1"))
 }
 
+// ---- x87 FSIN / FCOS / FPTAN (x87-compatible argument reduction) -----------------
+
+const FSW_IE: u32 = 0x0001;
+const FSW_C1: u32 = 0x0200;
+const FSW_C2: u32 = 0x0400;
+
+fn x87_trig_insn(c: *mut Cpu, op: x87trig::TrigOp) {
+    use x87trig::TrigOutcome;
+    let cpu = unsafe { &mut *c };
+    let top = (cpu.ftop & 7) as usize;
+    if (cpu.ftag >> (2 * top)) & 3 == 3 {
+        rt_x87_note(c, 8); // stack underflow: operand register is empty
+    }
+    let x = cpu.st[top];
+    match x87trig::x87_trig(op, x) {
+        TrigOutcome::OutOfRange => {
+            // |x| >= 2^63: C2 = 1, operand unchanged, nothing pushed.
+            cpu.fsw = (cpu.fsw & !FSW_C1) | FSW_C2;
+            return;
+        }
+        TrigOutcome::Value { value, c1, ext_inexact } => {
+            cpu.st[top] = value;
+            cpu.fsw = (cpu.fsw & !(FSW_C1 | FSW_C2)) | if c1 { FSW_C1 } else { 0 };
+            if ext_inexact {
+                rt_x87_note(c, 64);
+            }
+        }
+        TrigOutcome::Invalid => {
+            // Masked invalid operation (±∞): result is the default QNaN.
+            cpu.st[top] = f64::from_bits(x87trig::INDEFINITE);
+            cpu.fsw = (cpu.fsw & !(FSW_C1 | FSW_C2)) | FSW_IE;
+        }
+        TrigOutcome::Nan(v) => {
+            cpu.st[top] = v;
+            cpu.fsw &= !(FSW_C1 | FSW_C2);
+        }
+    }
+    if op == x87trig::TrigOp::Tan {
+        // FPTAN pushes 1.0 after a completed operation.
+        cpu.ftop = (cpu.ftop.wrapping_sub(1)) & 7;
+        let t = cpu.ftop as usize;
+        if (cpu.ftag >> (2 * t)) & 3 != 3 {
+            rt_x87_note(c, 8); // stack overflow
+        }
+        cpu.st[t] = 1.0;
+        cpu.ftag &= !(3 << (2 * t));
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn rt_x87_fsin(c: *mut Cpu) {
+    x87_trig_insn(c, x87trig::TrigOp::Sin)
+}
+#[no_mangle]
+pub extern "C" fn rt_x87_fcos(c: *mut Cpu) {
+    x87_trig_insn(c, x87trig::TrigOp::Cos)
+}
+#[no_mangle]
+pub extern "C" fn rt_x87_fptan(c: *mut Cpu) {
+    x87_trig_insn(c, x87trig::TrigOp::Tan)
+}
+
 pub fn x87_note_name(kind: u32) -> &'static str {
     match kind {
         1 => "24-bit precision control",
         2 => "64-bit precision control (needs 80-bit arithmetic)",
         4 => "non-nearest rounding control in arithmetic",
         8 => "x87 register stack overflow",
-        16 => "transcendental instruction (host libm result)",
+        16 => "FPATAN (host libm result)",
         32 => "80-bit memory operand",
+        64 => "FSIN/FCOS/FPTAN result held as binary64 instead of a 64-bit significand",
         _ => "unknown",
     }
 }

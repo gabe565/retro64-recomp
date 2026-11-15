@@ -244,7 +244,7 @@ Conclusions:
 | D4 | Ghidra missed C++ static initializers, and some function addresses appear only as immediates | **Fixed**: the recompiler roots code pointers found in data sections and immediate operands |
 | D5 | Windows x86-64 build | **Resolved.** Kit 1 exited silently: the M1 check read reserved-but-uncommitted guest memory. Guest memory is now commit-explicit on every OS, with fault diagnostics. Kit 2 on a physical AMD Ryzen 7 9800X3D (Windows, x86-64): **all tests PASS**, including 600/600 timing frames, 30/30 `.lev` files, CRT start-up with control word 0x027F, and random numbers. MSVC toolchain still untested (built with MinGW). |
 | D6 | The timing spin path (below 4 ticks) never occurred in the VM, which runs too slowly. It is covered only by the synthetic edge test derived from static analysis. | Open: capture on the physical machine |
-| D7 | x87 transcendentals versus host `libm` | **Measured on real hardware** (Ryzen 7 9800X3D, §7.9): 13 of 16 sweep results match bit for bit. sin(π), sin(2π), and cos(π/2) differ by about 4e-21 absolute, from x87's reduced-precision π used in argument reduction. sin(4.0) differs by 1 ULP. Open: decide whether to emulate x87 argument reduction (recommended) |
+| D7 | x87 transcendentals versus host `libm` | **Implemented** (§7.10): FSIN/FCOS/FPTAN now use x87 argument reduction with the documented 66-bit π. This reproduces all 19 hardware values, including sin(4.0), which turned out to be a reduction effect, not microcode rounding. Hardware confirmation of the new regression cases is pending (oracle kit 3). FPATAN still uses host `libm` (`X87_NOTE_TRANSCENDENTAL`). |
 | D8 | Exceptions: SEH frames are maintained, but the runtime does not dispatch exceptions | **Explicit**: the 4 C++ EH dispatcher jumps are `rt_trap` sites with reasons (`bugatron_recomp::targets`); `RaiseException`, `RtlUnwind`, and `UnhandledExceptionFilter` stop with a diagnostic |
 | D9 | Guest heap addresses differ from the original's Windows heap. Logic that depends on pointer values would diverge. | Open: differential tests must compare logical state, not raw pointers |
 | D10 | 8 instruction sites were unimplemented in the emitter: `RCR` ×4, `BTS` ×2, `PUSHAD`, `POPAD` | **Fixed**: `RCL`/`RCR` at all sizes, the `BT`/`BTS`/`BTR`/`BTC` family with bit-string addressing, and `PUSHAD`/`POPAD`. The whole program now has 0 unimplemented sites; regression cases in §7.7. |
@@ -277,10 +277,46 @@ Interpretation:
 - **The three large relative differences share one cause.** All are results near a zero of the function, and all differ by about 4.04e-21 absolute. That is the gap between π and the reduced-precision π the x87 uses for argument reduction. It's an architectural, documented x87 behaviour, so emulating it is well defined.
 - **The 1-ULP difference at sin(4.0)** comes from the hardware's own polynomial and rounding. Matching that bit for bit in every case would need a reimplementation of the CPU's internal algorithm. That may differ between vendors, and the original game ran on whatever CPU each player had.
 - **Consequence:** rotation matrices from `0x421680` (about 127 calls per frame) can differ in the last bits from the original. Whether that can reach gameplay is G7 (`docs/graphics/r3d-interface.md`).
-- **Recommendation:** emulate x87 argument reduction in the runtime's `fsin`/`fcos`/`fptan`, computing in extended precision with the x87 π. Keep the remaining 1-ULP behaviour as a documented, flagged approximation (`X87_NOTE_TRANSCENDENTAL`). Re-run the oracle sweep to confirm.
+- **Recommendation (adopted, §7.10):** emulate x87 argument reduction in the runtime's `fsin`/`fcos`/`fptan`.
+
+### 7.10 x87-compatible FSIN / FCOS / FPTAN
+
+Implementation: `crates/runtime/src/x87trig.rs`, called from generated code as `rt_x87_fsin/fcos/fptan`.
+
+1. The argument is converted exactly to fixed point: 192 fraction bits, or 1200 for |x| < 2⁻⁸⁰.
+2. It is reduced exactly modulo π₆₆/2, where π₆₆ = `0x3243F6A8885A308D3 × 2⁻⁶⁴`, the x87's 66-bit approximation of π.
+3. The needed series is evaluated far beyond 64 bits.
+4. The result is rounded to the x87's 64-bit significand, then to binary64, which is exactly what `FSTP m64` does on hardware.
+
+Status and stack behaviour:
+
+- C2 = 1 with the operand unchanged for |x| ≥ 2⁶³.
+- C1 = 1 when the 64-bit rounding increased the magnitude.
+- ±∞ is an invalid operation (IE) and produces the default QNaN.
+- NaN propagates.
+- FPTAN pushes 1.0, except for out-of-range operands.
+- Stack overflow and underflow raise `X87_NOTE_STACK`.
+
+Prototype check: an independent Python implementation (`_work/x87trig_proto.py`, not committed) reproduced all 19 known hardware values only with π of at least 66 bits. 64- and 65-bit π both miss sin(π), sin(2π), and cos(π/2). Bits 67–68 of π are zero, so 66, 67, and 68 bits are the same constant.
+
+Remaining approximations:
+
+- The machine model keeps ST registers as binary64. When the 64-bit result isn't representable in binary64 (`X87_NOTE_EXT64`), arithmetic that consumes the register *before* it is stored sees the 53-bit value, whereas hardware sees 64 bits. Stored results are exact.
+- The CPU's internal polynomial may differ from a correctly rounded 64-bit result by one ULP in rare cases. None has been observed. Per the owner's direction, no further workaround will be added without evidence that it matters.
+
+Real workload (VM capture, `tools/frida/probe_rotation_angles.js`, 5,400 frames, about 690,000 calls to `0x421680`):
+
+- Angles span [−2π, 2π] and are halved before FSIN/FCOS.
+- 55% are ±0.
+- Exact float32 ±π/2, ±π/4, and π are common.
+- There are clusters near 2⁻³⁵ and 2⁻⁴, and a tail of denormal float32 angles.
+
+Regression cases: `x87_trig_workload_angles` (real float32 angles), `x87_trig_negative_and_multiples`, `x87_trig_boundaries` (±0, tiny, largest in-range, ±2⁶³, +∞, NaN, with status words), `x87_fptan_values_and_stack`. The transcendental cases now run strict against the hardware fixture. Emulated (QEMU) oracles are exempt for trig cases, because QEMU doesn't implement x87 reduction.
+
+Cost: about 3.6 µs per call in a release build on Apple Silicon, about 0.9 ms per frame at the measured rate.
 
 ### 7.8 Recommended next steps
 
-1. Hardware results for the transcendental sweep (D7): `docs/testing/windows-validation.md`.
+1. Hardware confirmation of the x87 trig regression cases (oracle kit 3, `docs/testing/windows-validation.md`).
 2. Resolve G1–G7 (`docs/graphics/r3d-interface.md`) for each function before replacing it.
 3. Start the graphics replacement, following the leaf-replacement plan.

@@ -582,9 +582,10 @@ impl<'a> Ctx<'a> {
             Mnemonic::Fchs => "ST(0) = -ST(0);".into(),
             Mnemonic::Fabs => "ST(0) = fabs(ST(0));".into(),
             Mnemonic::Fsqrt => "ST(0) = fprnd(c, sqrt(ST(0)));".into(),
-            Mnemonic::Fsin => "rt_x87_note(c, X87_NOTE_TRANSCENDENTAL); ST(0) = sin(ST(0)); c->fsw &= ~0x0400u;".into(),
-            Mnemonic::Fcos => "rt_x87_note(c, X87_NOTE_TRANSCENDENTAL); ST(0) = cos(ST(0)); c->fsw &= ~0x0400u;".into(),
-            Mnemonic::Fptan => "rt_x87_note(c, X87_NOTE_TRANSCENDENTAL); ST(0) = tan(ST(0)); c->fsw &= ~0x0400u; fpush(c, 1.0);".into(),
+            // x87-compatible argument reduction (66-bit pi); see runtime/src/x87trig.rs.
+            Mnemonic::Fsin => "rt_x87_fsin(c);".into(),
+            Mnemonic::Fcos => "rt_x87_fcos(c);".into(),
+            Mnemonic::Fptan => "rt_x87_fptan(c);".into(),
             Mnemonic::Fpatan => "rt_x87_note(c, X87_NOTE_TRANSCENDENTAL); ST(1) = atan2(ST(1), ST(0)); fpop(c);".into(),
             Mnemonic::Frndint => "ST(0) = frnd_rc(c, ST(0));".into(),
             Mnemonic::Fnstsw | Mnemonic::Fstsw => {

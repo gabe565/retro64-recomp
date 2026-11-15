@@ -1,5 +1,23 @@
 # Windows validation on a physical x86-64 PC
 
+## Kit 3 (oracle only): x87 FSIN/FCOS/FPTAN confirmation
+
+Only the oracle is needed this time.
+
+| File | SHA-256 |
+|---|---|
+| `bugatron-x86-oracle.exe` (32-bit x86) | `5a7ac08afce5342e8ece278135bcf9e997dd7aa324b2f7b10a72bf7ed7c1f18b` |
+
+```powershell
+Get-FileHash .\bugatron-x86-oracle.exe -Algorithm SHA256
+.\bugatron-x86-oracle.exe .\x86-oracle-windows.json > $null
+```
+
+Expected: `wrote .\x86-oracle-windows.json`, with 60 cases. Send back `x86-oracle-windows.json`. The model is expected to match it exactly on every strict case, including the four new trig cases (`x87_trig_workload_angles`, `x87_trig_negative_and_multiples`, `x87_trig_boundaries`, `x87_fptan_values_and_stack`). The only expected difference is the documented 64-bit-precision case.
+
+---
+
+
 Purpose:
 
 1. Run the proof of concept natively on Windows x86-64 (open item D5).

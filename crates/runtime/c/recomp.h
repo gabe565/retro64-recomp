@@ -322,7 +322,11 @@ static inline uint32_t op_shrd(Cpu *c, uint32_t a, uint32_t b, uint32_t n) {
 
 /* ---- x87 ------------------------------------------------------------------ */
 enum { X87_NOTE_PC24 = 1, X87_NOTE_PC64 = 2, X87_NOTE_RC = 4, X87_NOTE_STACK = 8,
-       X87_NOTE_TRANSCENDENTAL = 16, X87_NOTE_F80 = 32 };
+       X87_NOTE_TRANSCENDENTAL = 16, X87_NOTE_F80 = 32, X87_NOTE_EXT64 = 64 };
+/* FSIN/FCOS/FPTAN with x87-compatible argument reduction (runtime/src/x87trig.rs). */
+void rt_x87_fsin(Cpu *c);
+void rt_x87_fcos(Cpu *c);
+void rt_x87_fptan(Cpu *c);
 
 #define ST(i) (c->st[(c->ftop + (uint32_t)(i)) & 7u])
 static inline void fpush(Cpu *c, double v) {

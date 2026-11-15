@@ -8,6 +8,9 @@ publish.workspace = true
 
 [dependencies]
 bugatron-pe.workspace = true
+num-bigint.workspace = true
+num-traits.workspace = true
+num-integer.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 libc.workspace = true

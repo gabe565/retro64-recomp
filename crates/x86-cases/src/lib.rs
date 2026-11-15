@@ -14,6 +14,10 @@
 //! - `expect` holds hand-derived values from the Intel SDM. They are checked
 //!   in addition to (not instead of) the native oracle's results.
 
+// Expected values are exact bit patterns measured on hardware or derived from
+// the x87 algorithm; they must not be replaced by library constants.
+#![allow(clippy::approx_constant)]
+
 pub use iced_x86_asm as iced;
 use iced_x86_asm::code_asm::*;
 use iced_x86_asm::IcedError;
@@ -273,7 +277,10 @@ pub fn cases() -> Vec<Case> {
                     a.fld(qword_ptr(ebx))?; a.fcos()?; a.fstp(qword_ptr(ebx + 24))?;
                     a.fld(qword_ptr(ebx))?; a.fld(qword_ptr(ebx + 8))?; a.fpatan()?; a.fstp(qword_ptr(ebx + 32))?;
                     a.fld(qword_ptr(ebx + 8))?; a.fptan()?; a.fstp(qword_ptr(ebx + 40))?; a.fstp(qword_ptr(ebx + 48)) },
-               flag_mask: 0, kind: Kind::ReportOnly, ..base.clone() },
+               // Hardware values (AMD Ryzen 7 9800X3D). FPATAN still uses host libm (X87_NOTE_TRANSCENDENTAL).
+               flag_mask: 0, kind: Kind::Strict,
+               expect: Expect { regs: &[], flags: None, mem: mem![(16, f64b!(0.8414709848078965)), (24, f64b!(0.5403023058681398)),
+                   (32, f64b!(1.1071487177940904f64)), (40, f64b!(1.0)), (48, f64b!(0.5463024898437905))] }, ..base.clone() },
         Case { name: "x87_transcendental_sweep",
                mem: mem![(0, f64b!(0.1)), (8, f64b!(std::f64::consts::FRAC_PI_4)), (16, f64b!(std::f64::consts::FRAC_PI_2)), (24, f64b!(2.0)),
                          (32, f64b!(std::f64::consts::PI)), (40, f64b!(4.0)), (48, f64b!(5.5)), (56, f64b!(std::f64::consts::TAU))],
@@ -284,7 +291,73 @@ pub fn cases() -> Vec<Case> {
                     }
                     Ok(())
                },
-               flag_mask: 0, kind: Kind::ReportOnly, ..base.clone() },
+               // Hardware values (AMD Ryzen 7 9800X3D).
+               flag_mask: 0, kind: Kind::Strict,
+               expect: Expect { regs: &[], flags: None, mem: mem![
+                   (64, f64b!(0.09983341664682815)), (72, f64b!(0.7071067811865475)), (80, f64b!(1.0)), (88, f64b!(0.9092974268256817)),
+                   (96, f64b!(1.2246063538223773e-16)), (104, f64b!(-0.7568024953079282)), (112, f64b!(-0.7055403255703919)), (120, f64b!(-2.4492127076447545e-16)),
+                   (128, f64b!(0.9950041652780258)), (136, f64b!(0.7071067811865476)), (144, f64b!(6.123031769111886e-17)), (152, f64b!(-0.4161468365471424)),
+                   (160, f64b!(-1.0)), (168, f64b!(-0.6536436208636119)), (176, f64b!(0.70866977429126)), (184, f64b!(1.0))] }, ..base.clone() },
+        // Half-angles fed to fsin/fcos by r3d 0x421680, from real game angles (float32; VM capture 2026-11-15): ±π/2, π, 2π and sampled values. Expected values: x87 reduction with the 66-bit π (prototype); confirmed on hardware by the oracle fixture.
+        Case { name: "x87_trig_workload_angles", mem: mem![(0, f64b!(0.7853981852531433f64)), (8, f64b!(-0.7853981852531433f64)), (16, f64b!(1.5707963705062866f64)), (24, f64b!(3.1415927410125732f64)), (32, f64b!(1.874469518661499f64)), (40, f64b!(1.029619574546814f64)), (48, f64b!(0.05551586300134659f64)), (56, f64b!(1.5243351025873153e-10f64))],
+               asm: |a| {
+                    for i in 0..8 {
+                        a.fld(qword_ptr(ebx + 8 * i))?; a.fsin()?; a.fstp(qword_ptr(ebx + 64 + 8 * i))?;
+                        a.fld(qword_ptr(ebx + 8 * i))?; a.fcos()?; a.fstp(qword_ptr(ebx + 128 + 8 * i))?;
+                    }
+                    Ok(())
+               },
+               flag_mask: 0, kind: Kind::Strict,
+               expect: Expect { regs: &[], flags: None, mem: mem![(64, f64b!(0.7071067966408575f64)), (72, f64b!(-0.7071067966408575f64)), (80, f64b!(0.999999999999999f64)), (88, f64b!(-8.74227800037288e-08f64)), (96, f64b!(0.9542445442926789f64)), (104, f64b!(0.8571030769652557f64)), (112, f64b!(0.05548735064498265f64)), (120, f64b!(1.5243351025873153e-10f64)), (128, f64b!(0.7071067657322372f64)), (136, f64b!(0.7071067657322372f64)), (144, f64b!(-4.371139000186444e-08f64)), (152, f64b!(-0.9999999999999962f64)), (160, f64b!(-0.2990273393649107f64)), (168, f64b!(0.5151449460653681f64)), (176, f64b!(0.9984593902199532f64)), (184, f64b!(1.0f64))] }, ..base.clone() },
+        // Negative angles and larger multiples of π/2 (the reduction error grows with k).
+        Case { name: "x87_trig_negative_and_multiples", mem: mem![(0, f64b!(-std::f64::consts::PI)), (8, f64b!(-std::f64::consts::FRAC_PI_2)), (16, f64b!(-std::f64::consts::TAU)), (24, f64b!(3.0 * std::f64::consts::FRAC_PI_2)), (32, f64b!(100.0 * std::f64::consts::PI)), (40, f64b!(-1000.5 * std::f64::consts::PI)), (48, f64b!(-1000000.0f64)), (56, f64b!(1000000000000000.0f64))],
+               asm: |a| {
+                    for i in 0..8 {
+                        a.fld(qword_ptr(ebx + 8 * i))?; a.fsin()?; a.fstp(qword_ptr(ebx + 64 + 8 * i))?;
+                        a.fld(qword_ptr(ebx + 8 * i))?; a.fcos()?; a.fstp(qword_ptr(ebx + 128 + 8 * i))?;
+                    }
+                    Ok(())
+               },
+               flag_mask: 0, kind: Kind::Strict,
+               expect: Expect { regs: &[], flags: None, mem: mem![(64, f64b!(-1.2246063538223773e-16f64)), (72, f64b!(-1.0f64)), (80, f64b!(2.4492127076447545e-16f64)), (88, f64b!(-1.0f64)), (96, f64b!(1.964791176978231e-15f64)), (104, f64b!(-1.0f64)), (112, f64b!(0.34999350217129177f64)), (120, f64b!(0.8582721324763734f64)), (128, f64b!(-1.0f64)), (136, f64b!(6.123031769111886e-17f64)), (144, f64b!(1.0f64)), (152, f64b!(-1.836909530733566e-16f64)), (160, f64b!(1.0f64)), (168, f64b!(1.562726456485336e-13f64)), (176, f64b!(0.9367521275331452f64)), (184, f64b!(-0.5131948427395374f64))] }, ..base.clone() },
+        // Boundaries: signed zero, tiny, largest in-range, out of range (|x| >= 2^63:
+        // C2=1, operand unchanged), +inf (invalid -> indefinite QNaN, IE), quiet NaN.
+        // Status words after each FSIN are stored at 128.. for the oracle comparison.
+        Case { name: "x87_trig_boundaries",
+               mem: mem![(0, f64b!(0.0)), (8, f64b!(-0.0f64)), (16, f64b!(1.0e-20)), (24, f64b!(9223372036854774784.0)),
+                         (32, f64b!(9223372036854775808.0)), (40, f64b!(-9223372036854775808.0)), (48, f64b!(f64::INFINITY)),
+                         (56, 0x7ff8_0000_0000_0001u64.to_le_bytes())],
+               asm: |a| {
+                    for i in 0..8 {
+                        a.fld(qword_ptr(ebx + 8 * i))?; a.fsin()?; a.fnstsw(ax)?; a.mov(word_ptr(ebx + 128 + 2 * i), ax)?;
+                        a.fstp(qword_ptr(ebx + 64 + 8 * i))?;
+                    }
+                    a.fldz()?; a.fcos()?; a.fstp(qword_ptr(ebx + 144))?;
+                    a.fld(qword_ptr(ebx + 32))?; a.fcos()?; a.fnstsw(ax)?; a.mov(word_ptr(ebx + 152), ax)?; a.fstp(qword_ptr(ebx + 160))?;
+                    a.xor(eax, eax)
+               },
+               flag_mask: 0, fsw_mask: 0x4700, kind: Kind::Strict,
+               expect: Expect { regs: &[], flags: None, mem: mem![(64, f64b!(0.0)), (72, f64b!(-0.0f64)), (80, f64b!(1.0e-20)),
+                   (88, f64b!(0.9873418913143515)), (96, f64b!(9223372036854775808.0)), (104, f64b!(-9223372036854775808.0)),
+                   (112, 0xfff8_0000_0000_0000u64.to_le_bytes()), (120, 0x7ff8_0000_0000_0001u64.to_le_bytes()),
+                   (144, f64b!(1.0)), (160, f64b!(9223372036854775808.0))] }, ..base.clone() },
+        // FPTAN: value, the pushed 1.0, and the out-of-range case (C2=1, nothing pushed).
+        Case { name: "x87_fptan_values_and_stack",
+               mem: mem![(0, f64b!(0.5)), (8, f64b!(-1.0)), (16, f64b!(std::f64::consts::FRAC_PI_4)), (24, f64b!(std::f64::consts::FRAC_PI_2)),
+                         (32, f64b!(1.0e10)), (40, f64b!(9223372036854775808.0))],
+               asm: |a| {
+                    for i in 0..5 {
+                        a.fld(qword_ptr(ebx + 8 * i))?; a.fptan()?; a.fstp(qword_ptr(ebx + 48 + 16 * i))?; a.fstp(qword_ptr(ebx + 56 + 16 * i))?;
+                    }
+                    a.fld(qword_ptr(ebx + 40))?; a.fptan()?; a.fnstsw(ax)?; a.mov(word_ptr(ebx + 128), ax)?;
+                    a.fstp(qword_ptr(ebx + 136))?; a.fnstsw(ax)?; a.mov(word_ptr(ebx + 130), ax)?;
+                    a.xor(eax, eax)
+               },
+               flag_mask: 0, fsw_mask: 0x4700, kind: Kind::Strict,
+               expect: Expect { regs: &[], flags: None, mem: mem![
+                   (48, f64b!(1.0)), (56, f64b!(0.5463024898437905)), (64, f64b!(1.0)), (72, f64b!(-1.5574077246549023)),
+                   (80, f64b!(1.0)), (88, f64b!(0.9999999999999999)), (96, f64b!(1.0)), (104, f64b!(1.6331778728383844e16)),
+                   (112, f64b!(1.0)), (120, f64b!(-0.5583496377943541)), (136, f64b!(9223372036854775808.0))] }, ..base.clone() },
     ]
 }
 
