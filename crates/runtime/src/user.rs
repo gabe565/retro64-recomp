@@ -80,6 +80,8 @@ pub struct User {
     /// Cursor position in guest screen coordinates.
     cursor: (i32, i32),
     sdl_ready: bool,
+    /// No host window or SDL (tests, CI): messages and state only.
+    pub headless: bool,
 }
 
 impl User {
@@ -104,7 +106,7 @@ fn sdl_error() -> String {
 
 /// Initialise SDL video once (respects SDL_VIDEODRIVER, e.g. "dummy" for headless runs).
 pub fn ensure_sdl() {
-    if with_rt(|rt| rt.user.sdl_ready) {
+    if with_rt(|rt| rt.user.sdl_ready || rt.user.headless) {
         return;
     }
     // SAFETY: called on the main thread before any other SDL use.
@@ -120,7 +122,8 @@ pub fn send(cpu: &mut Cpu, hwnd: u32, msg: u32, wp: u32, lp: u32) -> u32 {
     call_guest_stdcall(cpu, proc_, &[hwnd, msg, wp, lp])
 }
 
-fn post(m: Msg) {
+/// Queue a message as if it had been posted (also used by tests to inject input).
+pub fn post(m: Msg) {
     with_rt(|rt| rt.user.queue.push_back(m));
 }
 
@@ -129,7 +132,7 @@ fn mk_lparam(lo: i32, hi: i32) -> u32 {
 }
 
 /// SDL scancode (USB HID usage) → Win32 virtual-key code and PS/2 scan code.
-fn vk_from_scancode(sc: i32) -> Option<(u32, u32)> {
+pub fn vk_from_scancode(sc: i32) -> Option<(u32, u32)> {
     Some(match sc {
         4..=29 => (0x41 + (sc - 4) as u32, [0x1e, 0x30, 0x2e, 0x20, 0x12, 0x21, 0x22, 0x23, 0x17, 0x24, 0x25, 0x26, 0x32, 0x31, 0x18, 0x19, 0x10, 0x13, 0x1f, 0x14, 0x16, 0x2f, 0x11, 0x2d, 0x15, 0x2c][(sc - 4) as usize]),
         30..=38 => (0x31 + (sc - 30) as u32, 0x02 + (sc - 30) as u32),
@@ -174,7 +177,7 @@ fn side_vk(sc: i32) -> Option<u32> {
 fn to_guest(x: f32, y: f32) -> (i32, i32) {
     with_rt(|rt| {
         let (gw, gh) = rt.user.screen;
-        let Some(w) = rt.user.window.as_ref() else { return (0, 0) };
+        let Some(w) = rt.user.window.as_ref().filter(|w| !w.sdl.is_null()) else { return (0, 0) };
         let (mut ww, mut wh) = (0, 0);
         // SAFETY: valid window handle.
         unsafe { SDL_GetWindowSize(w.sdl, &mut ww, &mut wh) };
@@ -189,7 +192,7 @@ fn to_guest(x: f32, y: f32) -> (i32, i32) {
 
 /// Translate pending SDL events into window messages.
 pub fn pump() {
-    if !with_rt(|rt| rt.user.sdl_ready && rt.user.window.is_some()) {
+    if !with_rt(|rt| rt.user.sdl_ready && rt.user.window.is_some() && !rt.user.headless) {
         return;
     }
     // SAFETY: SDL_Event is plain data; SDL fills it.
@@ -200,46 +203,76 @@ pub fn pump() {
             post(Msg { hwnd: MAIN_HWND, message: WM_SYSCOMMAND, wparam: SC_CLOSE, lparam: 0 });
         } else if ty == SDL_EVENT_KEY_DOWN.0 || ty == SDL_EVENT_KEY_UP.0 {
             let k = unsafe { ev.key };
-            let sc = k.scancode.0;
-            let Some((vk, scan)) = vk_from_scancode(sc) else { continue };
-            let alt = (k.r#mod.0 & (SDL_KMOD_ALT.0)) != 0;
-            with_rt(|rt| {
-                for v in [Some(vk), side_vk(sc)].into_iter().flatten() {
-                    let e = &mut rt.user.keys[v as usize];
-                    if k.down && !e.0 { e.1 = true; }
-                    e.0 = k.down;
-                }
-            });
-            let sys = alt || vk == 0x79 || vk == 0x12; // Alt combinations and F10 are system keys
-            let message = match (k.down, sys) { (true, false) => WM_KEYDOWN, (false, false) => WM_KEYUP, (true, true) => WM_SYSKEYDOWN, (false, true) => WM_SYSKEYUP };
-            let mut lp = 1 | ((scan & 0xff) << 16) | (((scan >> 8) & 1) << 24);
-            if alt { lp |= 1 << 29; }
-            if k.repeat || !k.down { lp |= 1 << 30; }
-            if !k.down { lp |= 1 << 31; }
-            post(Msg { hwnd: MAIN_HWND, message, wparam: vk, lparam: lp });
+            key_input(k.scancode.0, k.down, k.repeat, (k.r#mod.0 & SDL_KMOD_ALT.0) != 0);
         } else if ty == SDL_EVENT_MOUSE_MOTION.0 {
             let m = unsafe { ev.motion };
-            let p = to_guest(m.x, m.y);
-            with_rt(|rt| rt.user.cursor = p);
-            post(Msg { hwnd: MAIN_HWND, message: WM_MOUSEMOVE, wparam: 0, lparam: mk_lparam(p.0, p.1) });
+            mouse_move(to_guest(m.x, m.y));
         } else if ty == SDL_EVENT_MOUSE_BUTTON_DOWN.0 || ty == SDL_EVENT_MOUSE_BUTTON_UP.0 {
             let b = unsafe { ev.button };
-            let p = to_guest(b.x, b.y);
-            let (vk, message) = match (b.button as i32, b.down) {
-                (1, true) => (0x01, WM_LBUTTONDOWN), (1, false) => (0x01, WM_LBUTTONUP),
-                (3, true) => (0x02, WM_RBUTTONDOWN), (3, false) => (0x02, WM_RBUTTONUP),
-                _ => continue,
-            };
-            with_rt(|rt| {
-                rt.user.cursor = p;
-                let e = &mut rt.user.keys[vk as usize];
-                if b.down && !e.0 { e.1 = true; }
-                e.0 = b.down;
-            });
-            let wparam = if b.down { vk } else { 0 }; // MK_LBUTTON = 1, MK_RBUTTON = 2
-            post(Msg { hwnd: MAIN_HWND, message, wparam, lparam: mk_lparam(p.0, p.1) });
+            mouse_button(b.button as i32, b.down, to_guest(b.x, b.y));
         }
     }
+}
+
+/// A key changed state (SDL scancode). Updates the async key state and queues
+/// `WM_KEYDOWN`/`WM_KEYUP`, or the `WM_SYS*` variants for Alt combinations and
+/// F10, with Windows' lParam layout (repeat 1, scan code, extended, context, previous, transition).
+pub fn key_input(sc: i32, down: bool, repeat: bool, alt: bool) {
+    let Some((vk, scan)) = vk_from_scancode(sc) else { return };
+    with_rt(|rt| {
+        for v in [Some(vk), side_vk(sc)].into_iter().flatten() {
+            let e = &mut rt.user.keys[v as usize];
+            if down && !e.0 {
+                e.1 = true;
+            }
+            e.0 = down;
+        }
+    });
+    let sys = alt || vk == 0x79 || vk == 0x12;
+    let message = match (down, sys) {
+        (true, false) => WM_KEYDOWN,
+        (false, false) => WM_KEYUP,
+        (true, true) => WM_SYSKEYDOWN,
+        (false, true) => WM_SYSKEYUP,
+    };
+    let mut lp = 1 | ((scan & 0xff) << 16) | (((scan >> 8) & 1) << 24);
+    if alt {
+        lp |= 1 << 29;
+    }
+    if repeat || !down {
+        lp |= 1 << 30;
+    }
+    if !down {
+        lp |= 1 << 31;
+    }
+    post(Msg { hwnd: MAIN_HWND, message, wparam: vk, lparam: lp });
+}
+
+/// The pointer moved to guest screen position `p`.
+pub fn mouse_move(p: (i32, i32)) {
+    with_rt(|rt| rt.user.cursor = p);
+    post(Msg { hwnd: MAIN_HWND, message: WM_MOUSEMOVE, wparam: 0, lparam: mk_lparam(p.0, p.1) });
+}
+
+/// Mouse button (1 = left, 3 = right) changed state at guest screen position `p`.
+pub fn mouse_button(button: i32, down: bool, p: (i32, i32)) {
+    let (vk, message) = match (button, down) {
+        (1, true) => (0x01, WM_LBUTTONDOWN),
+        (1, false) => (0x01, WM_LBUTTONUP),
+        (3, true) => (0x02, WM_RBUTTONDOWN),
+        (3, false) => (0x02, WM_RBUTTONUP),
+        _ => return,
+    };
+    with_rt(|rt| {
+        rt.user.cursor = p;
+        let e = &mut rt.user.keys[vk as usize];
+        if down && !e.0 {
+            e.1 = true;
+        }
+        e.0 = down;
+    });
+    let wparam = if down { vk } else { 0 }; // MK_LBUTTON = 1, MK_RBUTTON = 2
+    post(Msg { hwnd: MAIN_HWND, message, wparam, lparam: mk_lparam(p.0, p.1) });
 }
 
 /// USER32/GDI32 imports for windows and messages. Returns false if not handled here.
@@ -264,8 +297,10 @@ pub(crate) fn import(cpu: &mut Cpu, name: &str) -> bool {
                 with_rt(|rt| {
                     let w = rt.user.window.as_mut().unwrap();
                     w.visible = true;
-                    // SAFETY: valid window.
-                    unsafe { SDL_ShowWindow(w.sdl) };
+                    if !w.sdl.is_null() {
+                        // SAFETY: valid window.
+                        unsafe { SDL_ShowWindow(w.sdl) };
+                    }
                 });
                 // The activation sequence Windows sends to a newly shown top-level window.
                 let (w, h, x, y) = with_rt(|rt| { let w = rt.user.window.as_ref().unwrap(); (w.w, w.h, w.x, w.y) });
@@ -402,13 +437,18 @@ fn create_window(cpu: &mut Cpu) {
     let (x, y) = (cw(a[4]).unwrap_or(0), cw(a[5]).unwrap_or(0));
     let (w, h) = (cw(a[6]).unwrap_or(640), cw(a[7]).unwrap_or(480));
     ensure_sdl();
-    let t = CString::new(title.clone()).unwrap_or_default();
-    // Host window: hidden until ShowWindow; the presenter scales the guest screen into it.
-    // SAFETY: SDL is initialised; title is NUL-terminated.
-    let sdl = unsafe { SDL_CreateWindow(t.as_ptr(), 1280, 960, SDL_WINDOW_HIDDEN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY) };
-    if sdl.is_null() {
-        fatal(&format!("SDL_CreateWindow: {}", sdl_error()));
-    }
+    let sdl = if with_rt(|rt| rt.user.headless) {
+        std::ptr::null_mut()
+    } else {
+        let t = CString::new(title.clone()).unwrap_or_default();
+        // Host window: hidden until ShowWindow; the presenter scales the guest screen into it.
+        // SAFETY: SDL is initialised; title is NUL-terminated.
+        let sdl = unsafe { SDL_CreateWindow(t.as_ptr(), 1280, 960, SDL_WINDOW_HIDDEN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY) };
+        if sdl.is_null() {
+            fatal(&format!("SDL_CreateWindow: {}", sdl_error()));
+        }
+        sdl
+    };
     with_rt(|rt| rt.user.window = Some(Window { wndproc: proc_, x, y, w, h, visible: false, sdl }));
     let hwnd = MAIN_HWND;
     // CREATESTRUCTA and MINMAXINFO in guest memory.
@@ -449,8 +489,10 @@ fn destroy(cpu: &mut Cpu, hwnd: u32) {
     send(cpu, hwnd, WM_DESTROY, 0, 0);
     with_rt(|rt| {
         if let Some(w) = rt.user.window.take() {
-            // SAFETY: valid window, destroyed once.
-            unsafe { SDL_DestroyWindow(w.sdl) };
+            if !w.sdl.is_null() {
+                // SAFETY: valid window, destroyed once.
+                unsafe { SDL_DestroyWindow(w.sdl) };
+            }
         }
     });
 }

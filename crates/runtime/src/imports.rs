@@ -24,11 +24,14 @@ const KERNEL32_HANDLE: u32 = 0x7c80_0000;
 const DDRAW_HANDLE: u32 = 0x7380_0000;
 
 pub(crate) fn dispatch_import(cpu: &mut Cpu, idx: usize) {
-    let (dll, name) = with_rt(|rt| {
-        let (dll, name) = rt.import_names.get(idx).cloned().unwrap_or_else(|| fatal(&format!("bad import thunk {idx}")));
-        *rt.diag.import_calls.entry(format!("{dll}!{name}")).or_default() += 1;
-        (dll, name)
-    });
+    let (dll, name) = with_rt(|rt| rt.import_names.get(idx).cloned().unwrap_or_else(|| fatal(&format!("bad import thunk {idx}"))));
+    dispatch_named(cpu, &dll, &name);
+}
+
+/// Dispatch an import by DLL and function name (lower-case DLL name).
+pub(crate) fn dispatch_named(cpu: &mut Cpu, dll: &str, name: &str) {
+    with_rt(|rt| *rt.diag.import_calls.entry(format!("{dll}!{name}")).or_default() += 1);
+    let (dll, name) = (dll.to_string(), name.to_string());
     // DDRAW imports may call back into guest code, so they run unborrowed.
     if dll.eq_ignore_ascii_case("ddraw.dll") && crate::ddraw::import(cpu, &name) {
         return;

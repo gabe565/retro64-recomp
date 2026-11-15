@@ -1,0 +1,15 @@
+[package]
+name = "bugatron-runtime-tests"
+description = "Runtime regression tests: imports, COM methods, surfaces and messages driven through the real dispatch path"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+bugatron-runtime.workspace = true
+
+[build-dependencies]
+bugatron-recomp.workspace = true
+bugatron-x86-cases.workspace = true
+cc.workspace = true

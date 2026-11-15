@@ -69,6 +69,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "bugatron-runtime-tests"
+version = "0.1.0"
+dependencies = [
+ "bugatron-recomp",
+ "bugatron-runtime",
+ "bugatron-x86-cases",
+ "cc",
+]
+
+[[package]]
 name = "bugatron-x86-cases"
 version = "0.1.0"
 dependencies = [

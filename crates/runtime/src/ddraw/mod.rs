@@ -9,7 +9,7 @@
 //! runtime borrowed, so dispatch here happens outside `with_rt`.
 
 use crate::{call_guest_stdcall, fatal, with_rt, Cpu, Runtime};
-use crate::ddraw_caps as caps;
+pub mod caps;
 use std::collections::HashMap;
 
 /// Interface ids, encoded in COM thunk addresses (`COM_THUNK_BASE + id·0x1000 + slot·16`).

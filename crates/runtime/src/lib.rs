@@ -16,14 +16,14 @@
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
 pub mod cpu;
-mod ddraw;
+pub mod ddraw;
 pub mod dialog;
-mod ddraw_caps;
 pub mod files;
 mod heap;
 pub mod user;
 mod imports;
 pub mod mem;
+pub mod testing;
 pub mod x87trig;
 
 pub use cpu::Cpu;

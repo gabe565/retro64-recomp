@@ -15,14 +15,63 @@ use std::collections::BTreeMap;
 const WM_INITDIALOG: u32 = 0x110;
 const WM_COMMAND: u32 = 0x111;
 const IDOK: u32 = 1;
-const LB_ERR: u32 = 0xffff_ffff;
+pub const LB_ERR: u32 = 0xffff_ffff;
 
 pub const DIALOG_HWND: u32 = 0x0002_0066;
 
-#[derive(Default)]
+/// An unsorted, single-selection Win32 list box.
+#[derive(Default, Debug)]
 pub struct ListBox {
-    items: Vec<String>,
-    sel: Option<usize>,
+    pub items: Vec<String>,
+    pub sel: Option<usize>,
+}
+
+impl ListBox {
+    /// LB_ADDSTRING: append; returns the new index.
+    pub fn add(&mut self, s: String) -> u32 {
+        self.items.push(s);
+        self.items.len() as u32 - 1
+    }
+
+    /// LB_DELETESTRING: returns the remaining count, or LB_ERR.
+    pub fn delete(&mut self, i: usize) -> u32 {
+        if i >= self.items.len() {
+            return LB_ERR;
+        }
+        self.items.remove(i);
+        self.sel = match self.sel {
+            Some(s) if s == i => None,
+            Some(s) if s > i => Some(s - 1),
+            s => s,
+        };
+        self.items.len() as u32
+    }
+
+    /// LB_GETCURSEL.
+    pub fn cur_sel(&self) -> u32 {
+        self.sel.map_or(LB_ERR, |s| s as u32)
+    }
+
+    /// LB_SELECTSTRING: the first item, searching after `after` (`u32::MAX` =
+    /// from the start) and wrapping, that begins with `prefix` (case-insensitive).
+    pub fn select_string(&mut self, after: u32, prefix: &str) -> u32 {
+        let n = self.items.len();
+        if n == 0 {
+            return LB_ERR;
+        }
+        let start = if after == u32::MAX { 0 } else { (after as usize + 1) % n };
+        let found = (0..n).map(|k| (start + k) % n).find(|&i| {
+            let it = self.items[i].as_bytes();
+            it.len() >= prefix.len() && it[..prefix.len()].eq_ignore_ascii_case(prefix.as_bytes())
+        });
+        match found {
+            Some(i) => {
+                self.sel = Some(i);
+                i as u32
+            }
+            None => LB_ERR,
+        }
+    }
 }
 
 #[derive(Default)]
@@ -72,16 +121,9 @@ pub(crate) fn import(cpu: &mut Cpu, name: &str) -> bool {
                 let d = rt.dialog.as_mut().unwrap_or_else(|| fatal("SendDlgItemMessageA outside a dialog"));
                 let lb = d.lists.entry(id).or_default();
                 match msg {
-                    0x180 => { lb.items.push(lb_text); lb.items.len() as u32 - 1 } // LB_ADDSTRING (unsorted)
-                    0x182 => {
-                        // LB_DELETESTRING: returns the remaining count
-                        let i = wp as usize;
-                        if i >= lb.items.len() { return LB_ERR; }
-                        lb.items.remove(i);
-                        lb.sel = match lb.sel { Some(s) if s == i => None, Some(s) if s > i => Some(s - 1), s => s };
-                        lb.items.len() as u32
-                    }
-                    0x188 => lb.sel.map_or(LB_ERR, |s| s as u32), // LB_GETCURSEL
+                    0x180 => lb.add(lb_text),
+                    0x182 => lb.delete(wp as usize),
+                    0x188 => lb.cur_sel(),
                     0x189 => {
                         // LB_GETTEXT
                         let Some(s) = lb.items.get(wp as usize).cloned() else { return LB_ERR };
@@ -89,16 +131,7 @@ pub(crate) fn import(cpu: &mut Cpu, name: &str) -> bool {
                         rt.mem.w8(lp + s.len() as u32, 0);
                         s.len() as u32
                     }
-                    0x18c => {
-                        // LB_SELECTSTRING: first item whose prefix matches (case-insensitive),
-                        // searching after index wParam (-1 = from the start), wrapping.
-                        let n = lb.items.len();
-                        let start = if wp == 0xffff_ffff { 0 } else { wp as usize + 1 };
-                        let found = (0..n).map(|k| (start + k) % n.max(1)).find(|&i| {
-                            lb.items[i].len() >= lb_text.len() && lb.items[i][..lb_text.len()].eq_ignore_ascii_case(&lb_text)
-                        });
-                        match found { Some(i) => { lb.sel = Some(i); i as u32 } None => LB_ERR }
-                    }
+                    0x18c => lb.select_string(wp, &lb_text),
                     _ => fatal(&format!("SendDlgItemMessageA: message {msg:#x} to control {id:#x} not emulated")),
                 }
             });
