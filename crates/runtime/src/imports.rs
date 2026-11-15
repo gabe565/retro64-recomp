@@ -21,13 +21,22 @@ const FAKE_STDIN: u32 = 0x100;
 const FAKE_STDOUT: u32 = 0x101;
 const FAKE_STDERR: u32 = 0x102;
 const KERNEL32_HANDLE: u32 = 0x7c80_0000;
+const DDRAW_HANDLE: u32 = 0x7380_0000;
 
 pub(crate) fn dispatch_import(cpu: &mut Cpu, idx: usize) {
-    with_rt(|rt| {
+    let (dll, name) = with_rt(|rt| {
         let (dll, name) = rt.import_names.get(idx).cloned().unwrap_or_else(|| fatal(&format!("bad import thunk {idx}")));
         *rt.diag.import_calls.entry(format!("{dll}!{name}")).or_default() += 1;
-        call(rt, cpu, &dll, &name);
+        (dll, name)
     });
+    // DDRAW imports may call back into guest code, so they run unborrowed.
+    if dll.eq_ignore_ascii_case("ddraw.dll") && crate::ddraw::import(cpu, &name) {
+        return;
+    }
+    if dll.eq_ignore_ascii_case("user32.dll") && crate::dialog::import(cpu, &name) {
+        return;
+    }
+    with_rt(|rt| call(rt, cpu, &dll, &name));
 }
 
 fn call(rt: &mut Runtime, cpu: &mut Cpu, dll: &str, name: &str) {
@@ -48,6 +57,8 @@ fn call(rt: &mut Runtime, cpu: &mut Cpu, dll: &str, name: &str) {
                 rt.pe.image_base
             } else if rt.mem.cstr(p).eq_ignore_ascii_case("kernel32") || rt.mem.cstr(p).eq_ignore_ascii_case("kernel32.dll") {
                 KERNEL32_HANDLE
+            } else if rt.mem.cstr(p).eq_ignore_ascii_case("ddraw.dll") {
+                DDRAW_HANDLE // loaded through the import table, as on Windows
             } else {
                 0
             };
@@ -63,7 +74,12 @@ fn call(rt: &mut Runtime, cpu: &mut Cpu, dll: &str, name: &str) {
             rt.mem.w8(buf + n, 0);
             ret(cpu, n, 3);
         }
-        ("kernel32.dll", "GetProcAddress") => ret(cpu, 0, 2), // nothing optional is provided
+        ("kernel32.dll", "GetProcAddress") => {
+            // Nothing optional is provided. For DDRAW!DirectDrawEnumerateExA this
+            // selects the game's own DirectDrawEnumerateA fallback (0x428a90), as on
+            // pre-DirectX-6 systems; both report the same primary display driver.
+            ret(cpu, 0, 2)
+        }
         ("kernel32.dll", "GetCurrentThreadId") => ret(cpu, 1, 0),
         ("kernel32.dll", "GetCurrentProcess") => ret(cpu, 0xffff_ffff, 0),
         ("kernel32.dll", "GetCurrentThread") => ret(cpu, 0xffff_fffe, 0),
@@ -255,10 +271,61 @@ fn call(rt: &mut Runtime, cpu: &mut Cpu, dll: &str, name: &str) {
             ret(cpu, h, 1);
         }
         ("kernel32.dll", "GetFileType") => {
-            let t = if matches!(a!(0), FAKE_STDIN | FAKE_STDOUT | FAKE_STDERR) { 2 } else { 0 };
+            let h = a!(0);
+            let t = if matches!(h, FAKE_STDIN | FAKE_STDOUT | FAKE_STDERR) { 2 } else if rt.files.is_file(h) { 1 } else { 0 };
             ret(cpu, t, 1);
         }
         ("kernel32.dll", "SetHandleCount") => ret(cpu, a!(0), 1),
+        // ---- files ----------------------------------------------------------------
+        ("kernel32.dll", "CreateFileA") => {
+            let (name, access, disp) = (rt.mem.cstr(a!(0)), a!(1), a!(4));
+            match rt.files.create(&name, access, disp) {
+                Ok(h) => { rt.last_error = 0; ret(cpu, h, 7) }
+                Err(e) => { rt.last_error = e; ret(cpu, crate::files::INVALID_HANDLE_VALUE, 7) }
+            }
+        }
+        ("kernel32.dll", "ReadFile") => {
+            let (h, buf, n, read) = (a!(0), a!(1), a!(2), a!(3));
+            let mut tmp = vec![0u8; n as usize];
+            match rt.files.read(h, &mut tmp) {
+                Some(k) => {
+                    rt.mem.write(buf, &tmp[..k]);
+                    if read != 0 { rt.mem.w32(read, k as u32); }
+                    ret(cpu, 1, 5);
+                }
+                None => { rt.last_error = 6; ret(cpu, 0, 5) } // ERROR_INVALID_HANDLE
+            }
+        }
+        ("kernel32.dll", "SetFilePointer") => {
+            let (h, dist, high, method) = (a!(0), a!(1), a!(2), a!(3));
+            if high != 0 && rt.mem.r32(high) != if (dist as i32) < 0 { 0xffff_ffff } else { 0 } {
+                fatal("SetFilePointer: 64-bit distances are not used by the game");
+            }
+            match rt.files.seek(h, dist as i32, method) {
+                Some(p) => {
+                    if high != 0 { rt.mem.w32(high, (p >> 32) as u32); }
+                    ret(cpu, p as u32, 4)
+                }
+                None => { rt.last_error = 131; ret(cpu, 0xffff_ffff, 4) } // ERROR_NEGATIVE_SEEK
+            }
+        }
+        ("kernel32.dll", "GetFileSize") => {
+            let (h, high) = (a!(0), a!(1));
+            let s = rt.files.size(h).unwrap_or(0xffff_ffff);
+            if high != 0 { rt.mem.w32(high, (s >> 32) as u32); }
+            ret(cpu, s as u32, 2);
+        }
+        ("kernel32.dll", "CloseHandle") => {
+            let ok = rt.files.close(a!(0));
+            ret(cpu, ok as u32, 1);
+        }
+        ("kernel32.dll", "WriteFile") if rt.files.is_file(a!(0)) => {
+            let (h, buf, n, written) = (a!(0), a!(1), a!(2), a!(3));
+            let data = rt.mem.slice(buf, n as usize).to_vec();
+            let k = rt.files.write(h, &data).unwrap_or(0);
+            if written != 0 { rt.mem.w32(written, k as u32); }
+            ret(cpu, (k == n as usize) as u32, 5);
+        }
         ("kernel32.dll", "WriteFile") => {
             let (h, buf, n, written) = (a!(0), a!(1), a!(2), a!(3));
             let text = String::from_utf8_lossy(rt.mem.slice(buf, n as usize)).into_owned();
@@ -289,30 +356,15 @@ fn call(rt: &mut Runtime, cpu: &mut Cpu, dll: &str, name: &str) {
         ("kernel32.dll", "RaiseException") | ("kernel32.dll", "RtlUnwind") | ("kernel32.dll", "UnhandledExceptionFilter") => {
             fatal(&format!("exception dispatch is not supported: {name} called (C++ throw, SEH raise, or unhandled exception); see docs/recompilation-feasibility.md D8"))
         }
-        _ => fatal(&format!("unimplemented import {dll}!{name} (called with esp={:#x}); implement it in crates/runtime/src/imports.rs only if the original game calls it", cpu.esp)),
+        _ => fatal(&format!("unimplemented import {dll}!{name} (called from {:#010x}, esp={:#x}); implement it in crates/runtime/src/imports.rs only if the original game calls it", rt.mem.r32(cpu.esp), cpu.esp)),
     }
 }
 
 // ---- COM ---------------------------------------------------------------------------
 
-/// Interface ids used in COM thunk addresses.
-pub const IFACE_DIRECTDRAW4: u32 = 1;
-
 pub(crate) fn dispatch_com(cpu: &mut Cpu, thunk: u32) {
     let off = thunk - crate::COM_THUNK_BASE;
-    let (iface, slot) = (off / 0x1000, (off % 0x1000) / 16);
-    with_rt(|rt| {
-        *rt.diag.com_calls.entry(format!("iface{iface}:slot{slot}")).or_default() += 1;
-        match (iface, slot) {
-            // IDirectDraw4::GetMonitorFrequency(this, LPDWORD)
-            (IFACE_DIRECTDRAW4, 15) => {
-                let p = arg(rt, cpu, 1);
-                rt.mem.w32(p, rt.clock.monitor_frequency);
-                ret(cpu, 0, 2);
-            }
-            _ => fatal(&format!("unimplemented COM method: interface {iface} slot {slot} (vtable offset {:#x})", slot * 4)),
-        }
-    });
+    crate::ddraw::dispatch(cpu, off / 0x1000, (off % 0x1000) / 16);
 }
 
 /// CT_CTYPE1 classification for the "C" locale (ASCII); other code units get 0.

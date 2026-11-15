@@ -16,6 +16,10 @@
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
 pub mod cpu;
+mod ddraw;
+pub mod dialog;
+mod ddraw_caps;
+pub mod files;
 mod heap;
 mod imports;
 pub mod mem;
@@ -72,6 +76,8 @@ pub struct Diagnostics {
 }
 
 pub struct Runtime {
+    pub(crate) com: ddraw::ComRegistry,
+    pub(crate) dialog: Option<dialog::Dialog>,
     pub mem: GuestMemory,
     pub pe: Pe,
     pub(crate) import_names: Vec<(String, String)>,
@@ -83,8 +89,8 @@ pub struct Runtime {
     pub diag: Diagnostics,
     pub command_line: u32,
     pub module_path: String,
-    /// Host directory that holds the user's game files (guest `C:\Bugatron\`).
-    pub data_dir: std::path::PathBuf,
+    /// Guest file handles over the user's game directory and the save directory.
+    pub files: files::Files,
     pub(crate) env_block: u32,
     pub exit_hook: Option<Box<dyn FnMut(u32) -> i32>>,
     overrides: HashMap<u32, Override>,
@@ -144,10 +150,12 @@ impl Runtime {
             diag: Diagnostics::default(),
             command_line: 0,
             module_path: "C:\\Bugatron\\Bug3D.exe".into(),
-            data_dir: std::path::PathBuf::new(),
+            files: Default::default(),
             env_block: 0,
             exit_hook: None,
             overrides: HashMap::new(),
+            com: Default::default(),
+            dialog: None,
         };
         rt.command_line = rt.alloc_cstr("\"C:\\Bugatron\\Bug3D.exe\"");
         rt.env_block = rt.heap_alloc(16, true);
@@ -175,10 +183,12 @@ impl Runtime {
             diag: Diagnostics::default(),
             command_line: 0,
             module_path: String::new(),
-            data_dir: std::path::PathBuf::new(),
+            files: Default::default(),
             env_block: 0,
             exit_hook: None,
             overrides: HashMap::new(),
+            com: Default::default(),
+            dialog: None,
         })
     }
 
@@ -256,6 +266,30 @@ pub fn call_guest(cpu: &mut Cpu, addr: u32, args: &[u32]) -> u32 {
     cpu.esp += 4 * args.len() as u32;
     if cpu.esp != esp0 {
         fatal(&format!("call_guest({addr:#010x}): stack imbalance, esp {:#x} expected {esp0:#x}", cpu.esp));
+    }
+    cpu.eax
+}
+
+/// Call translated guest code at `addr` with the stdcall convention (the callee
+/// pops its arguments), e.g. an enumeration callback. Must not be called while
+/// the runtime is borrowed through [`with_rt`]. Verifies the guest stack.
+pub fn call_guest_stdcall(cpu: &mut Cpu, addr: u32, args: &[u32]) -> u32 {
+    // SAFETY: lookup is a pure table search in generated code.
+    let f = unsafe { recomp_lookup(addr) }.unwrap_or_else(|| fatal(&format!("call_guest_stdcall: no translated function at {addr:#010x}")));
+    let esp0 = cpu.esp;
+    with_rt(|rt| {
+        rt.diag.host_to_guest_calls += 1;
+        for &a in args.iter().rev() {
+            cpu.esp -= 4;
+            rt.mem.w32(cpu.esp, a);
+        }
+        cpu.esp -= 4;
+        rt.mem.w32(cpu.esp, HOST_RETURN);
+    });
+    // SAFETY: f is a generated function taking a valid Cpu pointer.
+    unsafe { f(cpu as *mut Cpu) };
+    if cpu.esp != esp0 {
+        fatal(&format!("call_guest_stdcall({addr:#010x}): stack imbalance, esp {:#x} expected {esp0:#x}", cpu.esp));
     }
     cpu.eax
 }

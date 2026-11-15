@@ -4,7 +4,10 @@
 //! portable runtime. The runtime implements the imports the game uses; anything
 //! not yet implemented stops the run with its name (see docs/runtime-status.md).
 //!
-//! Usage: bugatron [--exe Bug3D.exe] [--data GAME_DIR]
+//! Usage: bugatron [--exe Bug3D.exe] [--data GAME_DIR] [--save SAVE_DIR]
+//!
+//! Files the game writes (prefs, high scores) go to SAVE_DIR (default `./save`);
+//! the game directory is only read.
 
 use bugatron_runtime::{call_guest, with_rt, Runtime};
 use std::path::PathBuf;
@@ -15,18 +18,21 @@ fn main() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut exe = std::env::var("BUGATRON_EXE").map(PathBuf::from).unwrap_or_else(|_| root.join("_work/ext/gold120/app/Bug3D.exe"));
     let mut data = exe.parent().map(PathBuf::from).unwrap_or_default();
+    let mut save = PathBuf::from("save");
     let mut it = std::env::args().skip(1);
     while let Some(k) = it.next() {
         let v = PathBuf::from(it.next().unwrap_or_else(|| panic!("{k} needs a value")));
         match k.as_str() {
             "--exe" => exe = v,
             "--data" => data = v,
+            "--save" => save = v,
             _ => panic!("unknown argument {k}"),
         }
     }
     let image = std::fs::read(&exe).unwrap_or_else(|e| panic!("cannot read {}: {e}", exe.display()));
     let mut rt = Runtime::load(&image).expect("load Bug3D.exe");
-    rt.data_dir = data;
+    rt.files.data_dir = data;
+    rt.files.save_dir = save;
     eprintln!("translated functions: {}", Runtime::function_count());
     rt.install();
     let mut cpu = with_rt(|rt| rt.initial_cpu());
