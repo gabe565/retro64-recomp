@@ -144,23 +144,37 @@ Totals: **R** 54 functions, **K** 36 (54 + 36 = 90). R functions still return va
 
 **Recommendation: keep these game functions recompiled.** The runtime provides four COM objects through the replaced accessors. They implement exactly these six methods; any other slot stops with a diagnostic. This keeps the text renderer's vertex math exact, which matters because glyph positions come from game state.
 
-## 5. Recommendation
+## 5. Decision: COM-level emulation (owner, 2026-11-15)
 
-1. **Leaf replacement.** Replace the 54 device-, window-, and surface-facing functions (§3, R). Keep the 36 pure functions recompiled (K): model loading and queries, math, BMP decoding, timer, errors, file I/O.
-   - Orchestration functions such as `r3d_ListLoad` stay recompiled. Their calls into replaced leaves then go through the runtime.
-   - Model geometry and material records therefore stay byte-identical in guest memory, which is what gameplay reads.
-2. **Replace through the existing override mechanism.** Each R address becomes an `rt_override` handled in Rust with the original stdcall signature: read arguments from the guest stack, `esp += 4 + purge`.
-   - Overrides must preserve return values and out-parameters exactly as the original, including failure codes the game checks.
-   - The probe in §8 records real argument tuples to test against.
-3. **Port behaviour-bearing logic faithfully, in Rust.** Three pieces of logic inside the replaced functions affect what appears on screen rather than just how it is drawn:
-   - alpha-polygon deferral and its sort in `r3d_Render3DModel` / `r3d_RenderEnd`;
-   - material selection and colour modulation;
-   - viewport clearing.
-   
-   These are ported from the disassembly with tests, not reinvented.
-4. **COM objects for the six game-side DirectX methods** (§4).
+**The graphics boundary is the DirectDraw 6 / Direct3D 6 COM surface, not the r3d wrapper.** This supersedes the earlier leaf-replacement recommendation; the R/K/C column in §3 is kept as a record of that analysis.
 
-## 6. Proposed graphics interface (for review; not implemented)
+- **All 90 r3d functions stay recompiled**, like the rest of the game. That includes enumeration, the video dialog, format selection, BMP-to-texel conversion, material setup, alpha deferral and its sort, and error paths. None of it is hand-ported.
+- **The runtime implements the COM methods r3d and game code call:** `IDirectDraw`/`IDirectDraw4`, `IDirectDrawSurface4`, `IDirectDrawClipper`, `IDirect3D3`, `IDirect3DDevice3`, `IDirect3DViewport3`, `IDirect3DLight`, `IDirect3DMaterial3`, and `IDirect3DTexture2`. The imports `DirectDrawCreate` and `DirectDrawEnumerateA` are also implemented. The census in §5.1 is about 60 methods.
+  - As with Win32 imports, methods are implemented on evidence: an unimplemented slot stops the run with its interface and method name.
+- **Fidelity target:** the original 32-bit path (§9) first, with the 16-bit path retained. Blending, colour quantisation, and texture formats follow D3D6 fixed-function semantics for the format codes the original code selects.
+- **Overrides of individual r3d functions** are allowed only if the COM path proves impractical, each narrowly scoped and documented here. There are no parallel graphics implementations.
+- **Modern features** (ultrawide, interpolation) are deferred. They remain possible at this boundary through `SetTransform(PROJECTION)` and the per-frame draw stream.
+
+### 5.1 COM census (static, from vtable offsets in `decomp.c`)
+
+| Object (global) | Interface | Slots called (vtable index → method) |
+|---|---|---|
+| `0xa06b50` | `IDirectDraw` | 0 QueryInterface (→ `IDirectDraw4`) |
+| `0xa06afc` | `IDirectDraw4` | 0 QI, 2 Release, 4 CreateClipper, 6 CreateSurface, 10 FlipToGDISurface, 20 SetCooperativeLevel, 21 SetDisplayMode, 25 RestoreAllSurfaces; also 8 EnumDisplayModes and 15 GetMonitorFrequency through locals |
+| `0xa06b98` | `IDirectDraw` (enumeration temporary) | 0 QI, 2 Release, 11 GetCaps |
+| `0xa02adc` | `IDirect3D3` | 2 Release, 4 CreateLight, 5 CreateMaterial, 6 CreateViewport, 8 CreateDevice, 10 EnumZBufferFormats, 11 EvictManagedTextures; 3 EnumDevices through a local |
+| `0x9fa91c` | `IDirect3DDevice3` | 2 Release, 5 AddViewport, 8 EnumTextureFormats, 9 BeginScene, 10 EndScene, 12 SetCurrentViewport, 16 Begin, 18 Vertex, 20 End, 22 SetRenderState, 24 SetLightState, 25 SetTransform, 29 DrawIndexedPrimitive, 38 SetTexture, 40 SetTextureStageState; 28 DrawPrimitive from game code (§4) |
+| `0xa06b44` | front `IDirectDrawSurface4` | 2 Release, 5 Blt, 11 Flip, 12 GetAttachedSurface, 24 IsLost, 27 Restore, 28 SetClipper |
+| `0xa06b58` | back-buffer surface | 2, 3 AddAttachedSurface, 24, 25 Lock, 27, 32 Unlock |
+| `0xa02a64` | Z-buffer surface | 2, 24 IsLost, 27 Restore |
+| `0xa06b18` | `IDirect3DViewport3` | 2, 13 AddLight, 17 SetViewport2 |
+| `0xa06b34` | `IDirectDrawClipper` | 2, 8 SetHWnd |
+| `0xa06b2c` | `IDirect3DLight` | 2, 4 SetLight |
+| locals | texture surfaces, `IDirect3DTexture2`, `IDirect3DMaterial3` | surface 1/2/3/5/15/22/24/25/28/32; texture 3 GetHandle, 5 Load; material 3 SetMaterial, 5 GetHandle (typing per call site to be confirmed at runtime) |
+
+Typing of the local-pointer calls is inferred from slot ranges; the runtime's named stubs confirm each one as it is reached.
+
+## 6. Graphics interface (superseded in part by §5)
 
 ```
 recompiled game ──(stdcall overrides)──► r3d facade (Rust)
