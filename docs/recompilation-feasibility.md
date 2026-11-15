@@ -244,7 +244,7 @@ Conclusions:
 | D4 | Ghidra missed C++ static initializers, and some function addresses appear only as immediates | **Fixed**: the recompiler roots code pointers found in data sections and immediate operands |
 | D5 | Windows x86-64 build | **Resolved.** Kit 1 exited silently: the M1 check read reserved-but-uncommitted guest memory. Guest memory is now commit-explicit on every OS, with fault diagnostics. Kit 2 on a physical AMD Ryzen 7 9800X3D (Windows, x86-64): **all tests PASS**, including 600/600 timing frames, 30/30 `.lev` files, CRT start-up with control word 0x027F, and random numbers. MSVC toolchain still untested (built with MinGW). |
 | D6 | The timing spin path (below 4 ticks) never occurred in the VM, which runs too slowly. It is covered only by the synthetic edge test derived from static analysis. | Open: capture on the physical machine |
-| D7 | x87 transcendentals versus host `libm` | **Partly resolved on real hardware** (Ryzen 7 9800X3D): `fsin(1)`, `fcos(1)`, `fpatan(1, 0.5)`, and `fptan(0.5)` match the model bit for bit. An 8-angle sweep including π and 2π (case `x87_transcendental_sweep`) is pending the next hardware run. The rotation builder `0x421680` runs about 127 times per frame, so this matters. |
+| D7 | x87 transcendentals versus host `libm` | **Measured on real hardware** (Ryzen 7 9800X3D, §7.9): 13 of 16 sweep results match bit for bit. sin(π), sin(2π), and cos(π/2) differ by about 4e-21 absolute, from x87's reduced-precision π used in argument reduction. sin(4.0) differs by 1 ULP. Open: decide whether to emulate x87 argument reduction (recommended) |
 | D8 | Exceptions: SEH frames are maintained, but the runtime does not dispatch exceptions | **Explicit**: the 4 C++ EH dispatcher jumps are `rt_trap` sites with reasons (`bugatron_recomp::targets`); `RaiseException`, `RtlUnwind`, and `UnhandledExceptionFilter` stop with a diagnostic |
 | D9 | Guest heap addresses differ from the original's Windows heap. Logic that depends on pointer values would diverge. | Open: differential tests must compare logical state, not raw pointers |
 | D10 | 8 instruction sites were unimplemented in the emitter: `RCR` ×4, `BTS` ×2, `PUSHAD`, `POPAD` | **Fixed**: `RCL`/`RCR` at all sizes, the `BT`/`BTS`/`BTR`/`BTC` family with bit-string addressing, and `PUSHAD`/`POPAD`. The whole program now has 0 unimplemented sites; regression cases in §7.7. |
@@ -259,6 +259,25 @@ Conclusions:
 - `crates/x86-oracle` runs the same bytes natively. Fixtures:
   - `tests/fixtures/x86-oracle-qemu-i386.json` comes from QEMU's i386 emulator (**not hardware**). It validates the harness and integer and flag semantics. All strict cases match. The 64-bit-precision case differs as documented, since QEMU implements 80-bit precision.
   - `tests/fixtures/x86-oracle-amd-ryzen7-9800x3d.json` comes from real hardware (AMD Ryzen 7 9800X3D). **All strict cases match.** The 64-bit-precision case differs exactly as documented, and the transcendental report-only case matches bit for bit.
+
+### 7.9 x87 transcendentals on real hardware
+
+`x87_transcendental_sweep`, `fstp` to binary64, control word 0x027F, on an AMD Ryzen 7 9800X3D, compared with the model (host `libm` on macOS arm64):
+
+| Input | sin: hardware vs model | cos: hardware vs model |
+|---|---|---|
+| 0.1, π/4, 2.0, 5.5 | identical | identical |
+| π/2 | identical (1.0) | **6.123031769111886e-17** vs 6.123233995736766e-17 |
+| π | **1.2246063538223773e-16** vs 1.2246467991473532e-16 | identical (−1.0) |
+| 4.0 | **−0.7568024953079282** vs −0.7568024953079283 (1 ULP) | identical |
+| 2π | **−2.4492127076447545e-16** vs −2.4492935982947064e-16 | identical (1.0) |
+
+Interpretation:
+
+- **The three large relative differences share one cause.** All are results near a zero of the function, and all differ by about 4.04e-21 absolute. That is the gap between π and the reduced-precision π the x87 uses for argument reduction. It's an architectural, documented x87 behaviour, so emulating it is well defined.
+- **The 1-ULP difference at sin(4.0)** comes from the hardware's own polynomial and rounding. Matching that bit for bit in every case would need a reimplementation of the CPU's internal algorithm. That may differ between vendors, and the original game ran on whatever CPU each player had.
+- **Consequence:** rotation matrices from `0x421680` (about 127 calls per frame) can differ in the last bits from the original. Whether that can reach gameplay is G7 (`docs/graphics/r3d-interface.md`).
+- **Recommendation:** emulate x87 argument reduction in the runtime's `fsin`/`fcos`/`fptan`, computing in extended precision with the x87 π. Keep the remaining 1-ULP behaviour as a documented, flagged approximation (`X87_NOTE_TRANSCENDENTAL`). Re-run the oracle sweep to confirm.
 
 ### 7.8 Recommended next steps
 
