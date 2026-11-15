@@ -297,8 +297,10 @@ pub fn recompile(exe: &[u8], hints: &Hints, opts: &Options) -> Result<Output, Re
             }
         }
     }
+    // Data-referenced code is reachable in either mode (the CRT initializer
+    // tables are only ever reached through pointers).
     let queue: VecDeque<u32> = if opts.all_functions {
-        names.keys().copied().collect()
+        names.keys().copied().chain(opts.roots.iter().copied()).chain(data_refs.iter().copied()).collect()
     } else {
         opts.roots.iter().copied().chain(data_refs.iter().copied()).collect()
     };

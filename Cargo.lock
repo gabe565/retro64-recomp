@@ -18,6 +18,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "bugatron"
+version = "0.1.0"
+dependencies = [
+ "bugatron-recomp",
+ "bugatron-runtime",
+ "cc",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "bugatron-pe"
 version = "0.1.0"
 

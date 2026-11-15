@@ -75,6 +75,13 @@ fn call(rt: &mut Runtime, cpu: &mut Cpu, dll: &str, name: &str) {
             let status = match rt.exit_hook.as_mut() { Some(h) => h(code), None => code as i32 };
             std::process::exit(status);
         }
+        // ---- user interface -----------------------------------------------------
+        ("user32.dll", "MessageBoxA") => {
+            // Shown on stderr for now; MB_OK-style boxes are all the game uses.
+            let (text, caption) = (rt.mem.cstr(a!(1)), rt.mem.cstr(a!(2)));
+            eprintln!("[MessageBoxA] {caption}: {text}");
+            ret(cpu, 1, 4); // IDOK
+        }
         // ---- environment ------------------------------------------------------
         ("kernel32.dll", "GetEnvironmentStrings") | ("kernel32.dll", "GetEnvironmentStringsW") => ret(cpu, rt.env_block, 0),
         ("kernel32.dll", "FreeEnvironmentStringsA") | ("kernel32.dll", "FreeEnvironmentStringsW") => ret(cpu, 1, 1),
