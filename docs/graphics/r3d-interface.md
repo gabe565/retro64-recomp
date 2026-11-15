@@ -71,7 +71,7 @@ The tables below group all 90 functions by role. Columns:
 | Address | Name | purge | game | rec | Notes |
 |---|---|---|---|---|---|
 | 0x420f90 | `r3d_RenderBegin` | 4 | 1 | R | `BeginScene`, frame state reset |
-| 0x4210d0 | `r3d_RenderEnd` | 4 | 1 | R | **Flushes the deferred alpha-polygon list.** Its sort order must be ported exactly (`_R3D_MAXALPHAPOLYS`) |
+| 0x4210d0 | `r3d_RenderEnd` | 4 | 1 | R | **Flushes the deferred alpha-polygon list.** Sort transcribed exactly; see §7.1 |
 | 0x41ff20 | `r3d_Render3DModel(model, matrix)` | 8 | 2 | R | Draws each component with its material; defers alpha polygons |
 | 0x420ed0 | `r3d_SetMatrix(matrix)` | 4 | 2 | R | |
 | 0x4274b0 | `r3d_SetMaterial(handle)` | 4 | 1 | R | Also called by the game's text renderer (§4) |
@@ -128,7 +128,7 @@ The tables below group all 90 functions by role. Columns:
 | 0x424400, 0x424430, 0x4220e0, 0x423bd0 | error reporting and DirectX error strings (`MessageBoxA`) | — | 0 / 9 / 9 / 0 | K | `MessageBoxA` becomes a runtime diagnostic |
 | 0x424670, 0x4246b0, 0x4246f0, 0x425660 | string and record helpers | — | 0 | K | |
 | 0x4288c0–0x4289d0 | `CreateFileA` / `ReadFile` / `WriteFile` / `SetFilePointer` / `CloseHandle` wrappers | — | 0 | K | Runtime implements the imports, with case-insensitive lookup |
-| 0x4288b0 | sets flag `0x9f6798` | 4 | 1 | K | |
+| 0x4288b0 | `r3d_` alpha-deferral disable: sets `0x9f6798` | 4 | 1 | K | Called once by game code, with 1 (§7.1) |
 
 Totals: **R** 54 functions, **K** 36 (54 + 36 = 90). R functions still return values the game uses: handles, status codes, surface dimensions, enumeration tables (read by WinMain and the video dialog), and pixel pointers from lock and get calls. The replacement must reproduce each of these exactly. They are listed per function above and in G1/G3. Computed gameplay data (geometry, bounds, matrices, timer) comes only from K functions.
 
@@ -199,10 +199,49 @@ recompiled game ──(stdcall overrides)──► r3d facade (Rust)
 | G1 | Pixel formats | **Mostly resolved.** `r3d_Initialize` (0x424b90) picks format codes from the display depth and the driver's enumerated texture formats: opaque textures → `0xa06b08`, alpha-masked textures → `0x9fa910`, back buffer → `0xa02a50`. Codes: 0 = RGB565, 1 = ARGB1555, 2 = ARGB4444, 3 = ARGB8888 (4 and 5 are back-buffer variants). **Observed** in the VM (dgVoodoo2, 32-bit display, 640×480): opaque 0 (565), alpha 3 (8888), back buffer 4. **Open:** which display depth the vanilla baseline emulates. A 16-bit display, typical in 2001 and mentioned in the README ("800x600x16"), takes different branches. This is an owner decision; see §9. |
 | G2 | Light | **Resolved.** One `D3DLIGHT_DIRECTIONAL` (type 3) with direction −normalize(x, y, z) of the `r3d_SetLightLocationColor` arguments, InitApp's (1.2, 1.2, −9.0), colour (r, g, b), attenuation0 = 1.0. The normalized direction and colour are also kept CPU-side (`0x9faa14..`, `0x9fa934..`). |
 | G3 | CPU pixel access | **Resolved.** `r3d_TextureAnimateSurfaceLock(material, &w, &format, &pitch, &bits)` returns the material's format code and a locked pointer and pitch. Game code (0x41ae80, 0x41b6a0, 0x417850) reads and writes texels with format-specific packing for codes 0–3. The replacement must return the original format code and a guest buffer in exactly that layout, converting on unlock. `r3d_SurfaceGet` pointers are dereferenced by game code in 0x417850. |
-| G4 | Alpha-polygon sort key and capacity | Open: to be ported from 0x41ff20 / 0x4210d0 with unit tests during implementation |
+| G4 | Alpha-polygon deferral and sort | **Resolved (static, from assembly).** See §7.1. |
 | G5 | `r3d_Initialize(hwnd, 184800.0, 75.0, …)` | **Resolved.** 184800.0 = far clip distance and fog end (fog start = 92400). 75.0 = vertical FOV in degrees. Projection = 0x421fd0(near 1.0, far 184800, fov 75°·π/180, aspect from the render size). World and view are identity via `SetTransform`. |
 | G6 | Fog | **Resolved: never enabled.** The only writer of the fog-enable flag `0x9b573c` sets it to 0 at init; `FOGENABLE` is set FALSE, fog colour 0. |
 | G7 | Do `0x421680` matrices feed gameplay? | **Partly resolved.** Callers build the camera tilt (0x412930 / 0x415380, π/4 about X for the "perspective" view), star and object render matrices stored in object structs (+0x44, +0xb0), and menu rotations. The collision-relevant path (0x40f2a0) derives object extents from model bounds and geometry, not from these matrices. Since FSIN/FCOS now match hardware (feasibility §7.10), the remaining risk is limited to `X87_NOTE_EXT64` cases. |
+
+### 7.1 Alpha polygons (G4)
+
+Evidence: `r3d_Render3DModel` 0x41ff20, `r3d_RenderBegin` 0x420f90, `r3d_RenderEnd` 0x4210d0 (sort loop 0x421140–0x4212a0, read as assembly), `_r3d_MakeMaterial` 0x4266e0, 0x4288b0, and its game caller 0x412930.
+
+**Camera-relative world space.** `RenderBegin(camera)` stores the camera translation (`camera[9..11]`) in `0x9fa938..0x9fa940` and sets the VIEW transform to the camera rotation with zero translation. `Render3DModel` sets WORLD = model rotation with translation `t − camera`. Everything is drawn relative to the camera. `RenderBegin` also resets the alpha count `0x9b2848` and the triangle counter `0xa02a6c`.
+
+**Which polygons are deferred.** For each component of a model (record stride 0x428 at `0xa02a58`), the polygon is deferred if material `+0x164` (an int "translucent" flag, compared as float `== 1.0`) is set **and** `0x9f6798 == 0`. Otherwise the component is drawn immediately with `DrawIndexedPrimitive(TRIANGLELIST, 0x112, …, flags 8)`. `_r3d_MakeMaterial` sets `+0x164 = 1` when the material's alpha is < 1.0, or when its 13th and 15th arguments are both 1 (meaning not yet identified).
+
+**Deferral is off during gameplay.** `0x9f6798` is written only by `r3d_Initialize` (0) and 0x4288b0. The only game call is `0x4288b0(1)` in the gameplay render 0x412930, right after `RenderBegin`, and nothing resets it. So deferral and the sort apply only to frames drawn before the first gameplay frame: title and menus after start-up. From then on, translucent components draw in model order through the immediate path. [S; worth one runtime confirmation of the flag value at the menu after a game ends.]
+
+**Deferred record.** Each entry is 3 vertices × 32 bytes at `0x98de58 + 0x60·i`. Positions are transformed on the CPU: `R·v + (t − camera)` in float, with the evaluation order of 0x41ff20. Normals are rotated (type 0); colour, specular, and UV are copied. A parallel pair at `0x9b2850 + 8·i` holds (vertex type = model `+0x24`, material index = (material ptr − `0x9fa918`) / 0x1fc).
+
+**Capacity.** `_R3D_MAXALPHAPOLYS` = 1500 (`0x5db < count` checks).
+- In `Render3DModel`, the check runs before each push and again after each increment. Reaching 1500 logs "_r3d_AlphaPolyIndex>_R3D_MAXALPHAPOLYS" through 0x424400 and returns 0, partway through the model; the game then shows its "Error" box.
+- `RenderEnd` with count ≥ 1500 returns 0 **without drawing or calling `EndScene`**.
+
+**Sort.** It runs whenever `0xa06af4 == 1`. That flag is set to 1 by `r3d_Initialize` and after every successful `EndScene`, and is never cleared, so the sort always runs. Raw-byte hits at 0x421d0c / 0x422013 are misaligned coincidences.
+
+```
+idx[k] = k                                  // 0x9b10d8, int[1500]
+for p in 0 .. n-2:                          // exchange sort, not stable
+  for q in p+1 .. n-1:
+    A = idx[p]; B = idx[q]
+    c(P, axis) = ((v0 + v1) + v2) * 0.33333334f   // binary64 at PC53; constant 0x3eaaaaab @ 0x4353e0
+    DA = (ax·f32(ax) + ay·f32(ay)) + f32(az)·f32(az)
+    DB = (bx·f32(bx) + by·f32(by)) + bz·bz
+    if DA < DB (ordered; fcompp + test ah,0x41): swap idx[p], idx[q]
+```
+
+The resulting order is far to near, by squared distance of the triangle centroid from the camera position (not view depth). The comparator is **asymmetric**. Because of the `fst`/`fstp` spills to float slots, A's x and y terms multiply a register value by its float-rounded copy, A's z term squares the float-rounded value, and B's z term squares the unrounded value. Ties and NaN never swap. The port must transcribe this sequence exactly (binary64 arithmetic, f32 rounding at exactly these points). Because the comparator is asymmetric, this is not a valid ordering for library sorts.
+
+**Flush.** For each `idx` entry in order:
+1. `0x4274b0(material)`.
+2. `Begin(TRIANGLELIST, type 0 ? 0x112 (D3DVERTEX) : 0x1e2 (D3DLVERTEX), type 0 ? 8 : 0x18)`, then three `Vertex` calls and `End(0)`.
+
+This happens after WORLD is reset by 0x421640 with the camera translation added back, then set by 0x420ed0, which undoes the camera-relative transform. Flags: 8 = DONOTUPDATEEXTENTS, 0x10 = DONOTLIGHT. Then `EndScene`, and `*out = triangle count`.
+
+**Verification plan for the port.** Run a differential test against the recompiled original 0x4210d0. Fill the guest buffers with synthetic and recorded alpha lists, including ties, a near-equal centroid, NaN, and n = 1, 2, and 1499. Stub the device COM methods to log the draw order, and compare the order with the Rust port's.
 
 ## 8. Runtime validation [R]
 
