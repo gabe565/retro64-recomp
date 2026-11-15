@@ -54,7 +54,7 @@ guest exit code 0x0; overall: PASS
 
 The exit code is 0. A `[FAIL]` line or a `bugatron-runtime fatal:` message is a real result: send the output as-is. If the program prints nothing after the first line, run `echo $LASTEXITCODE` and send that number too.
 
-History: kit 1 (2026-11-15) exited silently after the first line on Windows. Reserved-but-uncommitted guest memory was being read. Fixed in kit 2 (these hashes). The oracle from kit 1 is already committed as `tests/fixtures/x86-oracle-amd-ryzen7-9800x3d.json`.
+History: kit 1 (2026-11-15) exited silently after the first line on Windows. Reserved-but-uncommitted guest memory was being read. Fixed in kit 2 (these hashes). Kit 2 passed all proof-of-concept checks on the same PC. The oracle from kit 1 is already committed as `tests/fixtures/x86-oracle-amd-ryzen7-9800x3d.json`.
 
 `bugatron-x86-oracle.exe` prints `wrote .\x86-oracle-windows.json` to stderr. The file holds 56 cases, including the new `x87_transcendental_sweep`. These values are already known for real x87 hardware, so they make a quick sanity check (open the JSON and find the case):
 

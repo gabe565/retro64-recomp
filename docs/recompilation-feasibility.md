@@ -166,7 +166,7 @@ Decided by the owner on 2026-11-15:
 
 ## 7. Proof-of-concept results (feasibility gate)
 
-**Verdict: PASS.** The architecture works. Translated original code runs natively on macOS arm64, Linux arm64, and Linux x86-64, and reproduces the original's behaviour bit for bit on every comparison made. A Windows x86-64 build compiles and links but has not been run yet.
+**Verdict: PASS.** The architecture works. Translated original code runs natively on macOS arm64, Linux arm64, Linux x86-64, and Windows x86-64 (physical PC), and reproduces the original's behaviour bit for bit on every comparison made.
 
 ### 7.1 What was built
 
@@ -242,7 +242,7 @@ Conclusions:
 | D2 | `fldcw` reserved bit 6 (§7.3) | **Fixed** in the machine model |
 | D3 | Ghidra hints: 18 "jump tables" were really `jmp [IAT]` import tail jumps with bogus targets | **Fixed**: the recompiler drops table targets that aren't decodable code |
 | D4 | Ghidra missed C++ static initializers, and some function addresses appear only as immediates | **Fixed**: the recompiler roots code pointers found in data sections and immediate operands |
-| D5 | Windows x86-64 build | First run on a Ryzen 7 9800X3D exited silently. Cause: on Windows, guest memory is reserved, not lazily committed, and the M1 check read the uncommitted top of the guest space. **Fixed**: guest memory is now commit-explicit on every OS, faults inside the guest space report the guest address (tested on all hosts), and the heap commits full block capacity. Rerun pending. |
+| D5 | Windows x86-64 build | **Resolved.** Kit 1 exited silently: the M1 check read reserved-but-uncommitted guest memory. Guest memory is now commit-explicit on every OS, with fault diagnostics. Kit 2 on a physical AMD Ryzen 7 9800X3D (Windows, x86-64): **all tests PASS**, including 600/600 timing frames, 30/30 `.lev` files, CRT start-up with control word 0x027F, and random numbers. MSVC toolchain still untested (built with MinGW). |
 | D6 | The timing spin path (below 4 ticks) never occurred in the VM, which runs too slowly. It is covered only by the synthetic edge test derived from static analysis. | Open: capture on the physical machine |
 | D7 | x87 transcendentals versus host `libm` | **Partly resolved on real hardware** (Ryzen 7 9800X3D): `fsin(1)`, `fcos(1)`, `fpatan(1, 0.5)`, and `fptan(0.5)` match the model bit for bit. An 8-angle sweep including π and 2π (case `x87_transcendental_sweep`) is pending the next hardware run. The rotation builder `0x421680` runs about 127 times per frame, so this matters. |
 | D8 | Exceptions: SEH frames are maintained, but the runtime does not dispatch exceptions | **Explicit**: the 4 C++ EH dispatcher jumps are `rt_trap` sites with reasons (`bugatron_recomp::targets`); `RaiseException`, `RtlUnwind`, and `UnhandledExceptionFilter` stop with a diagnostic |
@@ -262,6 +262,6 @@ Conclusions:
 
 ### 7.8 Recommended next steps
 
-1. Rerun the fixed Windows kit (D5) and the transcendental sweep (D7): `docs/testing/windows-validation.md`.
+1. Hardware results for the transcendental sweep (D7): `docs/testing/windows-validation.md`.
 2. Resolve G1–G7 (`docs/graphics/r3d-interface.md`) for each function before replacing it.
 3. Start the graphics replacement, following the leaf-replacement plan.
