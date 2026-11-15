@@ -20,8 +20,10 @@
 //!    *arithmetic* on the register would have seen the 64-bit value.
 //!
 //! Status: C2 = 1 and ST(0) unchanged for |x| ≥ 2⁶³ (out of range); C1 = 1 if
-//! the 64-bit rounding increased the magnitude; ±∞ is an invalid operation
+//! the 64-bit rounding increased the magnitude; PE (sticky) on every inexact
+//! result, i.e. any nonzero in-range operand; ±∞ is an invalid operation
 //! (IE, result = the default QNaN "indefinite"); NaN propagates (quieted).
+//! All of these were confirmed on an AMD Ryzen 7 9800X3D (oracle kit 3).
 //!
 //! Validated against an AMD Ryzen 7 9800X3D (tests/fixtures/x86-oracle-*.json).
 //! The CPU's own polynomial can still differ by one ULP of the 64-bit result in
@@ -50,7 +52,7 @@ pub enum TrigOutcome {
     /// tangent; 1.0 is pushed separately). `c1`: magnitude rounded up when
     /// rounding to the 64-bit significand. `ext_inexact`: the 64-bit result was
     /// not representable in binary64.
-    Value { value: f64, c1: bool, ext_inexact: bool },
+    Value { value: f64, c1: bool, ext_inexact: bool, inexact: bool },
     /// |x| ≥ 2⁶³: C2 = 1, ST(0) unchanged, nothing pushed.
     OutOfRange,
     /// ±∞: invalid operation; ST(0) = default QNaN (indefinite).
@@ -74,15 +76,25 @@ pub fn x87_trig(op: TrigOp, x: f64) -> TrigOutcome {
     }
     if x == 0.0 {
         let value = if op == TrigOp::Cos { 1.0 } else { x };
-        return TrigOutcome::Value { value, c1: false, ext_inexact: false };
+        return TrigOutcome::Value { value, c1: false, ext_inexact: false, inexact: false };
     }
     let frac = if x.abs() < 8.271806125530277e-25 { FRAC_TINY } else { FRAC_NORMAL }; // 2^-80
     let xf = to_fixed(x, frac);
-    let one = BigInt::one() << frac;
     let half_pi = BigInt::from(PI66_SCALED) << (frac - 65);
     let k = round_div(&xf, &half_pi);
-    let r = &xf - &k * &half_pi;
+    let mut r = &xf - &k * &half_pi;
     let q = k.mod_floor(&BigInt::from(4)).to_u32().unwrap();
+    // Small reduced arguments: the series correction (r³/6 for sin, r²/2 for
+    // cos) decides the rounding direction (C1) and must stay well above the
+    // working precision. r is exact, so widen the fixed point losslessly.
+    let mut frac = frac;
+    let magnitude = frac as i64 - r.bits() as i64; // ≈ −log2|r|
+    if magnitude > 16 {
+        let extra = (2 * magnitude) as u32;
+        r <<= extra;
+        frac += extra;
+    }
+    let one = BigInt::one() << frac;
     let r2 = mul_fixed(&r, &r, frac);
     let v = match (op, q) {
         (TrigOp::Sin, 0) => sin_fixed(&r, &r2, frac),
@@ -99,7 +111,8 @@ pub fn x87_trig(op: TrigOp, x: f64) -> TrigOutcome {
         }
     };
     let (value, c1, ext_inexact) = round_fixed_to_x87(&v, frac);
-    TrigOutcome::Value { value, c1, ext_inexact }
+    // sin/cos/tan of a nonzero binary64 is irrational: always inexact (PE).
+    TrigOutcome::Value { value, c1, ext_inexact, inexact: true }
 }
 
 /// Exact conversion of a finite binary64 to fixed point with `frac` fraction
@@ -284,6 +297,10 @@ mod tests {
         assert_eq!(x87_trig(TrigOp::Sin, 9.223372036854775808e18), TrigOutcome::OutOfRange);
         assert_eq!(x87_trig(TrigOp::Cos, -9.223372036854775808e18), TrigOutcome::OutOfRange);
         assert!(matches!(x87_trig(TrigOp::Sin, 9.2233720368547748e18), TrigOutcome::Value { .. }));
+        // C1 for tiny arguments (hardware: sin(1e-20) rounds up in magnitude).
+        assert!(matches!(x87_trig(TrigOp::Sin, 1.0e-20), TrigOutcome::Value { c1: true, inexact: true, .. }));
+        assert!(matches!(x87_trig(TrigOp::Tan, 1.0e-20), TrigOutcome::Value { c1: false, .. }));
+        assert!(matches!(x87_trig(TrigOp::Cos, 1.0e-20), TrigOutcome::Value { c1: true, .. }));
         assert_eq!(x87_trig(TrigOp::Sin, f64::INFINITY), TrigOutcome::Invalid);
         assert!(matches!(x87_trig(TrigOp::Cos, f64::NAN), TrigOutcome::Nan(_)));
         // Tiny and subnormal arguments (the game passes denormal float angles).

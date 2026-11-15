@@ -244,7 +244,7 @@ Conclusions:
 | D4 | Ghidra missed C++ static initializers, and some function addresses appear only as immediates | **Fixed**: the recompiler roots code pointers found in data sections and immediate operands |
 | D5 | Windows x86-64 build | **Resolved.** Kit 1 exited silently: the M1 check read reserved-but-uncommitted guest memory. Guest memory is now commit-explicit on every OS, with fault diagnostics. Kit 2 on a physical AMD Ryzen 7 9800X3D (Windows, x86-64): **all tests PASS**, including 600/600 timing frames, 30/30 `.lev` files, CRT start-up with control word 0x027F, and random numbers. MSVC toolchain still untested (built with MinGW). |
 | D6 | The timing spin path (below 4 ticks) never occurred in the VM, which runs too slowly. It is covered only by the synthetic edge test derived from static analysis. | Open: capture on the physical machine |
-| D7 | x87 transcendentals versus host `libm` | **Implemented** (§7.10): FSIN/FCOS/FPTAN now use x87 argument reduction with the documented 66-bit π. This reproduces all 19 hardware values, including sin(4.0), which turned out to be a reduction effect, not microcode rounding. Hardware confirmation of the new regression cases is pending (oracle kit 3). FPATAN still uses host `libm` (`X87_NOTE_TRANSCENDENTAL`). |
+| D7 | x87 transcendentals versus host `libm` | **Resolved** (§7.10): FSIN/FCOS/FPTAN use x87 argument reduction with the 66-bit π. Confirmed on an AMD Ryzen 7 9800X3D (oracle kit 3): all values **and status words** in the trig regression cases match. FPATAN still uses host `libm` (`X87_NOTE_TRANSCENDENTAL`). |
 | D8 | Exceptions: SEH frames are maintained, but the runtime does not dispatch exceptions | **Explicit**: the 4 C++ EH dispatcher jumps are `rt_trap` sites with reasons (`bugatron_recomp::targets`); `RaiseException`, `RtlUnwind`, and `UnhandledExceptionFilter` stop with a diagnostic |
 | D9 | Guest heap addresses differ from the original's Windows heap. Logic that depends on pointer values would diverge. | Open: differential tests must compare logical state, not raw pointers |
 | D10 | 8 instruction sites were unimplemented in the emitter: `RCR` ×4, `BTS` ×2, `PUSHAD`, `POPAD` | **Fixed**: `RCL`/`RCR` at all sizes, the `BT`/`BTS`/`BTR`/`BTC` family with bit-string addressing, and `PUSHAD`/`POPAD`. The whole program now has 0 unimplemented sites; regression cases in §7.7. |
@@ -292,6 +292,7 @@ Status and stack behaviour:
 
 - C2 = 1 with the operand unchanged for |x| ≥ 2⁶³.
 - C1 = 1 when the 64-bit rounding increased the magnitude.
+- PE (sticky) is set on every inexact result, which means any nonzero in-range operand.
 - ±∞ is an invalid operation (IE) and produces the default QNaN.
 - NaN propagates.
 - FPTAN pushes 1.0, except for out-of-range operands.
@@ -315,8 +316,16 @@ Regression cases: `x87_trig_workload_angles` (real float32 angles), `x87_trig_ne
 
 Cost: about 3.6 µs per call in a release build on Apple Silicon, about 0.9 ms per frame at the measured rate.
 
+**Hardware confirmation (oracle kit 3, AMD Ryzen 7 9800X3D):** all 60 cases match except the documented 64-bit-precision case. Every FSIN/FCOS/FPTAN value matches bit for bit, as does every stored status word (C1, C2, IE, PE, TOP).
+
+The first comparison of kit 3 found two status-flag gaps, both now fixed:
+
+- PE was not set.
+- C1 was wrong for sin(1e-20). The `r³/6` correction that decides the rounding direction fell below the 192-bit working precision. The implementation now widens precision losslessly when the reduced argument is small.
+
+The PE flag is modelled for FSIN/FCOS/FPTAN only. Arithmetic instructions don't set PE yet; see open-questions R9.
+
 ### 7.8 Recommended next steps
 
-1. Hardware confirmation of the x87 trig regression cases (oracle kit 3, `docs/testing/windows-validation.md`).
 2. Resolve G1–G7 (`docs/graphics/r3d-interface.md`) for each function before replacing it.
 3. Start the graphics replacement, following the leaf-replacement plan.

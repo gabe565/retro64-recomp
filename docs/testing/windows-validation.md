@@ -13,7 +13,7 @@ Get-FileHash .\bugatron-x86-oracle.exe -Algorithm SHA256
 .\bugatron-x86-oracle.exe .\x86-oracle-windows.json > $null
 ```
 
-Expected: `wrote .\x86-oracle-windows.json`, with 60 cases. Send back `x86-oracle-windows.json`. The model is expected to match it exactly on every strict case, including the four new trig cases (`x87_trig_workload_angles`, `x87_trig_negative_and_multiples`, `x87_trig_boundaries`, `x87_fptan_values_and_stack`). The only expected difference is the documented 64-bit-precision case.
+Result (2026-11-15): all 60 cases match the model except the documented 64-bit-precision case. That came after one fix, PE and C1 for tiny arguments. Expected: `wrote .\x86-oracle-windows.json`, with 60 cases. Send back `x86-oracle-windows.json`. The model is expected to match it exactly on every strict case, including the four new trig cases (`x87_trig_workload_angles`, `x87_trig_negative_and_multiples`, `x87_trig_boundaries`, `x87_fptan_values_and_stack`). The only expected difference is the documented 64-bit-precision case.
 
 ---
 

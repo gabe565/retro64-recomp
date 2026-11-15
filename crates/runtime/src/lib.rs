@@ -350,6 +350,7 @@ fn x87_strict() -> bool {
 // ---- x87 FSIN / FCOS / FPTAN (x87-compatible argument reduction) -----------------
 
 const FSW_IE: u32 = 0x0001;
+const FSW_PE: u32 = 0x0020;
 const FSW_C1: u32 = 0x0200;
 const FSW_C2: u32 = 0x0400;
 
@@ -367,9 +368,9 @@ fn x87_trig_insn(c: *mut Cpu, op: x87trig::TrigOp) {
             cpu.fsw = (cpu.fsw & !FSW_C1) | FSW_C2;
             return;
         }
-        TrigOutcome::Value { value, c1, ext_inexact } => {
+        TrigOutcome::Value { value, c1, ext_inexact, inexact } => {
             cpu.st[top] = value;
-            cpu.fsw = (cpu.fsw & !(FSW_C1 | FSW_C2)) | if c1 { FSW_C1 } else { 0 };
+            cpu.fsw = (cpu.fsw & !(FSW_C1 | FSW_C2)) | if c1 { FSW_C1 } else { 0 } | if inexact { FSW_PE } else { 0 };
             if ext_inexact {
                 rt_x87_note(c, 64);
             }

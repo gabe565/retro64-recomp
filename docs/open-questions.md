@@ -32,8 +32,9 @@ This is a living list. Each entry states its scope, what is known, and how to re
 | R4 | Semantics of the 4 unresolved indirect jumps in CRT unwind helpers (exception policy) | §7.5 D8 |
 | R5 | Does `r3d` contain any gameplay-affecting logic (needed before overriding it)? | Read the 90 `r3d` functions' data flow into game globals |
 | R6 | Exact COM methods used, per interface | Type the vtable call sites in `r3d` and WinMain |
-| R7 | Windows build executed? | §7.5 D5 |
-| R8 | Transcendental x87 results versus real hardware | §7.5 D7 |
+| R7 | Windows build executed? | **Resolved**: passes on physical Windows x86-64 (§7.5 D5) |
+| R8 | Transcendental x87 results versus real hardware | **Resolved** for FSIN/FCOS/FPTAN (§7.10); FPATAN still libm |
+| R9 | The x87 precision flag (PE) and other exception flags are not set by arithmetic instructions | Only matters if game code reads the status-word exception bits; check for FNSTSW consumers that test bits 0–5 |
 
 ## Graphics
 
