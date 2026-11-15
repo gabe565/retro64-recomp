@@ -1,0 +1,5 @@
+/reference/
+/_work/
+/target/
+__pycache__/
+.DS_Store

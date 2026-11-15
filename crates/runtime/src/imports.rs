@@ -1,0 +1,324 @@
+//! Implementations of the Win32 imports the game actually calls.
+//!
+//! Only functions observed being called are implemented. Every other import in
+//! the executable's import table resolves to a stub that stops the run with the
+//! function's name, so the implemented surface grows from evidence.
+
+use crate::{fatal, with_rt, Cpu, Runtime};
+
+/// stdcall argument `i` (0-based) of the import being called.
+fn arg(rt: &Runtime, cpu: &Cpu, i: u32) -> u32 {
+    rt.mem.r32(cpu.esp + 4 + 4 * i)
+}
+
+/// Return from a stdcall import: pop return address and `nargs` arguments.
+fn ret(cpu: &mut Cpu, value: u32, nargs: u32) {
+    cpu.eax = value;
+    cpu.esp += 4 + 4 * nargs;
+}
+
+const FAKE_STDIN: u32 = 0x100;
+const FAKE_STDOUT: u32 = 0x101;
+const FAKE_STDERR: u32 = 0x102;
+const KERNEL32_HANDLE: u32 = 0x7c80_0000;
+
+pub(crate) fn dispatch_import(cpu: &mut Cpu, idx: usize) {
+    with_rt(|rt| {
+        let (dll, name) = rt.import_names.get(idx).cloned().unwrap_or_else(|| fatal(&format!("bad import thunk {idx}")));
+        *rt.diag.import_calls.entry(format!("{dll}!{name}")).or_default() += 1;
+        call(rt, cpu, &dll, &name);
+    });
+}
+
+fn call(rt: &mut Runtime, cpu: &mut Cpu, dll: &str, name: &str) {
+    macro_rules! a { ($i:expr) => { arg(rt, cpu, $i) }; }
+    match (dll, name) {
+        // ---- process / module -------------------------------------------------
+        ("kernel32.dll", "GetVersion") => ret(cpu, 0x0a28_0105, 0), // Windows XP SP-era 5.1.2600
+        ("kernel32.dll", "GetCommandLineA") => ret(cpu, rt.command_line, 0),
+        ("kernel32.dll", "GetStartupInfoA") => {
+            let p = a!(0);
+            rt.mem.slice_mut(p, 68).fill(0);
+            rt.mem.w32(p, 68);
+            ret(cpu, 0, 1);
+        }
+        ("kernel32.dll", "GetModuleHandleA") => {
+            let p = a!(0);
+            let h = if p == 0 {
+                rt.pe.image_base
+            } else if rt.mem.cstr(p).eq_ignore_ascii_case("kernel32") || rt.mem.cstr(p).eq_ignore_ascii_case("kernel32.dll") {
+                KERNEL32_HANDLE
+            } else {
+                0
+            };
+            ret(cpu, h, 1);
+        }
+        ("kernel32.dll", "GetModuleFileNameA") => {
+            let (h, buf, size) = (a!(0), a!(1), a!(2));
+            let _ = h;
+            let mut s = rt.module_path.clone().into_bytes();
+            s.truncate(size.saturating_sub(1) as usize);
+            let n = s.len() as u32;
+            rt.mem.write(buf, &s);
+            rt.mem.w8(buf + n, 0);
+            ret(cpu, n, 3);
+        }
+        ("kernel32.dll", "GetProcAddress") => ret(cpu, 0, 2), // nothing optional is provided
+        ("kernel32.dll", "GetCurrentThreadId") => ret(cpu, 1, 0),
+        ("kernel32.dll", "GetCurrentProcess") => ret(cpu, 0xffff_ffff, 0),
+        ("kernel32.dll", "GetCurrentThread") => ret(cpu, 0xffff_fffe, 0),
+        ("kernel32.dll", "GetLastError") => ret(cpu, rt.last_error, 0),
+        ("kernel32.dll", "SetLastError") => { rt.last_error = a!(0); ret(cpu, 0, 1); }
+        ("kernel32.dll", "SetUnhandledExceptionFilter") => ret(cpu, 0, 1),
+        ("kernel32.dll", "ExitProcess") => {
+            let code = a!(0);
+            let status = match rt.exit_hook.as_mut() { Some(h) => h(code), None => code as i32 };
+            std::process::exit(status);
+        }
+        // ---- environment ------------------------------------------------------
+        ("kernel32.dll", "GetEnvironmentStrings") | ("kernel32.dll", "GetEnvironmentStringsW") => ret(cpu, rt.env_block, 0),
+        ("kernel32.dll", "FreeEnvironmentStringsA") | ("kernel32.dll", "FreeEnvironmentStringsW") => ret(cpu, 1, 1),
+        // ---- code pages and strings ----------------------------------------------
+        ("kernel32.dll", "GetACP") => ret(cpu, 1252, 0),
+        ("kernel32.dll", "GetOEMCP") => ret(cpu, 437, 0),
+        ("kernel32.dll", "GetCPInfo") => {
+            let p = a!(1);
+            rt.mem.slice_mut(p, 20).fill(0);
+            rt.mem.w32(p, 1); // MaxCharSize
+            rt.mem.w8(p + 4, b'?');
+            ret(cpu, 1, 2);
+        }
+        ("kernel32.dll", "MultiByteToWideChar") => {
+            let (src, srclen, dst, dstlen) = (a!(2), a!(3), a!(4), a!(5));
+            let bytes: Vec<u8> = if srclen == 0xffff_ffff {
+                let mut v = rt.mem.cstr(src).into_bytes();
+                v.push(0);
+                v
+            } else {
+                rt.mem.slice(src, srclen as usize).to_vec()
+            };
+            if dstlen != 0 {
+                if (dstlen as usize) < bytes.len() { rt.last_error = 122; ret(cpu, 0, 6); return; }
+                for (i, &b) in bytes.iter().enumerate() {
+                    rt.mem.w16(dst + 2 * i as u32, b as u16); // Latin-1 / cp1252 subset
+                }
+            }
+            ret(cpu, bytes.len() as u32, 6);
+        }
+        ("kernel32.dll", "WideCharToMultiByte") => {
+            let (src, srclen, dst, dstlen) = (a!(2), a!(3), a!(4), a!(5));
+            let mut chars = Vec::new();
+            let mut i = 0;
+            loop {
+                if srclen != 0xffff_ffff && i >= srclen { break; }
+                let ch = rt.mem.r16(src + 2 * i);
+                chars.push(if ch < 256 { ch as u8 } else { b'?' });
+                i += 1;
+                if srclen == 0xffff_ffff && ch == 0 { break; }
+            }
+            if dstlen != 0 {
+                if (dstlen as usize) < chars.len() { rt.last_error = 122; ret(cpu, 0, 8); return; }
+                rt.mem.write(dst, &chars);
+            }
+            ret(cpu, chars.len() as u32, 8);
+        }
+        ("kernel32.dll", "GetStringTypeW") => {
+            // (dwInfoType, lpSrcStr, cchSrc, lpCharType) — CT_CTYPE1 only.
+            let (info, src, cch, out) = (a!(0), a!(1), a!(2), a!(3));
+            if info != 1 { ret(cpu, 0, 4); return; }
+            let n = if cch == 0xffff_ffff { (0..).take_while(|&i| rt.mem.r16(src + 2 * i) != 0).count() as u32 + 1 } else { cch };
+            for i in 0..n {
+                let ch = rt.mem.r16(src + 2 * i);
+                rt.mem.w16(out + 2 * i, ctype1(ch));
+            }
+            ret(cpu, 1, 4);
+        }
+        ("kernel32.dll", "GetStringTypeA") => {
+            // (Locale, dwInfoType, lpSrcStr, cchSrc, lpCharType)
+            let (info, src, cch, out) = (a!(1), a!(2), a!(3), a!(4));
+            if info != 1 { ret(cpu, 0, 5); return; }
+            let n = if cch == 0xffff_ffff { rt.mem.cstr(src).len() as u32 + 1 } else { cch };
+            for i in 0..n {
+                let ch = rt.mem.r8(src + i) as u16;
+                rt.mem.w16(out + 2 * i, ctype1(ch));
+            }
+            ret(cpu, 1, 5);
+        }
+        ("kernel32.dll", "LCMapStringW") | ("kernel32.dll", "LCMapStringA") => {
+            // (Locale, dwMapFlags, lpSrcStr, cchSrc, lpDestStr, cchDest); LCMAP_LOWERCASE/UPPERCASE only.
+            let wide = name.ends_with('W');
+            let (flags, src, cch, dst, dcch) = (a!(1), a!(2), a!(3), a!(4), a!(5));
+            let unit = if wide { 2 } else { 1 };
+            let read = |i: u32| if wide { rt.mem.r16(src + 2 * i) } else { rt.mem.r8(src + i) as u16 };
+            let n = if cch == 0xffff_ffff { (0..).take_while(|&i| read(i) != 0).count() as u32 + 1 } else { cch };
+            if flags & !0x0300 != 0 { fatal(&format!("{name}: unsupported flags {flags:#x}")); }
+            if dcch == 0 { ret(cpu, n, 6); return; }
+            if dcch < n { rt.last_error = 122; ret(cpu, 0, 6); return; }
+            let vals: Vec<u16> = (0..n).map(|i| {
+                let ch = read(i);
+                if ch < 128 {
+                    let b = ch as u8;
+                    (if flags & 0x100 != 0 { b.to_ascii_lowercase() } else if flags & 0x200 != 0 { b.to_ascii_uppercase() } else { b }) as u16
+                } else { ch }
+            }).collect();
+            for (i, v) in vals.iter().enumerate() {
+                if wide { rt.mem.w16(dst + 2 * i as u32, *v) } else { rt.mem.w8(dst + i as u32, *v as u8) }
+            }
+            let _ = unit;
+            ret(cpu, n, 6);
+        }
+        // ---- heap -------------------------------------------------------------
+        ("kernel32.dll", "HeapCreate") => ret(cpu, 0x0050_0000, 3),
+        ("kernel32.dll", "HeapDestroy") => ret(cpu, 1, 1),
+        ("kernel32.dll", "HeapAlloc") => {
+            let (flags, size) = (a!(1), a!(2));
+            let p = rt.heap_alloc(size, flags & 0x8 != 0);
+            ret(cpu, p, 3);
+        }
+        ("kernel32.dll", "HeapFree") => {
+            let ok = rt.heap.free(a!(2));
+            ret(cpu, ok as u32, 3);
+        }
+        ("kernel32.dll", "HeapSize") => {
+            let s = rt.heap.size(a!(2)).unwrap_or(0xffff_ffff);
+            ret(cpu, s, 3);
+        }
+        ("kernel32.dll", "HeapReAlloc") => {
+            let (flags, p, size) = (a!(1), a!(2), a!(3));
+            let old = rt.heap.size(p).unwrap_or_else(|| fatal(&format!("HeapReAlloc of unknown block {p:#x}")));
+            if rt.heap.resize_in_place(p, size) {
+                if flags & 0x8 != 0 && size > old {
+                    rt.mem.slice_mut(p + old, (size - old) as usize).fill(0);
+                }
+                ret(cpu, p, 4);
+            } else if flags & 0x10 != 0 {
+                ret(cpu, 0, 4); // HEAP_REALLOC_IN_PLACE_ONLY
+            } else {
+                let n = rt.heap_alloc(size, flags & 0x8 != 0);
+                let data = rt.mem.slice(p, old.min(size) as usize).to_vec();
+                rt.mem.write(n, &data);
+                rt.heap.free(p);
+                ret(cpu, n, 4);
+            }
+        }
+        ("kernel32.dll", "VirtualAlloc") => {
+            let (addr, size, ty) = (a!(0), a!(1), a!(2));
+            let r = if addr == 0 {
+                rt.valloc.reserve(size).unwrap_or(0)
+            } else if rt.valloc.contains(addr, size) {
+                addr & !0xfff
+            } else {
+                0
+            };
+            if r != 0 && ty & 0x1000 != 0 {
+                rt.mem.commit(r, size as usize).expect("commit");
+            }
+            ret(cpu, r, 4);
+        }
+        ("kernel32.dll", "VirtualFree") => {
+            let (addr, size, ty) = (a!(0), a!(1), a!(2));
+            if ty & 0x4000 != 0 && size != 0 {
+                // MEM_DECOMMIT: recommitted pages read as zero.
+                rt.mem.slice_mut(addr, size as usize).fill(0);
+            }
+            ret(cpu, 1, 3);
+        }
+        // ---- thread-local storage / sync ---------------------------------------
+        ("kernel32.dll", "TlsAlloc") => { rt.tls.push(0); ret(cpu, rt.tls.len() as u32 - 1, 0); }
+        ("kernel32.dll", "TlsSetValue") => {
+            let i = a!(0) as usize;
+            if i < rt.tls.len() { rt.tls[i] = a!(1); ret(cpu, 1, 2) } else { ret(cpu, 0, 2) }
+        }
+        ("kernel32.dll", "TlsGetValue") => {
+            let v = rt.tls.get(a!(0) as usize).copied().unwrap_or(0);
+            rt.last_error = 0;
+            ret(cpu, v, 1);
+        }
+        ("kernel32.dll", "InitializeCriticalSection") | ("kernel32.dll", "DeleteCriticalSection")
+        | ("kernel32.dll", "EnterCriticalSection") | ("kernel32.dll", "LeaveCriticalSection") => ret(cpu, 0, 1),
+        ("kernel32.dll", "InterlockedIncrement") | ("kernel32.dll", "InterlockedDecrement") => {
+            let p = a!(0);
+            let v = if name == "InterlockedIncrement" { rt.mem.r32(p).wrapping_add(1) } else { rt.mem.r32(p).wrapping_sub(1) };
+            rt.mem.w32(p, v);
+            ret(cpu, v, 1);
+        }
+        // ---- standard handles ---------------------------------------------------
+        ("kernel32.dll", "GetStdHandle") => {
+            let h = match a!(0) { 0xffff_fff6 => FAKE_STDIN, 0xffff_fff5 => FAKE_STDOUT, 0xffff_fff4 => FAKE_STDERR, _ => 0xffff_ffff };
+            ret(cpu, h, 1);
+        }
+        ("kernel32.dll", "GetFileType") => {
+            let t = if matches!(a!(0), FAKE_STDIN | FAKE_STDOUT | FAKE_STDERR) { 2 } else { 0 };
+            ret(cpu, t, 1);
+        }
+        ("kernel32.dll", "SetHandleCount") => ret(cpu, a!(0), 1),
+        ("kernel32.dll", "WriteFile") => {
+            let (h, buf, n, written) = (a!(0), a!(1), a!(2), a!(3));
+            let text = String::from_utf8_lossy(rt.mem.slice(buf, n as usize)).into_owned();
+            if h == FAKE_STDOUT { print!("{text}") } else { eprint!("[guest] {text}") }
+            if written != 0 { rt.mem.w32(written, n); }
+            ret(cpu, 1, 5);
+        }
+        // ---- time ---------------------------------------------------------------
+        ("kernel32.dll", "QueryPerformanceFrequency") => {
+            let p = a!(0);
+            let f = rt.clock.qpc_frequency;
+            rt.mem.w32(p, f as u32);
+            rt.mem.w32(p + 4, (f >> 32) as u32);
+            ret(cpu, 1, 1);
+        }
+        ("kernel32.dll", "QueryPerformanceCounter") => {
+            let p = a!(0);
+            let v = match rt.clock.qpc_queue.pop_front() {
+                Some(v) => v,
+                None => { rt.clock.qpc_underflow = true; 0 }
+            };
+            rt.mem.w32(p, v as u32);
+            rt.mem.w32(p + 4, (v >> 32) as u32);
+            ret(cpu, 1, 1);
+        }
+        ("kernel32.dll", "Sleep") => { rt.clock.sleeps += 1; ret(cpu, 0, 1); }
+        ("winmm.dll", "timeGetTime") => ret(cpu, rt.clock.time_get_time, 0),
+        _ => fatal(&format!("unimplemented import {dll}!{name} (called with esp={:#x})", cpu.esp)),
+    }
+}
+
+// ---- COM ---------------------------------------------------------------------------
+
+/// Interface ids used in COM thunk addresses.
+pub const IFACE_DIRECTDRAW4: u32 = 1;
+
+pub(crate) fn dispatch_com(cpu: &mut Cpu, thunk: u32) {
+    let off = thunk - crate::COM_THUNK_BASE;
+    let (iface, slot) = (off / 0x1000, (off % 0x1000) / 16);
+    with_rt(|rt| {
+        *rt.diag.com_calls.entry(format!("iface{iface}:slot{slot}")).or_default() += 1;
+        match (iface, slot) {
+            // IDirectDraw4::GetMonitorFrequency(this, LPDWORD)
+            (IFACE_DIRECTDRAW4, 15) => {
+                let p = arg(rt, cpu, 1);
+                rt.mem.w32(p, rt.clock.monitor_frequency);
+                ret(cpu, 0, 2);
+            }
+            _ => fatal(&format!("unimplemented COM method: interface {iface} slot {slot} (vtable offset {:#x})", slot * 4)),
+        }
+    });
+}
+
+/// CT_CTYPE1 classification for the "C" locale (ASCII); other code units get 0.
+fn ctype1(ch: u16) -> u16 {
+    const UPPER: u16 = 0x1; const LOWER: u16 = 0x2; const DIGIT: u16 = 0x4; const SPACE: u16 = 0x8;
+    const PUNCT: u16 = 0x10; const CNTRL: u16 = 0x20; const BLANK: u16 = 0x40; const XDIGIT: u16 = 0x80; const ALPHA: u16 = 0x100;
+    if ch >= 128 { return 0; }
+    let b = ch as u8;
+    let mut t = 0;
+    if b.is_ascii_uppercase() { t |= UPPER | ALPHA; }
+    if b.is_ascii_lowercase() { t |= LOWER | ALPHA; }
+    if b.is_ascii_digit() { t |= DIGIT; }
+    if b.is_ascii_hexdigit() { t |= XDIGIT; }
+    if matches!(b, b' ' | b'\t' | b'\n' | 0x0b | 0x0c | b'\r') { t |= SPACE; }
+    if b == b' ' || b == b'\t' { t |= BLANK; }
+    if b.is_ascii_punctuation() { t |= PUNCT; }
+    if b.is_ascii_control() { t |= CNTRL; }
+    t
+}

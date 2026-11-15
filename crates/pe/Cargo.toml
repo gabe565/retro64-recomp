@@ -1,0 +1,7 @@
+[package]
+name = "bugatron-pe"
+description = "Minimal PE32 reader for the Bugatron recompiler and runtime"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish.workspace = true

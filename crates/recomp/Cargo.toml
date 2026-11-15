@@ -1,0 +1,18 @@
+[package]
+name = "bugatron-recomp"
+description = "Static recompiler: 32-bit x86 (Bugatron Gold v1.20a) to portable C"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+bugatron-pe.workspace = true
+iced-x86.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+
+[[bin]]
+name = "bugatron-recomp"
+path = "src/main.rs"

@@ -1,0 +1,16 @@
+[package]
+name = "bugatron-runtime"
+description = "Portable runtime for statically recompiled Bugatron code"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+bugatron-pe.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true

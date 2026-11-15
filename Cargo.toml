@@ -1,0 +1,22 @@
+[workspace]
+resolver = "2"
+members = ["crates/pe", "crates/recomp", "crates/runtime", "crates/poc"]
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+publish = false
+
+[workspace.dependencies]
+bugatron-pe = { path = "crates/pe" }
+bugatron-recomp = { path = "crates/recomp" }
+bugatron-runtime = { path = "crates/runtime" }
+iced-x86 = { version = "1.22", default-features = false, features = ["std", "decoder", "intel", "instr_info"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+crc32fast = "1"
+cc = "1"
+libc = "0.2"
+windows-sys = { version = "0.59", features = ["Win32_System_Memory"] }
