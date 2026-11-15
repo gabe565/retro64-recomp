@@ -196,7 +196,9 @@ impl Runtime {
 
     pub fn heap_alloc(&mut self, size: u32, zero: bool) -> u32 {
         let a = self.heap.alloc(size.max(1)).expect("guest heap exhausted");
-        self.mem.commit(a, size as usize).expect("commit heap");
+        // Commit the block's full capacity: HeapReAlloc may grow in place up to it.
+        let cap = (size.max(8) + 7) & !7;
+        self.mem.commit(a, cap as usize).expect("commit heap");
         if zero {
             self.mem.slice_mut(a, size as usize).fill(0);
         }

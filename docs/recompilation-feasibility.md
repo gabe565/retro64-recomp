@@ -242,14 +242,14 @@ Conclusions:
 | D2 | `fldcw` reserved bit 6 (§7.3) | **Fixed** in the machine model |
 | D3 | Ghidra hints: 18 "jump tables" were really `jmp [IAT]` import tail jumps with bogus targets | **Fixed**: the recompiler drops table targets that aren't decodable code |
 | D4 | Ghidra missed C++ static initializers, and some function addresses appear only as immediates | **Fixed**: the recompiler roots code pointers found in data sections and immediate operands |
-| D5 | Windows x86-64 build cross-compiled with MinGW but **not executed**; MSVC toolchain untested | Open: test kit and exact procedure in `docs/testing/windows-validation.md` |
+| D5 | Windows x86-64 build | First run on a Ryzen 7 9800X3D exited silently. Cause: on Windows, guest memory is reserved, not lazily committed, and the M1 check read the uncommitted top of the guest space. **Fixed**: guest memory is now commit-explicit on every OS, faults inside the guest space report the guest address (tested on all hosts), and the heap commits full block capacity. Rerun pending. |
 | D6 | The timing spin path (below 4 ticks) never occurred in the VM, which runs too slowly. It is covered only by the synthetic edge test derived from static analysis. | Open: capture on the physical machine |
-| D7 | x87 transcendentals (`FSIN`, `FCOS`, `FPATAN`, `FPTAN`) use host `libm`, which may differ in the last bits from x87. They matter beyond rendering: the `r3d` rotation-matrix builder `0x421680` uses `fsin`/`fcos` and game code calls it 10 times. | Open: the oracle case `x87_transcendentals` measures them on real hardware (windows-validation.md) |
+| D7 | x87 transcendentals versus host `libm` | **Partly resolved on real hardware** (Ryzen 7 9800X3D): `fsin(1)`, `fcos(1)`, `fpatan(1, 0.5)`, and `fptan(0.5)` match the model bit for bit. An 8-angle sweep including π and 2π (case `x87_transcendental_sweep`) is pending the next hardware run. The rotation builder `0x421680` runs about 127 times per frame, so this matters. |
 | D8 | Exceptions: SEH frames are maintained, but the runtime does not dispatch exceptions | **Explicit**: the 4 C++ EH dispatcher jumps are `rt_trap` sites with reasons (`bugatron_recomp::targets`); `RaiseException`, `RtlUnwind`, and `UnhandledExceptionFilter` stop with a diagnostic |
 | D9 | Guest heap addresses differ from the original's Windows heap. Logic that depends on pointer values would diverge. | Open: differential tests must compare logical state, not raw pointers |
 | D10 | 8 instruction sites were unimplemented in the emitter: `RCR` ×4, `BTS` ×2, `PUSHAD`, `POPAD` | **Fixed**: `RCL`/`RCR` at all sizes, the `BT`/`BTS`/`BTR`/`BTC` family with bit-string addressing, and `PUSHAD`/`POPAD`. The whole program now has 0 unimplemented sites; regression cases in §7.7. |
 | D11 | Only 27 of 120 imports are implemented, and 1 COM method | Expected; the rest are added when called |
-| D12 | `r3d` graphics boundary | **Mapped statically** in `docs/graphics/r3d-interface.md` (90 functions, stdcall, 7 direct COM sites). Runtime validation probe written, not yet run. |
+| D12 | `r3d` graphics boundary | **Mapped and validated**: `docs/graphics/r3d-interface.md` covers 90 functions and 7 direct COM sites. Stdcall cleanup was confirmed on about 4.5 million runtime calls, and the game calls only statically identified functions. |
 | D13 | x87 approximations were silent apart from `Cpu::x87_notes` | **Explicit**: `BUGATRON_X87_STRICT=1` stops at the first approximation; the PoC passes in strict mode |
 
 ### 7.7 Instruction-semantics regression suite
@@ -258,10 +258,10 @@ Conclusions:
 - `cargo test -p bugatron-x86-tests` runs each case through the real recompiler and runtime. It checks hand-derived expectations from the Intel SDM, compared on defined flags only, and every oracle fixture present.
 - `crates/x86-oracle` runs the same bytes natively. Fixtures:
   - `tests/fixtures/x86-oracle-qemu-i386.json` comes from QEMU's i386 emulator (**not hardware**). It validates the harness and integer and flag semantics. All strict cases match. The 64-bit-precision case differs as documented, since QEMU implements 80-bit precision.
-  - A real-CPU fixture is pending the Windows run.
+  - `tests/fixtures/x86-oracle-amd-ryzen7-9800x3d.json` comes from real hardware (AMD Ryzen 7 9800X3D). **All strict cases match.** The 64-bit-precision case differs exactly as documented, and the transcendental report-only case matches bit for bit.
 
 ### 7.8 Recommended next steps
 
-1. Windows run and hardware oracle (D5, D7): `docs/testing/windows-validation.md`.
-2. Run the `r3d` boundary probe (`docs/graphics/r3d-interface.md` §8), then resolve G1–G7.
-3. Only then start the graphics replacement, following the leaf-replacement plan.
+1. Rerun the fixed Windows kit (D5) and the transcendental sweep (D7): `docs/testing/windows-validation.md`.
+2. Resolve G1–G7 (`docs/graphics/r3d-interface.md`) for each function before replacing it.
+3. Start the graphics replacement, following the leaf-replacement plan.

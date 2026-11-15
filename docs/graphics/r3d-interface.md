@@ -6,13 +6,13 @@ Evidence labels:
 
 - **[S] static:** Ghidra survey `tools/ghidra/R3dSurvey.java` → `_work/ghidra/out/r3d_survey.json`, plus decompiled bodies.
 - **[A] assembly:** read directly from disassembly.
-- **[R] runtime:** `tools/frida/probe_r3d_boundary.js`. **Not yet run.** The VM was unavailable; see §8.
+- **[R] runtime:** `tools/frida/probe_r3d_boundary.js`, run 2026-11-15 in the VM (§8).
 
 ## 1. Summary
 
 - `r3d` is an in-house Direct3D 6 immediate-mode wrapper ("INDOTEK" model format). It spans `0x41e950`–`0x42a3ff`: 90 functions, about 45 KB [S].
-- **Calling convention: stdcall.** Every `r3d` function pops its own arguments with `ret N`, and the survey's stack purge matches the `ret` immediates for all 90 [S/A]. The runtime probe re-checks this on every call (§8).
-- **50 of the 90 functions are called directly from game code** [S]. The rest are internal.
+- **Calling convention: stdcall.** Every `r3d` function pops its own arguments with `ret N`, and the survey's stack purge matches the `ret` immediates for all 90 [S/A]. **Confirmed at runtime** for the 42 functions exercised, about 4.5 million calls, every one cleaning exactly the static purge [R].
+- **50 of the 90 functions are called directly from game code** [S]. The rest are internal. At runtime, 29 of the 50 were called from game code during the menu, four level files, and high scores. None outside the static set was called from game code, and no `r3d` function was entered from CRT code [R].
 - **Game code never reads or writes a global variable that `r3d` writes** [S: zero cross-references]. The coupling consists entirely of function calls, the data those calls return, and seven direct COM calls on DirectX objects obtained through `r3d` accessors (§4).
 - **Game code consumes data from `r3d`:**
   - model bounds and geometry (collision and placement candidates);
@@ -204,19 +204,42 @@ recompiled game ──(stdcall overrides)──► r3d facade (Rust)
 | G6 | Is fog used? | xrefs to the fog render states |
 | G7 | Do the matrices from 0x421680 feed any gameplay decision, or rendering only? | Data-flow trace from its 10 game callers |
 
-## 8. Runtime validation (pending)
+## 8. Runtime validation [R]
 
-`tools/frida/probe_r3d_boundary.js` hooks all 90 entry points and the seven COM sites, and records:
+`tools/frida/probe_r3d_boundary.js` was attached to the original game in the Windows 11 arm64 VM (x86 emulation, dgVoodoo2). It hooked all 90 `r3d` entry points.
 
-- calls per function and per running config (menu, levels, high scores), split by caller region;
-- a stack-cleanup check on every return (ESP must equal entry ESP + 4 + purge);
-- the first argument tuple seen from game code.
+**Run 1:** 15,000 frames. The owner played through the menu (`config.xml`), pack select (`config2.xml`), level files `bug1.xml` and `bug5.xml`–`bug7.xml`, and the high-score screen.
 
-Pass criteria:
+**Run 2:** 3,900 frames, used to calibrate the stack-cleanup check. Frida reports ESP in `onLeave` after its trampoline has consumed the return address, so the expected delta equals the purge. This was established from 9 purge-0 functions and holds uniformly.
 
-1. Zero purge mismatches.
-2. Only the functions marked "game > 0" are called from game code.
-3. No `r3d` function is reached from CRT code except through the documented paths.
-4. The COM sites fire as described.
+| Criterion | Result |
+|---|---|
+| Stack cleanup equals static purge | **Pass**: 42 functions, about 4.5 million calls, every delta equal to the static purge. No function shows more than one delta value. |
+| Game code calls only the statically identified functions | **Pass**: 29 called from game code at runtime, all within the static set of 50 |
+| No `r3d` entry from CRT code | **Pass**: zero |
+| Game-side COM sites | The 3-byte `call [reg+disp8]` sites can't be hooked by Frida. The accessors that hand out the objects were measured instead (below). |
 
-**Status: not yet run.** The VM was offline after the proof-of-concept session. Run it with REA's `start_frida_session` against the running game and record the results here. Graphics replacement work starts only after it passes.
+Hot paths, per rendered frame on average in run 1:
+
+| Function | Calls per frame |
+|---|---|
+| `0x421680` rotation matrix (x87 `fsin`/`fcos`) | about 127 |
+| `r3d_Render3DModel` | about 87 |
+| `r3d_SetMaterial` from game code | about 86 |
+| Device accessor `0x423600` (the text renderer's direct `DrawPrimitive`) | about 86 |
+| `r3d_SetMaterial` internally (via 0x427480) | about 100 |
+| `r3d_SetMatrix` | about 53 |
+| identity matrix | about 63 |
+| timer `0x424440` | about 17 |
+| `RenderBegin`, `RenderEnd`, `PageFlip`, `ViewportClear` | once |
+
+Observed behaviour relevant to the replacement:
+
+- **Texture locking:** `r3d_TextureAnimateSurfaceLock/Unlock` were called 2,909 / 2,897 times from game code. Game code really does write texels into locked textures (G3).
+- **2D path:** `r3d_2DBlit`, surface width/height, and `0x421cc0` were each called 800 times from game code. `r3d_SurfaceCreateFromBMP` was called 45 times from game code at runtime, beyond level loading.
+- **Lost surfaces:** pausing and resuming the VM made the game lose its DirectX surfaces. The restore path ran for real: `0x4264c0` → `0x4265b0` → `0x425780` (`_r3d_CreateDirectX`), followed by material and texture rebuilding.
+- **Not exercised:** the back-buffer accessor `0x4235f0` (the vsync HUD's `Blt` path), screen capture `0x422e10`, `r3d_SurfaceToBMP`, and the window-move functions. These are covered by static analysis only.
+
+Raw data stays local in `_work/runtime/r3d-boundary*.json`, since it contains run-specific pointers.
+
+**Conclusion:** the documented boundary holds at runtime. Graphics replacement may proceed under the leaf-replacement plan (§5), once G1–G7 are resolved for each function being replaced.

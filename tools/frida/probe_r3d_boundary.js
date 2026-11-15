@@ -4,8 +4,11 @@
 // Hooks every function in the r3d range (0x41e950-0x42a3ff) and records, per
 // function and per running config (menu, level files, high scores):
 //   - call counts, split by caller region (return address in game / r3d / CRT),
-//   - stack-cleanup check: ESP after return must equal ESP at entry + 4 + purge
-//     (the stdcall purge recovered statically by tools/ghidra/R3dSurvey.java),
+//   - stack-cleanup check: Frida reports ESP in onLeave after its trampoline has
+//     consumed the return address, so a stdcall function that pops N bytes shows
+//     a delta of exactly N (calibrated 2026-11-15 on purge-0 functions; see
+//     docs/graphics/r3d-interface.md §8). N is the purge recovered statically by
+//     tools/ghidra/R3dSurvey.java,
 //   - the first argument tuple seen from game code.
 // Also counts the game-side direct COM call sites identified statically.
 // Summaries are sent every 300 frames. Nothing in the target is modified.
@@ -127,7 +130,7 @@ for (const [addr, purge] of ENTRIES) {
       this.ret = this.context.esp.readU32();
       this.from = region(this.ret);
       this.b = bucket();
-      const s = (this.b[key] = this.b[key] || { game: 0, r3d: 0, crt: 0, purge_mismatch: 0, purge, sample: null });
+      const s = (this.b[key] = this.b[key] || { game: 0, r3d: 0, crt: 0, purge_mismatch: 0, purge, sample: null, deltas: {} });
       s[this.from]++;
       if (this.from === 'game' && s.sample === null) {
         const n = Math.min(purge / 4, 8);
@@ -138,25 +141,37 @@ for (const [addr, purge] of ENTRIES) {
     },
     onLeave() {
       const delta = this.context.esp.sub(this.esp0).toInt32();
-      if (delta !== 4 + purge) this.b[key].purge_mismatch++;
+      const d = this.b[key].deltas;
+      d[delta] = (d[delta] || 0) + 1;
+      if (delta !== purge) this.b[key].purge_mismatch++;
     },
   });
 }
 
+// COM call sites are 3-byte `call [reg+disp8]` instructions that Frida cannot
+// always relocate; hook where possible. The accessors that produce the COM
+// objects (0x4235d0..0x423600) are hooked above with caller attribution either way.
+const comHooked = [], comSkipped = [];
 for (const [site, name] of Object.entries(COM_SITES)) {
-  Interceptor.attach(ptr(Number(site)), {
-    onEnter() {
-      const b = bucket();
-      const k = 'com:' + name + '@0x' + Number(site).toString(16);
-      b[k] = (b[k] || 0) + 1;
-    },
-  });
+  const tag = name + '@0x' + Number(site).toString(16);
+  try {
+    Interceptor.attach(ptr(Number(site)), {
+      onEnter() {
+        const b = bucket();
+        b['com:' + tag] = (b['com:' + tag] || 0) + 1;
+      },
+    });
+    comHooked.push(tag);
+  } catch (e) {
+    comSkipped.push(tag);
+  }
 }
 
 Interceptor.attach(ptr(0x40b720), {
   onLeave() {
     frame++;
     if (frame % 300 === 0) send({ type: 'r3d_boundary', frame, stats });
+    if (globalThis.MAX_FRAMES && frame >= globalThis.MAX_FRAMES) send({ type: 'done', frame });
   },
 });
-send({ type: 'hello', hooks: ENTRIES.length, com_sites: Object.keys(COM_SITES).length });
+send({ type: 'hello', hooks: ENTRIES.length, com_hooked: comHooked, com_skipped: comSkipped });

@@ -274,6 +274,17 @@ pub fn cases() -> Vec<Case> {
                     a.fld(qword_ptr(ebx))?; a.fld(qword_ptr(ebx + 8))?; a.fpatan()?; a.fstp(qword_ptr(ebx + 32))?;
                     a.fld(qword_ptr(ebx + 8))?; a.fptan()?; a.fstp(qword_ptr(ebx + 40))?; a.fstp(qword_ptr(ebx + 48)) },
                flag_mask: 0, kind: Kind::ReportOnly, ..base.clone() },
+        Case { name: "x87_transcendental_sweep",
+               mem: mem![(0, f64b!(0.1)), (8, f64b!(std::f64::consts::FRAC_PI_4)), (16, f64b!(std::f64::consts::FRAC_PI_2)), (24, f64b!(2.0)),
+                         (32, f64b!(std::f64::consts::PI)), (40, f64b!(4.0)), (48, f64b!(5.5)), (56, f64b!(std::f64::consts::TAU))],
+               asm: |a| {
+                    for i in 0..8 {
+                        a.fld(qword_ptr(ebx + 8 * i))?; a.fsin()?; a.fstp(qword_ptr(ebx + 64 + 8 * i))?;
+                        a.fld(qword_ptr(ebx + 8 * i))?; a.fcos()?; a.fstp(qword_ptr(ebx + 128 + 8 * i))?;
+                    }
+                    Ok(())
+               },
+               flag_mask: 0, kind: Kind::ReportOnly, ..base.clone() },
     ]
 }
 

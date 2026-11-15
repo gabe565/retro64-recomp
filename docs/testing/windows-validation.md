@@ -11,8 +11,8 @@ Built by cross-compiling from this repository with MinGW (see the command at the
 
 | File | SHA-256 |
 |---|---|
-| `bugatron-poc.exe` (x86-64) | `fb7f52931e8132e2d8c6152f0b50cb3cae7513e95cc3028d9fdbd3dd59fb1b54` |
-| `bugatron-x86-oracle.exe` (32-bit x86) | `1e314c240c3410fb37ebeaec4e3538a2f495e59c1a6147e0ebc1338401543fb9` |
+| `bugatron-poc.exe` (x86-64) | `7261a5218e76dd84da5d728083fd8f4f7220f3a6fa10109c7e8252ac426dd24d` |
+| `bugatron-x86-oracle.exe` (32-bit x86) | `99b54a4fdd7a4eb925938c8e6b2876f157c2bc0a4780fa0f89fbc7d7ec0f4688` |
 | `poc-reference.json` | `215055957cde9f604fa62c0df7d8cd32fd7b254583905eb488522144a0740dd8` |
 
 The binaries are unsigned, so SmartScreen may ask for confirmation ("More info" → "Run anyway"). They read the game files and write only the output files you name.
@@ -52,9 +52,11 @@ results written to .\poc-results-windows.json
 guest exit code 0x0; overall: PASS
 ```
 
-The exit code is 0. A `[FAIL]` line or a `bugatron-runtime fatal:` message is a real result: send the output as-is.
+The exit code is 0. A `[FAIL]` line or a `bugatron-runtime fatal:` message is a real result: send the output as-is. If the program prints nothing after the first line, run `echo $LASTEXITCODE` and send that number too.
 
-`bugatron-x86-oracle.exe` prints `wrote .\x86-oracle-windows.json` to stderr. The file holds 55 cases. These values are already known for real x87 hardware, so they make a quick sanity check (open the JSON and find the case):
+History: kit 1 (2026-11-15) exited silently after the first line on Windows. Reserved-but-uncommitted guest memory was being read. Fixed in kit 2 (these hashes). The oracle from kit 1 is already committed as `tests/fixtures/x86-oracle-amd-ryzen7-9800x3d.json`.
+
+`bugatron-x86-oracle.exe` prints `wrote .\x86-oracle-windows.json` to stderr. The file holds 56 cases, including the new `x87_transcendental_sweep`. These values are already known for real x87 hardware, so they make a quick sanity check (open the JSON and find the case):
 
 | Case | Field | Expected on real hardware | Meaning |
 |---|---|---|---|
