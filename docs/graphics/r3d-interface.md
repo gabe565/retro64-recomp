@@ -283,11 +283,48 @@ Raw data stays local in `_work/runtime/r3d-boundary*.json`, since it contains ru
 
 **Conclusion:** the documented boundary holds at runtime. Graphics replacement may proceed under the leaf-replacement plan (§5), once G1–G7 are resolved for each function being replaced.
 
-## 9. Decision needed before implementation
+## 9. Decision: display depth (G1)
 
-**Reference display configuration for the vanilla baseline (G1).** The game's texture and back-buffer formats, and therefore which texel-writing code paths run and how colours quantise, depend on the display depth and on the texture formats the driver offered.
+**Decided (owner, 2026-11-15):**
+- The default is **32-bit display depth**, matching the original 32-bit path observed in the VM.
+- 16-bit (the README's 800x600x16) remains an available original mode.
+- Both modes run the original format selection, pixel conversion, blending, and rounding, with no artificial limits.
+- The 32-bit path is implemented first. Captures of both modes will be compared with the original once both exist.
 
-- **16-bit, recommended.** Matches the game's era and the README, and is probably what most players saw. Format choices would be modelled on a typical 2001 Direct3D 6 driver.
-- **32-bit, as observed in the VM.** Opaque textures 565, alpha textures 8888, 32-bit back buffer.
+### 9.1 Evidence that 32-bit is a native mode of the original [S]
 
-Either way, the selection logic in 0x424b90 is ported faithfully with the display depth as a configuration input. The choice only fixes the vanilla default.
+Everything below is game code in `Bug3D.exe`. dgVoodoo2 only supplies what the driver reports: the mode list and the device's render bit depths.
+
+1. **Mode enumeration accepts 32-bit.** 0x428ee0 is the `EnumDisplayModes` callback (it formats `"%ld x %ld x %ld"` @ 0x43b878 as width × height × bpp). It filters each mode as follows:
+   - **Device support:** keeps 32 / 24 / 16 bpp only if the Direct3D device's `dwDeviceRenderBitDepth` (device desc `+0xd8`) has `DDBD_32` (0x100) / `DDBD_24` (0x200) / `DDBD_16` (0x400).
+   - **8-bit:** always rejected.
+   - **Channel layout:** keeps 16-bit only as 565 or 555, and 24/32-bit only as RGB (masks ff0000/ff00/ff) or BGR (masks ff/ff00/ff0000).
+
+   Accepted modes are appended to the device's mode list. The callback marks 640×480×16 as the list's preferred entry, but `0x424a10` / `r3d_Initialize` reset the cursor to the head before indexing, so that mark is unused.
+2. **The user chooses the mode in the game's own dialog.** WinMain (around 0x4047xx) builds the driver, device, and mode name lists (0x424730), then shows dialog resource 0x66 (`DialogBoxParamA`, dialog proc 0x408280). It saves the choice as three ints in the `prefs` file. The README's 1.01 note says the game "remembers the last video selection". Without `prefs`, the default is the first enumerated mode that is 640 wide or 480 high, so it depends on the driver's enumeration order.
+3. **The renderer handles 32-bit explicitly.** `r3d_Initialize` (0x424b90) reads the bpp and masks of the selected mode, or of the desktop for a windowed device, and maps them to the back-buffer format code `0xa02a50`:
+   - 16 bpp: 565 → 0, 555 → 1.
+   - 24 bpp: RGB → 2, BGR → 3.
+   - 32 bpp: RGB → 4, BGR → 5.
+
+   The VM's selected mode (driver 0, device 1, mode 38) is 32 bpp RGB, giving code 4.
+
+The README line "Fixed a crash when the user's video card didn't support 800x600x16" (1.03) describes a crash fix in a pre-1.20 default, not a required mode.
+
+### 9.2 What the display depth actually changes [S]
+
+Texture formats do **not** depend on the display depth. `r3d_Initialize` chooses them from the formats `EnumTextureFormats` reports (callback 0x425400 fills six slots at `0x9fa800 + 0x24·k`):
+- **Alpha textures** (`0x9fa910`) prefer 3 (8888), then 2 (4444), 1 (1555), 0 (565), 4, 5.
+- **Opaque textures** (`0xa06b08`) prefer, on a hardware device (`+0x138 == 1`): 0 (565), 4, 5, 1, 3, then 2. On software emulation, 3 comes first.
+
+The display depth changes only the **back-buffer format** (`0xa02a50`). That affects:
+- frame-buffer quantisation of the rendered and blended output;
+- the CPU back-buffer paths (`r3d_2DBegin` access, the screen capture in 0x422e10, `SurfaceGet`), which the game reads and writes in that format.
+
+The texture formats offered are a property of the emulated driver. The runtime offers the VM's set by default (it contains 565 and 8888, since those were chosen). Exactly which formats dgVoodoo2 enumerated is still to be logged, so a "period driver" set can be added later for the 16-bit mode.
+
+### 9.3 Runtime design consequence
+
+- The runtime emulates one hardware Direct3D device ("Direct3D HAL") whose mode list includes 640×480 at 32 bpp RGB, plus the 16-bit 565 modes (800×600×16 among them).
+- The original enumeration, dialog, and selection code runs unchanged. The chosen mode reaches the original format logic, and the renderer stores the back buffer in the resulting format code.
+- **32-bit default:** with no `prefs` file, the default is whichever mode the original logic picks from the emulated enumeration order. To make 32-bit the default without changing game code, the emulated mode list puts 640×480×32 first, which is the original logic's own "first 640-wide mode" rule. The order is recorded as a runtime configuration, not a game-code change.
