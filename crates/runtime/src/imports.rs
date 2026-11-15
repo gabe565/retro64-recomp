@@ -36,6 +36,9 @@ pub(crate) fn dispatch_import(cpu: &mut Cpu, idx: usize) {
     if dll.eq_ignore_ascii_case("user32.dll") && crate::dialog::import(cpu, &name) {
         return;
     }
+    if (dll.eq_ignore_ascii_case("user32.dll") || dll.eq_ignore_ascii_case("gdi32.dll")) && crate::user::import(cpu, &name) {
+        return;
+    }
     with_rt(|rt| call(rt, cpu, &dll, &name));
 }
 
@@ -343,16 +346,25 @@ fn call(rt: &mut Runtime, cpu: &mut Cpu, dll: &str, name: &str) {
         }
         ("kernel32.dll", "QueryPerformanceCounter") => {
             let p = a!(0);
-            let v = match rt.clock.qpc_queue.pop_front() {
-                Some(v) => v,
-                None => { rt.clock.qpc_underflow = true; 0 }
+            let v = match (rt.clock.qpc_queue.pop_front(), rt.clock.live) {
+                (Some(v), _) => v,
+                (None, Some(t0)) => (t0.elapsed().as_nanos() * rt.clock.qpc_frequency as u128 / 1_000_000_000) as u64,
+                (None, None) => { rt.clock.qpc_underflow = true; 0 }
             };
             rt.mem.w32(p, v as u32);
             rt.mem.w32(p + 4, (v >> 32) as u32);
             ret(cpu, 1, 1);
         }
-        ("kernel32.dll", "Sleep") => { rt.clock.sleeps += 1; ret(cpu, 0, 1); }
-        ("winmm.dll", "timeGetTime") => ret(cpu, rt.clock.time_get_time, 0),
+        ("kernel32.dll", "Sleep") => {
+            rt.clock.sleeps += 1;
+            if rt.clock.live.is_some() { std::thread::sleep(std::time::Duration::from_millis(a!(0) as u64)); }
+            ret(cpu, 0, 1);
+        }
+        ("winmm.dll", "timeGetTime") => ret(cpu, rt.clock_ms(), 0),
+        ("kernel32.dll", "OutputDebugStringA") => {
+            eprintln!("[debug] {}", rt.mem.cstr(a!(0)).trim_end());
+            ret(cpu, 0, 1);
+        }
         ("kernel32.dll", "RaiseException") | ("kernel32.dll", "RtlUnwind") | ("kernel32.dll", "UnhandledExceptionFilter") => {
             fatal(&format!("exception dispatch is not supported: {name} called (C++ throw, SEH raise, or unhandled exception); see docs/recompilation-feasibility.md D8"))
         }

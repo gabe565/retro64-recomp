@@ -21,6 +21,7 @@ pub mod dialog;
 mod ddraw_caps;
 pub mod files;
 mod heap;
+pub mod user;
 mod imports;
 pub mod mem;
 pub mod x87trig;
@@ -64,6 +65,9 @@ pub struct Clock {
     pub time_get_time: u32,
     pub sleeps: u64,
     pub monitor_frequency: u32,
+    /// Live mode (full game): time sources follow the host clock from this instant.
+    /// Interim until the fixed 60 Hz cadence is tied to Flip (docs/runtime-status.md RD5).
+    pub live: Option<std::time::Instant>,
 }
 
 #[derive(Default, Debug, Clone)]
@@ -78,6 +82,7 @@ pub struct Diagnostics {
 pub struct Runtime {
     pub(crate) com: ddraw::ComRegistry,
     pub(crate) dialog: Option<dialog::Dialog>,
+    pub user: user::User,
     pub mem: GuestMemory,
     pub pe: Pe,
     pub(crate) import_names: Vec<(String, String)>,
@@ -156,6 +161,7 @@ impl Runtime {
             overrides: HashMap::new(),
             com: Default::default(),
             dialog: None,
+            user: user::User::new((1024, 768)),
         };
         rt.command_line = rt.alloc_cstr("\"C:\\Bugatron\\Bug3D.exe\"");
         rt.env_block = rt.heap_alloc(16, true);
@@ -189,6 +195,7 @@ impl Runtime {
             overrides: HashMap::new(),
             com: Default::default(),
             dialog: None,
+            user: user::User::new((1024, 768)),
         })
     }
 
@@ -203,6 +210,14 @@ impl Runtime {
 
     pub fn initial_cpu(&self) -> Cpu {
         Cpu::new(STACK_TOP - 16, TEB_ADDR)
+    }
+
+    /// Milliseconds for `timeGetTime` and message times.
+    pub fn clock_ms(&self) -> u32 {
+        match self.clock.live {
+            Some(t0) => self.clock.time_get_time.wrapping_add(t0.elapsed().as_millis() as u32),
+            None => self.clock.time_get_time,
+        }
     }
 
     pub fn set_override(&mut self, addr: u32, f: Override) {
