@@ -192,17 +192,17 @@ recompiled game ──(stdcall overrides)──► r3d facade (Rust)
   - Uploads happen on unlock.
   - Readback captures the rendered virtual frame, so the screen-capture effect still works.
 
-## 7. Open questions (graphics)
+## 7. Graphics questions
 
-| # | Question | How to resolve |
+| # | Question | Status and finding |
 |---|---|---|
-| G1 | Pixel format of surfaces and textures (16-bit 565/555, or 32-bit) chosen by `r3d_Initialize` | Decode 0x424b90 / 0x428ee0; read surface descriptors at runtime |
-| G2 | Light type and attenuation in 0x421a30 | Decode the `D3DLIGHT` structure built there |
-| G3 | Does game code dereference the pointer returned by `r3d_SurfaceGet` or `TextureAnimateSurfaceLock`, and with what pitch? | Trace the 3+3 game callers; runtime probe argument samples |
-| G4 | Exact alpha-polygon sort key and capacity | Port 0x41ff20 / 0x4210d0 with unit tests |
-| G5 | Meaning of `r3d_Initialize` arguments 184800.0 and 75.0 | Decode 0x424b90 / 0x421fd0 |
-| G6 | Is fog used? | xrefs to the fog render states |
-| G7 | Do the matrices from 0x421680 feed any gameplay decision, or rendering only? | Data-flow trace from its 10 game callers |
+| G1 | Pixel formats | **Mostly resolved.** `r3d_Initialize` (0x424b90) picks format codes from the display depth and the driver's enumerated texture formats: opaque textures → `0xa06b08`, alpha-masked textures → `0x9fa910`, back buffer → `0xa02a50`. Codes: 0 = RGB565, 1 = ARGB1555, 2 = ARGB4444, 3 = ARGB8888 (4 and 5 are back-buffer variants). **Observed** in the VM (dgVoodoo2, 32-bit display, 640×480): opaque 0 (565), alpha 3 (8888), back buffer 4. **Open:** which display depth the vanilla baseline emulates. A 16-bit display, typical in 2001 and mentioned in the README ("800x600x16"), takes different branches. This is an owner decision; see §9. |
+| G2 | Light | **Resolved.** One `D3DLIGHT_DIRECTIONAL` (type 3) with direction −normalize(x, y, z) of the `r3d_SetLightLocationColor` arguments, InitApp's (1.2, 1.2, −9.0), colour (r, g, b), attenuation0 = 1.0. The normalized direction and colour are also kept CPU-side (`0x9faa14..`, `0x9fa934..`). |
+| G3 | CPU pixel access | **Resolved.** `r3d_TextureAnimateSurfaceLock(material, &w, &format, &pitch, &bits)` returns the material's format code and a locked pointer and pitch. Game code (0x41ae80, 0x41b6a0, 0x417850) reads and writes texels with format-specific packing for codes 0–3. The replacement must return the original format code and a guest buffer in exactly that layout, converting on unlock. `r3d_SurfaceGet` pointers are dereferenced by game code in 0x417850. |
+| G4 | Alpha-polygon sort key and capacity | Open: to be ported from 0x41ff20 / 0x4210d0 with unit tests during implementation |
+| G5 | `r3d_Initialize(hwnd, 184800.0, 75.0, …)` | **Resolved.** 184800.0 = far clip distance and fog end (fog start = 92400). 75.0 = vertical FOV in degrees. Projection = 0x421fd0(near 1.0, far 184800, fov 75°·π/180, aspect from the render size). World and view are identity via `SetTransform`. |
+| G6 | Fog | **Resolved: never enabled.** The only writer of the fog-enable flag `0x9b573c` sets it to 0 at init; `FOGENABLE` is set FALSE, fog colour 0. |
+| G7 | Do `0x421680` matrices feed gameplay? | **Partly resolved.** Callers build the camera tilt (0x412930 / 0x415380, π/4 about X for the "perspective" view), star and object render matrices stored in object structs (+0x44, +0xb0), and menu rotations. The collision-relevant path (0x40f2a0) derives object extents from model bounds and geometry, not from these matrices. Since FSIN/FCOS now match hardware (feasibility §7.10), the remaining risk is limited to `X87_NOTE_EXT64` cases. |
 
 ## 8. Runtime validation [R]
 
@@ -243,3 +243,12 @@ Observed behaviour relevant to the replacement:
 Raw data stays local in `_work/runtime/r3d-boundary*.json`, since it contains run-specific pointers.
 
 **Conclusion:** the documented boundary holds at runtime. Graphics replacement may proceed under the leaf-replacement plan (§5), once G1–G7 are resolved for each function being replaced.
+
+## 9. Decision needed before implementation
+
+**Reference display configuration for the vanilla baseline (G1).** The game's texture and back-buffer formats, and therefore which texel-writing code paths run and how colours quantise, depend on the display depth and on the texture formats the driver offered.
+
+- **16-bit, recommended.** Matches the game's era and the README, and is probably what most players saw. Format choices would be modelled on a typical 2001 Direct3D 6 driver.
+- **32-bit, as observed in the VM.** Opaque textures 565, alpha textures 8888, 32-bit back buffer.
+
+Either way, the selection logic in 0x424b90 is ported faithfully with the display depth as a configuration input. The choice only fixes the vanilla default.
