@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/pe", "crates/recomp", "crates/runtime", "crates/poc"]
+members = ["crates/pe", "crates/recomp", "crates/runtime", "crates/poc", "crates/x86-cases", "crates/x86-tests", "crates/x86-oracle"]
 
 [workspace.package]
 edition = "2021"
@@ -12,6 +12,7 @@ publish = false
 bugatron-pe = { path = "crates/pe" }
 bugatron-recomp = { path = "crates/recomp" }
 bugatron-runtime = { path = "crates/runtime" }
+bugatron-x86-cases = { path = "crates/x86-cases" }
 iced-x86 = { version = "1.22", default-features = false, features = ["std", "decoder", "intel", "instr_info"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -20,3 +21,4 @@ crc32fast = "1"
 cc = "1"
 libc = "0.2"
 windows-sys = { version = "0.59", features = ["Win32_System_Memory"] }
+iced-x86-asm = { package = "iced-x86", version = "1.22", default-features = false, features = ["std", "decoder", "intel", "instr_info", "code_asm"] }

@@ -46,6 +46,7 @@ void rt_unresolved_call(Cpu *c, uint32_t target, uint32_t site);
 void rt_unimpl(Cpu *c, uint32_t addr, const char *what);
 void rt_bad_jump(Cpu *c, uint32_t site, uint32_t target);
 void rt_div_error(Cpu *c, uint32_t site);
+void rt_trap(Cpu *c, uint32_t site, const char *reason);
 void rt_x87_note(Cpu *c, uint32_t kind);
 void rt_note_indirect(uint32_t target, uint32_t site);
 
@@ -248,6 +249,53 @@ static inline uint32_t op_ror(Cpu *c, uint32_t sz, uint32_t a, uint32_t n) {
     if (r & szmsb(sz)) f |= F_CF;
     if (((r ^ (r << 1)) & szmsb(sz)) != 0) f |= F_OF;
     flags_set_explicit(c, f); return r;
+}
+/* RCL/RCR: rotate through carry. Count is masked to 5 bits by the caller,
+ * then reduced modulo (size + 1). OF is defined only for a masked count of 1;
+ * for other counts this model computes the same formula (documented as
+ * "undefined" by Intel, so tests do not compare it). Other flags unchanged. */
+static inline uint32_t op_rcl(Cpu *c, uint32_t sz, uint32_t a, uint32_t n) {
+    a &= szmask(sz);
+    uint32_t k = n % (sz + 1u);
+    if (n == 0) return a;
+    uint32_t cf = get_cf(c);
+    uint64_t m = (sz == 32u) ? 0x1ffffffffull : ((1ull << (sz + 1u)) - 1u);
+    uint64_t v = ((uint64_t)cf << sz) | (uint64_t)a;
+    if (k) v = ((v << k) | (v >> (sz + 1u - k))) & m;
+    uint32_t r = (uint32_t)(v & szmask(sz)), ncf = (uint32_t)((v >> sz) & 1u);
+    uint32_t f = flags_get(c) & ~(F_CF | F_OF);
+    if (ncf) f |= F_CF;
+    if (((r & szmsb(sz)) != 0) != (ncf != 0)) f |= F_OF;
+    flags_set_explicit(c, f); return r;
+}
+static inline uint32_t op_rcr(Cpu *c, uint32_t sz, uint32_t a, uint32_t n) {
+    a &= szmask(sz);
+    uint32_t k = n % (sz + 1u);
+    if (n == 0) return a;
+    uint32_t cf = get_cf(c);
+    uint64_t m = (sz == 32u) ? 0x1ffffffffull : ((1ull << (sz + 1u)) - 1u);
+    uint64_t v = ((uint64_t)cf << sz) | (uint64_t)a;
+    if (k) v = ((v >> k) | (v << (sz + 1u - k))) & m;
+    uint32_t r = (uint32_t)(v & szmask(sz)), ncf = (uint32_t)((v >> sz) & 1u);
+    uint32_t f = flags_get(c) & ~(F_CF | F_OF);
+    if (ncf) f |= F_CF;
+    if (((a & szmsb(sz)) != 0) != (cf != 0)) f |= F_OF; /* MSB(dest) XOR CF, before rotation */
+    flags_set_explicit(c, f); return r;
+}
+/* BT family: CF = selected bit; ZF unchanged; OF/SF/AF/PF undefined (kept). */
+static inline void bt_setcf(Cpu *c, uint32_t bit) {
+    uint32_t f = flags_get(c) & ~F_CF;
+    if (bit) f |= F_CF;
+    flags_set_explicit(c, f);
+}
+static inline void op_pushad(Cpu *c) {
+    uint32_t t = c->esp;
+    push32(c, c->eax); push32(c, c->ecx); push32(c, c->edx); push32(c, c->ebx);
+    push32(c, t); push32(c, c->ebp); push32(c, c->esi); push32(c, c->edi);
+}
+static inline void op_popad(Cpu *c) {
+    c->edi = pop32(c); c->esi = pop32(c); c->ebp = pop32(c); c->esp += 4u;
+    c->ebx = pop32(c); c->edx = pop32(c); c->ecx = pop32(c); c->eax = pop32(c);
 }
 static inline uint32_t op_shld(Cpu *c, uint32_t a, uint32_t b, uint32_t n) {
     if (n == 0) return a;

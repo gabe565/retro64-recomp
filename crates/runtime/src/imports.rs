@@ -279,7 +279,10 @@ fn call(rt: &mut Runtime, cpu: &mut Cpu, dll: &str, name: &str) {
         }
         ("kernel32.dll", "Sleep") => { rt.clock.sleeps += 1; ret(cpu, 0, 1); }
         ("winmm.dll", "timeGetTime") => ret(cpu, rt.clock.time_get_time, 0),
-        _ => fatal(&format!("unimplemented import {dll}!{name} (called with esp={:#x})", cpu.esp)),
+        ("kernel32.dll", "RaiseException") | ("kernel32.dll", "RtlUnwind") | ("kernel32.dll", "UnhandledExceptionFilter") => {
+            fatal(&format!("exception dispatch is not supported: {name} called (C++ throw, SEH raise, or unhandled exception); see docs/recompilation-feasibility.md D8"))
+        }
+        _ => fatal(&format!("unimplemented import {dll}!{name} (called with esp={:#x}); implement it in crates/runtime/src/imports.rs only if the original game calls it", cpu.esp)),
     }
 }
 

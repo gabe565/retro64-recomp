@@ -38,6 +38,7 @@ fn main() {
         all_functions: false,
         include_data_referenced: true,
         functions_per_file: 32,
+        traps: bugatron_recomp::targets::gold_120a_exception_traps(),
     };
     let out = recompile(&exe, &hints, &opts).expect("recompile");
     let gen = PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("gen");

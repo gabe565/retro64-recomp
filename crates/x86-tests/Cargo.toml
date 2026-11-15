@@ -1,0 +1,18 @@
+[package]
+name = "bugatron-x86-tests"
+description = "Instruction-semantics regression tests: recompiled snippets vs hand-derived and native-oracle results"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+bugatron-runtime.workspace = true
+bugatron-x86-cases.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[build-dependencies]
+bugatron-recomp.workspace = true
+bugatron-x86-cases.workspace = true
+cc.workspace = true

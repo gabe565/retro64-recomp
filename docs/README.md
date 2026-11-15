@@ -2,6 +2,8 @@
 
 - [recompilation-feasibility.md](recompilation-feasibility.md) is the **current plan**: static-recompilation feasibility, challenges, and the proof-of-concept definition.
 - [initial-investigation.md](initial-investigation.md) is the original findings report. Its architecture and milestone sections are superseded.
+- [graphics/r3d-interface.md](graphics/r3d-interface.md) maps the original 3D wrapper and recommends the replacement boundary and graphics interface.
+- [testing/windows-validation.md](testing/windows-validation.md) is the procedure for the physical Windows PC: proof of concept and hardware oracle.
 - [open-questions.md](open-questions.md) tracks unresolved questions, assumptions, and known deviations.
 - `versions/` has one analysis record per release. Addresses never cross between files.
   - [gold-1.20.md](versions/gold-1.20.md) is the primary target.
@@ -22,6 +24,7 @@
 | `lev_decode.py` | Decode `.lev` files (NOT + JC decompression) |
 | `r3d_dump.py` | Parse and summarize `.r3d` models |
 | `ghidra/RecompSurvey.java` | Headless Ghidra post-script that counts instruction classes, indirect branches, x87 use, and code outside functions |
+| `ghidra/R3dSurvey.java` | Headless Ghidra post-script that surveys the `r3d` wrapper boundary |
 | `ghidra/ExportRecompHints.java` | Headless Ghidra post-script that exports function entries and jump tables as recompiler hints |
 | `frida/*.js` | Runtime probes for the original game in the VM. `capture_poc_reference.js` produces `tests/fixtures/poc-reference.json`. |
 | `ghidra/ExportDecomp.java` | Headless Ghidra post-script that dumps every function's decompilation plus an index |
@@ -36,3 +39,6 @@ Original game files live in `reference/` (gitignored) and are never modified. Ex
 | `recomp` | Static recompiler (x86 → C) and the `bugatron-recomp` CLI |
 | `runtime` | Rust runtime plus the C machine model (`c/recomp.h`) |
 | `poc` | Proof of concept: `cargo run -p bugatron-poc` (needs your `Bug3D.exe` and hints) |
+| `x86-cases` | Instruction-semantics regression cases (iced-x86 assembly + expectations) |
+| `x86-tests` | `cargo test -p bugatron-x86-tests`: runs the cases through the recompiler and compares with expectations and oracle fixtures |
+| `x86-oracle` | Runs the cases natively on a real 32-bit x86 CPU (Windows or Linux) |

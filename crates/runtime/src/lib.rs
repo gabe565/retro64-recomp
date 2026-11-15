@@ -150,6 +150,33 @@ impl Runtime {
         Ok(rt)
     }
 
+    /// A runtime with no executable image: guest memory, stack, TEB and heap only.
+    /// Used by instruction-semantics tests.
+    pub fn bare() -> Result<Runtime, String> {
+        let pe = Pe { image_base: 0, entry_va: 0, size_of_image: 0, sections: Vec::new(), imports: Vec::new() };
+        let mem = GuestMemory::reserve().map_err(|e| format!("reserve guest memory: {e}"))?;
+        mem.commit(STACK_LOW, (STACK_TOP - STACK_LOW) as usize).map_err(|e| e.to_string())?;
+        mem.commit(TEB_ADDR, 0x1000).map_err(|e| e.to_string())?;
+        mem.w32(TEB_ADDR, 0xffff_ffff);
+        mem.w32(TEB_ADDR + 0x18, TEB_ADDR);
+        Ok(Runtime {
+            mem,
+            pe,
+            import_names: Vec::new(),
+            heap: heap::Heap::new(HEAP_LOW, HEAP_HIGH),
+            valloc: heap::VirtualRegions::new(VALLOC_LOW, VALLOC_HIGH),
+            tls: Vec::new(),
+            last_error: 0,
+            clock: Clock::default(),
+            diag: Diagnostics::default(),
+            command_line: 0,
+            module_path: String::new(),
+            env_block: 0,
+            exit_hook: None,
+            overrides: HashMap::new(),
+        })
+    }
+
     /// Install as the thread's runtime (required before running guest code).
     pub fn install(self) {
         RT.with(|r| *r.borrow_mut() = Some(self));
@@ -270,6 +297,14 @@ pub extern "C" fn rt_bad_jump(_c: *mut Cpu, site: u32, target: u32) {
     fatal(&format!("switch at {site:#010x} jumped to unknown target {target:#010x}"));
 }
 
+/// An instruction the recompiler replaced with an explicit trap (see
+/// `bugatron_recomp::targets`). Never approximated: execution stops.
+#[no_mangle]
+pub extern "C" fn rt_trap(_c: *mut Cpu, site: u32, reason: *const std::os::raw::c_char) {
+    let s = unsafe { std::ffi::CStr::from_ptr(reason) }.to_string_lossy();
+    fatal(&format!("trap at {site:#010x}: {s}"));
+}
+
 #[no_mangle]
 pub extern "C" fn rt_div_error(_c: *mut Cpu, site: u32) {
     fatal(&format!("integer divide error (#DE) at {site:#010x}"));
@@ -289,10 +324,35 @@ pub extern "C" fn rt_note_indirect(target: u32, site: u32) {
     });
 }
 
+/// x87 behaviour the binary64 machine model cannot reproduce exactly
+/// (precision control other than 53 bits, non-nearest rounding in arithmetic,
+/// stack overflow, transcendental results, 80-bit memory operands).
+/// Recorded in `Cpu::x87_notes`; with `BUGATRON_X87_STRICT=1` the first
+/// occurrence of each kind stops execution with a diagnostic.
 #[no_mangle]
 pub extern "C" fn rt_x87_note(c: *mut Cpu, kind: u32) {
     let cpu = unsafe { &mut *c };
+    if cpu.x87_notes & kind == 0 && x87_strict() {
+        fatal(&format!("x87 approximation (kind {kind:#x}: {}) under BUGATRON_X87_STRICT", x87_note_name(kind)));
+    }
     cpu.x87_notes |= kind;
+}
+
+fn x87_strict() -> bool {
+    static STRICT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *STRICT.get_or_init(|| std::env::var("BUGATRON_X87_STRICT").is_ok_and(|v| v == "1"))
+}
+
+pub fn x87_note_name(kind: u32) -> &'static str {
+    match kind {
+        1 => "24-bit precision control",
+        2 => "64-bit precision control (needs 80-bit arithmetic)",
+        4 => "non-nearest rounding control in arithmetic",
+        8 => "x87 register stack overflow",
+        16 => "transcendental instruction (host libm result)",
+        32 => "80-bit memory operand",
+        _ => "unknown",
+    }
 }
 
 /// 80-bit extended → binary64 (round to nearest even). Used only where the

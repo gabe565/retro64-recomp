@@ -242,17 +242,26 @@ Conclusions:
 | D2 | `fldcw` reserved bit 6 (§7.3) | **Fixed** in the machine model |
 | D3 | Ghidra hints: 18 "jump tables" were really `jmp [IAT]` import tail jumps with bogus targets | **Fixed**: the recompiler drops table targets that aren't decodable code |
 | D4 | Ghidra missed C++ static initializers, and some function addresses appear only as immediates | **Fixed**: the recompiler roots code pointers found in data sections and immediate operands |
-| D5 | Windows x86-64 build cross-compiled with MinGW but **not executed**; MSVC toolchain untested | Open: run the `.exe` on Windows (VM under emulation, or the physical machine) |
+| D5 | Windows x86-64 build cross-compiled with MinGW but **not executed**; MSVC toolchain untested | Open: test kit and exact procedure in `docs/testing/windows-validation.md` |
 | D6 | The timing spin path (below 4 ticks) never occurred in the VM, which runs too slowly. It is covered only by the synthetic edge test derived from static analysis. | Open: capture on the physical machine |
-| D7 | x87 transcendentals (`FSIN`, `FCOS`, `FPATAN`, `FPTAN`) and 80-bit loads and stores are emitted but not exercised; they use host `libm`, which differs in the last bits from x87 | Open: measure against the physical x86 machine; decide whether to emulate x87 transcendentals |
-| D8 | Exceptions: SEH frames are maintained, but no exception was thrown. The 4 CRT unwind-helper indirect jumps are translated as tail calls, which would be wrong if an exception were dispatched. | Open: implement or explicitly trap exception dispatch |
+| D7 | x87 transcendentals (`FSIN`, `FCOS`, `FPATAN`, `FPTAN`) use host `libm`, which may differ in the last bits from x87. They matter beyond rendering: the `r3d` rotation-matrix builder `0x421680` uses `fsin`/`fcos` and game code calls it 10 times. | Open: the oracle case `x87_transcendentals` measures them on real hardware (windows-validation.md) |
+| D8 | Exceptions: SEH frames are maintained, but the runtime does not dispatch exceptions | **Explicit**: the 4 C++ EH dispatcher jumps are `rt_trap` sites with reasons (`bugatron_recomp::targets`); `RaiseException`, `RtlUnwind`, and `UnhandledExceptionFilter` stop with a diagnostic |
 | D9 | Guest heap addresses differ from the original's Windows heap. Logic that depends on pointer values would diverge. | Open: differential tests must compare logical state, not raw pointers |
-| D10 | 8 instruction sites outside the proof-of-concept are unimplemented in the emitter: `RCR` ×4, `BTS` ×2, `PUSHAD`, `POPAD` | Open: trivial to add before the full build |
+| D10 | 8 instruction sites were unimplemented in the emitter: `RCR` ×4, `BTS` ×2, `PUSHAD`, `POPAD` | **Fixed**: `RCL`/`RCR` at all sizes, the `BT`/`BTS`/`BTR`/`BTC` family with bit-string addressing, and `PUSHAD`/`POPAD`. The whole program now has 0 unimplemented sites; regression cases in §7.7. |
 | D11 | Only 27 of 120 imports are implemented, and 1 COM method | Expected; the rest are added when called |
-| D12 | The `r3d` graphics boundary isn't verified yet (§6). Known coupling: the game's frame-timing function calls `r3d`'s timer `0x424440` and reads its globals. | Open: first task after this gate |
+| D12 | `r3d` graphics boundary | **Mapped statically** in `docs/graphics/r3d-interface.md` (90 functions, stdcall, 7 direct COM sites). Runtime validation probe written, not yet run. |
+| D13 | x87 approximations were silent apart from `Cpu::x87_notes` | **Explicit**: `BUGATRON_X87_STRICT=1` stops at the first approximation; the PoC passes in strict mode |
 
-### 7.6 Recommended next steps
+### 7.7 Instruction-semantics regression suite
 
-1. Run the Windows build (D5), and capture the spin path and transcendentals on the physical x86 machine (D6, D7).
-2. Verify the `r3d` boundary: calling conventions, global state shared with game code, and callbacks (D12).
-3. Begin the full recompiler: whole-program translation, the remaining instructions (D10), exception policy (D8), and a generated callback registry. Then grow the runtime from evidence toward the first rendered frame.
+- `crates/x86-cases` defines 55 cases as iced-x86 assembly. They cover flags for `ADD`/`ADC`/`SUB`/`SBB`/`INC`/`DEC`/`NEG`/`CMP`, shifts and rotates including `RCL`/`RCR` at all sizes, `SHLD`/`SHRD`, the `BT` family with bit-string addressing, `PUSHAD`/`POPAD`, multiply and divide, string instructions with `REP`/`REPE`/`REPNE` and DF, `SETcc`, and x87 cases (precision control, rounding modes, `FIST` overflow, compares through `FNSTSW`/`SAHF`, 80-bit store/load, transcendentals).
+- `cargo test -p bugatron-x86-tests` runs each case through the real recompiler and runtime. It checks hand-derived expectations from the Intel SDM, compared on defined flags only, and every oracle fixture present.
+- `crates/x86-oracle` runs the same bytes natively. Fixtures:
+  - `tests/fixtures/x86-oracle-qemu-i386.json` comes from QEMU's i386 emulator (**not hardware**). It validates the harness and integer and flag semantics. All strict cases match. The 64-bit-precision case differs as documented, since QEMU implements 80-bit precision.
+  - A real-CPU fixture is pending the Windows run.
+
+### 7.8 Recommended next steps
+
+1. Windows run and hardware oracle (D5, D7): `docs/testing/windows-validation.md`.
+2. Run the `r3d` boundary probe (`docs/graphics/r3d-interface.md` §8), then resolve G1–G7.
+3. Only then start the graphics replacement, following the leaf-replacement plan.

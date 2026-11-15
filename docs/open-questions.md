@@ -35,6 +35,10 @@ This is a living list. Each entry states its scope, what is known, and how to re
 | R7 | Windows build executed? | §7.5 D5 |
 | R8 | Transcendental x87 results versus real hardware | §7.5 D7 |
 
+## Graphics
+
+See `graphics/r3d-interface.md` §7 (G1–G7) and §8: runtime boundary validation is pending.
+
 ## Versions
 
 | # | Question | Notes |

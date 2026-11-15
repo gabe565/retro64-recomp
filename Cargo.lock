@@ -48,6 +48,34 @@ dependencies = [
 ]
 
 [[package]]
+name = "bugatron-x86-cases"
+version = "0.1.0"
+dependencies = [
+ "iced-x86",
+]
+
+[[package]]
+name = "bugatron-x86-oracle"
+version = "0.1.0"
+dependencies = [
+ "bugatron-x86-cases",
+ "libc",
+ "windows-sys",
+]
+
+[[package]]
+name = "bugatron-x86-tests"
+version = "0.1.0"
+dependencies = [
+ "bugatron-recomp",
+ "bugatron-runtime",
+ "bugatron-x86-cases",
+ "cc",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "cc"
 version = "1.11.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

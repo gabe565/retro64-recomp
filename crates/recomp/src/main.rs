@@ -28,6 +28,7 @@ fn main() {
             "--override" => { opts.overrides.insert(parse_addr(&args.next().expect("--override needs an address"))); }
             "--all" => opts.all_functions = true,
             "--data-refs" => opts.include_data_referenced = true,
+            "--gold-traps" => opts.traps = bugatron_recomp::targets::gold_120a_exception_traps(),
             "--stats-only" => stats_only = true,
             other => panic!("unknown argument {other}"),
         }
@@ -40,8 +41,8 @@ fn main() {
     let hints: Hints = serde_json::from_slice(&std::fs::read(hints.expect("--hints required")).expect("read hints")).expect("parse hints");
     let result = recompile(&exe, &hints, &opts).unwrap_or_else(|e| { eprintln!("{e}"); std::process::exit(1) });
     let s = &result.stats;
-    println!("functions {}  instructions {}  jump_tables {}  indirect_calls {}  indirect_tail_jumps {}  decode_errors {}",
-        s.functions, s.instructions, s.jump_tables, s.indirect_calls, s.tail_calls, s.decode_errors);
+    println!("functions {}  instructions {}  jump_tables {}  indirect_calls {}  indirect_tail_jumps {}  decode_errors {}  traps {}",
+        s.functions, s.instructions, s.jump_tables, s.indirect_calls, s.tail_calls, s.decode_errors, s.traps);
     let total: usize = s.unimplemented.values().sum();
     println!("unimplemented instruction sites: {total}");
     for (k, v) in &s.unimplemented {

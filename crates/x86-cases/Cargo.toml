@@ -1,0 +1,10 @@
+[package]
+name = "bugatron-x86-cases"
+description = "x86 instruction-semantics regression cases shared by the recompiler tests and the native oracle"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+iced-x86-asm.workspace = true

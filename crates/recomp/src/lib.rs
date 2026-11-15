@@ -8,6 +8,7 @@
 //! are counted, so coverage is measurable rather than silently wrong.
 
 mod emit;
+pub mod targets;
 
 use bugatron_pe::Pe;
 use iced_x86::{Decoder, DecoderOptions, FlowControl, Instruction};
@@ -52,6 +53,9 @@ pub struct Options {
     pub include_data_referenced: bool,
     /// Number of functions per generated C file.
     pub functions_per_file: usize,
+    /// Instruction address -> reason. Emitted as `rt_trap` (a fatal, explicit
+    /// diagnostic) instead of translating the instruction.
+    pub traps: BTreeMap<u32, String>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -63,6 +67,7 @@ pub struct Stats {
     pub jump_tables: usize,
     pub indirect_calls: usize,
     pub decode_errors: usize,
+    pub traps: usize,
 }
 
 pub struct Output {
@@ -106,20 +111,51 @@ pub(crate) struct Func {
     pub decode_errors: BTreeSet<u32>,
 }
 
+/// A contiguous range of the guest image backed by bytes.
+pub(crate) struct Region<'a> {
+    pub va: u32,
+    pub bytes: &'a [u8],
+    pub exec: bool,
+}
+
+/// Code and data the recompiler reads: built from a PE image or from raw snippets.
 pub(crate) struct Image<'a> {
-    pub pe: Pe,
-    pub data: &'a [u8],
+    pub regions: Vec<Region<'a>>,
 }
 
 impl<'a> Image<'a> {
+    pub fn from_pe(pe: &Pe, data: &'a [u8]) -> Self {
+        let regions = pe
+            .sections
+            .iter()
+            .filter_map(|s| {
+                let start = s.raw_offset as usize;
+                let end = (s.raw_offset + s.raw_size) as usize;
+                data.get(start..end.min(data.len())).map(|bytes| Region { va: s.va, bytes, exec: s.is_executable() })
+            })
+            .collect();
+        Image { regions }
+    }
+
+    fn region(&self, va: u32) -> Option<&Region<'a>> {
+        self.regions.iter().find(|r| va >= r.va && ((va - r.va) as usize) < r.bytes.len())
+    }
+
+    pub fn byte_at(&self, va: u32) -> Option<u8> {
+        self.region(va).map(|r| r.bytes[(va - r.va) as usize])
+    }
+
+    pub fn is_exec_start(&self, va: u32) -> bool {
+        self.region(va).is_some_and(|r| r.exec && r.va == va)
+    }
+
     fn decode_at(&self, va: u32) -> Option<Instruction> {
-        let sec = self.pe.section_for(va)?;
-        if !sec.is_executable() {
+        let r = self.region(va)?;
+        if !r.exec {
             return None;
         }
-        let off = self.pe.file_offset(va)?;
-        let end = (sec.raw_offset + sec.raw_size) as usize;
-        let bytes = self.data.get(off..end.min(off + 16))?;
+        let off = (va - r.va) as usize;
+        let bytes = &r.bytes[off..r.bytes.len().min(off + 16)];
         let mut dec = Decoder::with_ip(32, bytes, va as u64, DecoderOptions::NONE);
         let ins = dec.decode();
         if ins.is_invalid() {
@@ -203,16 +239,14 @@ fn discover(img: &Image, entry: u32, name: &str, entries: &BTreeSet<u32>, tables
 }
 
 fn is_code_start_candidate(img: &Image, v: u32) -> bool {
-    let Some(sec) = img.pe.section_for(v) else { return false };
-    if !sec.is_executable() || img.decode_at(v).is_none() {
+    if img.decode_at(v).is_none() {
         return false;
     }
-    if v == sec.va {
-        return true; // first byte of the code section
+    if img.is_exec_start(v) {
+        return true; // first byte of a code section
     }
-    let Some(off) = img.pe.file_offset(v - 1) else { return false };
     // Preceded by `ret`, `int3`/`nop` padding, or `ret imm16` (C2 xx xx).
-    matches!(img.data[off], 0xc3 | 0xcc | 0x90) || (off >= 2 && img.data[off - 2] == 0xc2)
+    matches!(img.byte_at(v.wrapping_sub(1)), Some(0xc3 | 0xcc | 0x90)) || img.byte_at(v.wrapping_sub(3)) == Some(0xc2)
 }
 
 pub fn recompile(exe: &[u8], hints: &Hints, opts: &Options) -> Result<Output, RecompError> {
@@ -221,7 +255,7 @@ pub fn recompile(exe: &[u8], hints: &Hints, opts: &Options) -> Result<Output, Re
         return Err(RecompError(format!("hints are for {}, executable is {}", hints.program_sha256, sha)));
     }
     let pe = Pe::parse(exe).map_err(|e| RecompError(e.to_string()))?;
-    let img = Image { pe, data: exe };
+    let img = Image::from_pe(&pe, exe);
 
     let mut names: BTreeMap<u32, String> = BTreeMap::new();
     for h in &hints.functions {
@@ -247,10 +281,8 @@ pub fn recompile(exe: &[u8], hints: &Hints, opts: &Options) -> Result<Output, Re
     // reachable through pointers (e.g. CRT __xi/__xc initializer tables).
     let mut data_refs: BTreeSet<u32> = BTreeSet::new();
     if opts.include_data_referenced {
-        for sec in img.pe.sections.iter().filter(|s| !s.is_executable()) {
-            let start = sec.raw_offset as usize;
-            let end = (sec.raw_offset + sec.raw_size) as usize;
-            let bytes = &img.data[start..end.min(img.data.len())];
+        for region in img.regions.iter().filter(|r| !r.exec) {
+            let bytes = region.bytes;
             for w in bytes.as_chunks::<4>().0 {
                 let v = u32::from_le_bytes(*w);
                 if names.contains_key(&v) {
@@ -265,25 +297,40 @@ pub fn recompile(exe: &[u8], hints: &Hints, opts: &Options) -> Result<Output, Re
             }
         }
     }
-    let mut queue: VecDeque<u32> = if opts.all_functions {
+    let queue: VecDeque<u32> = if opts.all_functions {
         names.keys().copied().collect()
     } else {
         opts.roots.iter().copied().chain(data_refs.iter().copied()).collect()
     };
+    let done = discover_all(&img, &names, &tables, &mut entries, queue, &opts.overrides);
+    let (files, stats, functions) = generate(&done, &opts.overrides, opts.functions_per_file, &opts.traps);
+    Ok(Output { files, stats, functions, data_referenced: data_refs.into_iter().collect() })
+}
+
+/// Discover every function reachable from `queue` (direct calls, tail jumps,
+/// fallthrough into other entries, and immediate code addresses).
+fn discover_all(
+    img: &Image,
+    names: &BTreeMap<u32, String>,
+    tables: &BTreeMap<u32, Vec<u32>>,
+    entries: &mut BTreeSet<u32>,
+    mut queue: VecDeque<u32>,
+    overrides: &BTreeSet<u32>,
+) -> BTreeMap<u32, Func> {
     let mut done: BTreeMap<u32, Func> = BTreeMap::new();
     while let Some(e) = queue.pop_front() {
         if done.contains_key(&e) {
             continue;
         }
         let name = names.get(&e).cloned().unwrap_or_else(|| format!("sub_{e:08x}"));
-        if opts.overrides.contains(&e) {
+        if overrides.contains(&e) {
             done.insert(e, Func {
                 entry: e, name, insns: BTreeMap::new(), labels: BTreeSet::new(), tables: BTreeMap::new(),
                 tail_jump: BTreeMap::new(), fall_into: BTreeMap::new(), callees: BTreeSet::new(), addr_taken: BTreeSet::new(), decode_errors: BTreeSet::new(),
             });
             continue;
         }
-        let f = discover(&img, e, &name, &entries, &tables);
+        let f = discover(img, e, &name, entries, tables);
         for &c in f.callees.iter().chain(f.tail_jump.values()).chain(f.fall_into.values()).chain(f.addr_taken.iter()) {
             if entries.insert(c) {
                 // New entry discovered via a call: earlier functions may have
@@ -297,9 +344,14 @@ pub fn recompile(exe: &[u8], hints: &Hints, opts: &Options) -> Result<Output, Re
         done.insert(e, f);
     }
 
+    done
+}
+
+/// Emit C files, the declaration header, and the dispatch table.
+fn generate(done: &BTreeMap<u32, Func>, overrides: &BTreeSet<u32>, functions_per_file: usize, traps: &BTreeMap<u32, String>) -> (Vec<(String, String)>, Stats, Vec<u32>) {
     let mut stats = Stats::default();
     let funcs: Vec<&Func> = done.values().collect();
-    let per_file = opts.functions_per_file.max(1);
+    let per_file = functions_per_file.max(1);
     let mut files = Vec::new();
 
     let mut decls = String::from("/* Generated by bugatron-recomp. Do not edit or commit. */\n#ifndef BUGATRON_GEN_DECLS_H\n#define BUGATRON_GEN_DECLS_H\n#include \"recomp.h\"\n");
@@ -312,8 +364,8 @@ pub fn recompile(exe: &[u8], hints: &Hints, opts: &Options) -> Result<Output, Re
     for (i, chunk) in funcs.chunks(per_file).enumerate() {
         let mut src = String::from("/* Generated by bugatron-recomp from the user's Bug3D.exe. Do not edit or commit. */\n#include \"gen_decls.h\"\n\n");
         for f in chunk {
-            let is_override = opts.overrides.contains(&f.entry);
-            src.push_str(&emit::emit_function(f, is_override, &mut stats));
+            let is_override = overrides.contains(&f.entry);
+            src.push_str(&emit::emit_function(f, is_override, &mut stats, traps));
             src.push('\n');
         }
         files.push((format!("gen_{i:03}.c"), src));
@@ -340,11 +392,23 @@ void recomp_call_indirect(Cpu *c, uint32_t target, uint32_t site) {{\n\
     if (fn) {{ rt_note_indirect(target, site); fn(c); return; }}\n\
     rt_unresolved_call(c, target, site);\n\
 }}\n\n\
-uint32_t recomp_function_count(void) {{ return recomp_table_len; }}\n",
+uint32_t recomp_function_count(void) {{ return recomp_table_len; }}\n\nuint32_t recomp_flags_get(const Cpu *c) {{ return flags_get((Cpu *)c); }}\n",
         funcs.len()
     ));
     files.push(("gen_dispatch.c".to_string(), table));
 
     stats.functions = funcs.len();
-    Ok(Output { files, stats, functions: funcs.iter().map(|f| f.entry).collect(), data_referenced: data_refs.into_iter().collect() })
+    (files, stats, funcs.iter().map(|f| f.entry).collect())
+}
+
+/// Recompile standalone code snippets (regression tests). Each snippet is a
+/// root function at its address; no hints or overrides are used.
+pub fn recompile_snippets(snippets: &[(u32, Vec<u8>)], functions_per_file: usize) -> Output {
+    let img = Image { regions: snippets.iter().map(|(va, b)| Region { va: *va, bytes: b.as_slice(), exec: true }).collect() };
+    let names: BTreeMap<u32, String> = snippets.iter().map(|(va, _)| (*va, format!("snippet_{va:08x}"))).collect();
+    let mut entries: BTreeSet<u32> = names.keys().copied().collect();
+    let queue: VecDeque<u32> = names.keys().copied().collect();
+    let done = discover_all(&img, &names, &BTreeMap::new(), &mut entries, queue, &BTreeSet::new());
+    let (files, stats, functions) = generate(&done, &BTreeSet::new(), functions_per_file, &BTreeMap::new());
+    Output { files, stats, functions, data_referenced: Vec::new() }
 }

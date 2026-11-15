@@ -6,6 +6,7 @@ use std::fmt::Write;
 
 struct Ctx<'a> {
     f: &'a Func,
+    traps: &'a std::collections::BTreeMap<u32, String>,
     out: String,
     stats: &'a mut Stats,
     fmt: IntelFormatter,
@@ -196,6 +197,13 @@ impl<'a> Ctx<'a> {
         let _ = writeln!(self.out, "    /* {a:08x}: {} */", text.replace("*/", "* /"));
         self.stats.instructions += 1;
 
+        if let Some(reason) = self.traps.get(&a) {
+            self.stats.traps += 1;
+            let esc = reason.replace('\\', "\\\\").replace('"', "'");
+            self.line(&format!("rt_trap(c, 0x{a:08x}u, \"{esc}\"); return;"));
+            return;
+        }
+
         // String instructions use implicit operands; handle them first.
         if matches!(ins.op_kind(0), OpKind::MemoryESEDI | OpKind::MemorySegESI)
             || (ins.op_count() > 1 && matches!(ins.op_kind(1), OpKind::MemoryESEDI | OpKind::MemorySegESI))
@@ -286,10 +294,10 @@ impl<'a> Ctx<'a> {
                 let s = wr!(0, &format!("(~{x} & {})", mask(sz)));
                 self.line(&s);
             }
-            Mnemonic::Shl | Mnemonic::Sal | Mnemonic::Shr | Mnemonic::Sar | Mnemonic::Rol | Mnemonic::Ror => {
+            Mnemonic::Shl | Mnemonic::Sal | Mnemonic::Shr | Mnemonic::Sar | Mnemonic::Rol | Mnemonic::Ror | Mnemonic::Rcl | Mnemonic::Rcr => {
                 let x = rd!(0);
                 let n = if ins.op_count() > 1 { rd!(1) } else { "1u".into() };
-                let f = match m { Mnemonic::Shl | Mnemonic::Sal => "op_shl", Mnemonic::Shr => "op_shr", Mnemonic::Sar => "op_sar", Mnemonic::Rol => "op_rol", _ => "op_ror" };
+                let f = match m { Mnemonic::Shl | Mnemonic::Sal => "op_shl", Mnemonic::Shr => "op_shr", Mnemonic::Sar => "op_sar", Mnemonic::Rol => "op_rol", Mnemonic::Ror => "op_ror", Mnemonic::Rcl => "op_rcl", _ => "op_rcr" };
                 let s = wr!(0, "r");
                 self.line(&format!("uint32_t r = {f}(c, {sz}u, {x}, ({n}) & 31u); {s}"));
             }
@@ -340,10 +348,28 @@ impl<'a> Ctx<'a> {
             Mnemonic::Sahf => self.line("op_sahf(c);"),
             Mnemonic::Lahf => self.line("op_lahf(c);"),
             Mnemonic::Leave => self.line("c->esp = c->ebp; c->ebp = pop32(c);"),
-            Mnemonic::Bt => {
-                let (x, y) = (rd!(0), rd!(1));
-                self.line(&format!("uint32_t f = flags_get(c) & ~F_CF; if (({x} >> (({y}) & {}u)) & 1u) f |= F_CF; flags_set_explicit(c, f);", sz - 1));
+            Mnemonic::Bt | Mnemonic::Bts | Mnemonic::Btr | Mnemonic::Btc => {
+                if sz != 16 && sz != 32 { return false; }
+                let y = rd!(1);
+                let upd = match m { Mnemonic::Bts => Some("v | mbit"), Mnemonic::Btr => Some("v & ~mbit"), Mnemonic::Btc => Some("v ^ mbit"), _ => None };
+                let mem_reg = ins.op_kind(0) == OpKind::Memory && ins.op_kind(1) == OpKind::Register;
+                if mem_reg {
+                    // Bit-string addressing: signed bit offset selects a word relative to ea.
+                    let (shift, bytes, mk) = if sz == 32 { (5, 4, 31) } else { (4, 2, 15) };
+                    let off = if sz == 32 { format!("s32({y})") } else { format!("s32(sx16({y}))") };
+                    let (rdf, wrf) = if sz == 32 { ("rd32", "wr32") } else { ("(uint32_t)rd16", "wr16") };
+                    let mut st = format!("int32_t bo = {off}; uint32_t ea2 = ea + (uint32_t)((bo >> {shift}) * {bytes}); uint32_t v = {rdf}(ea2); uint32_t mbit = 1u << ((uint32_t)bo & {mk}u); bt_setcf(c, (v & mbit) != 0);");
+                    if let Some(u) = upd { st.push_str(&format!(" {wrf}(ea2, ({}){u});", if sz == 32 { "uint32_t" } else { "uint16_t" })); }
+                    self.line(&st);
+                } else {
+                    let x = rd!(0);
+                    let mut st = format!("uint32_t v = {x}; uint32_t mbit = 1u << (({y}) & {}u); bt_setcf(c, (v & mbit) != 0);", sz - 1);
+                    if let Some(u) = upd { let w = wr!(0, &format!("({u})")); st.push(' '); st.push_str(&w); }
+                    self.line(&st);
+                }
             }
+            Mnemonic::Pushad => self.line("op_pushad(c);"),
+            Mnemonic::Popad => self.line("op_popad(c);"),
             _ if Self::cond(m).is_some() && ins.flow_control() == FlowControl::ConditionalBranch => {
                 let t = ins.near_branch32();
                 let br = self.branch_to(a, t);
@@ -580,11 +606,11 @@ impl<'a> Ctx<'a> {
     }
 }
 
-pub(crate) fn emit_function(f: &Func, is_override: bool, stats: &mut Stats) -> String {
+pub(crate) fn emit_function(f: &Func, is_override: bool, stats: &mut Stats, traps: &std::collections::BTreeMap<u32, String>) -> String {
     let mut fmt = IntelFormatter::new();
     fmt.options_mut().set_hex_prefix("0x");
     fmt.options_mut().set_hex_suffix("");
-    let mut cx = Ctx { f, out: String::new(), stats, fmt };
+    let mut cx = Ctx { f, traps, out: String::new(), stats, fmt };
     let _ = writeln!(cx.out, "/* {} */\nvoid f_{:08x}(Cpu *c) {{", f.name, f.entry);
     if is_override {
         let _ = writeln!(cx.out, "    rt_override(c, 0x{:08x}u);\n}}", f.entry);
