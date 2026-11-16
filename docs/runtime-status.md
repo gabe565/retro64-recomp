@@ -41,7 +41,7 @@ How far the recompiled game runs on the portable runtime, which imports and COM 
   - SDL events become `WM_KEYDOWN`/`UP` (or `WM_SYSKEYDOWN`/`UP`) with Win32 virtual keys and scan codes, `WM_MOUSEMOVE`, and `WM_[LR]BUTTONDOWN`/`UP`. Window close becomes `WM_SYSCOMMAND(SC_CLOSE)`, then `WM_CLOSE`, then `WM_DESTROY`.
 - **WINMM:** `timeGetTime`, `joyGetPos` (returns `JOYERR_UNPLUGGED`: no joystick).
 - **KERNEL32 files and scheduling:** `SetCurrentDirectoryA`/`GetCurrentDirectoryA` (the guest current directory, confined to the game directory), `FindFirstFileA`/`FindNextFileA`/`FindClose` (wildcards; game and save directories merged, in NTFS case-insensitive order), and `SetPriorityClass`/`SetThreadPriority` (no-ops).
-- **FMOD 3.61** (`fmod.rs`): all 13 imports with their return contracts. Loads read the real files and return NULL when one is missing. No audio is produced yet (RD8).
+- **FMOD 3.61** (`fmod.rs`): all 13 imports, with sound effects and XM music on the software mixer, libxmp, and SDL3 audio. See `audio.md`.
 - **DDRAW:** `DirectDrawEnumerateA`, `DirectDrawCreate` (primary driver only).
 
 `GetModuleHandleA("DDRAW.DLL")` returns a module handle. `GetProcAddress` returns NULL for everything, so the game uses its `DirectDrawEnumerateA` fallback rather than `DirectDrawEnumerateExA`.
@@ -118,7 +118,8 @@ The runtime keeps this behaviour. QPC and `Sleep` take a fast import path, and c
 - the GPU backend, run offscreen on the main thread (`--test gpu`; skipped without a GPU): clears, pixel centres, depth, blending, texturing, colour key, CPU/GPU coherence, and RGB565.
 - window messages and input;
 - list boxes;
-- the simulation clock, including the original's calibration and limiter loops reproduced against the runtime.
+- the simulation clock, including the original's calibration and limiter loops reproduced against the runtime;
+- audio: WAV decoding, channel allocation and stealing, resampled length, looping and `SetMode`, levels and pan, interpolation, clipping, music volume, pause and restart, cleanup, the FMOD import contracts (with a generated XM), and rendering the game's own XM (skipped without game files).
 
 ## Known deviations
 
@@ -132,7 +133,7 @@ The runtime keeps this behaviour. QPC and `Sleep` take a fast import path, and c
 | RD6 | The exact message sequence of `CreateWindowExA`/`ShowWindow` is modelled on Windows documentation, not traced from the VM. Non-client and paint messages are omitted. | The window procedure handles none of the omitted messages | Confirm against a VM message trace |
 | RD7 | `TranslateMessage` generates no `WM_CHAR`. | The window procedure does not use `WM_CHAR` | — |
 | RD11 | The mouse is captured (SDL relative mode) and drives a guest cursor by relative motion, 1 host point per guest pixel, like a mickey at Windows' default pointer speed. `SetCursorPos` moves that guest cursor.<br><br>This matters because the original reads the mouse relatively in gameplay (0x411f70: speed = \|x − centre\| × 0.0625, capped at 2, then `SetCursorPos(centre)`) and absolutely in menus (0x4103a0, which draws its own pointer).<br><br>Pointer acceleration is the host's (macOS), not Windows'. | Gameplay sensitivity is the same at every resolution, window size, and HiDPI scale. The menu pointer covers the screen more slowly at higher resolutions, as on the original | — |
-| RD8 | FMOD is silent: samples and songs are loaded but not played. | No audio | Audio milestone (SDL3 audio + libxmp) |
+| RD8 | Audio approximations AU1–AU5 (XM via libxmp; FMOD pan law and stealing per its documentation) | See `audio.md` | Capture comparison with the original |
 | RD9 | Intentional: guest time is idealised. Every frame spans exactly one 1/60 s refresh, `Sleep(0)` takes no time, and a QPC read takes one tick. Real machines add jitter and, depending on their overheads, an occasional dropped frame. | Stable, drift-free 60 Hz; identical simulation on every host | By design (owner decision, 2026-11-15) |
 | RD10 | Rendering approximations A1–A13 | See `graphics/renderer.md` | VM capture comparison |
 
@@ -145,5 +146,6 @@ The runtime keeps this behaviour. QPC and `Sleep` take a fast import path, and c
 | Windows (Vulkan or D3D12) and Linux (Vulkan) graphics validation | Not started. Only Metal is tested; the SPIR-V shader path is untested (renderer.md A10) |
 | 16-bit display mode comparison | Pending (A6) |
 | Visible video dialog (RD1) | Not started |
-| Audio: FMOD 3.61 on SDL3 audio + libxmp (RD8) | Not started |
+| Audio: FMOD 3.61 on SDL3 audio + libxmp | Done (`audio.md`). Comparison with the original's captured mix is pending |
 | Performance: per-frame back-buffer readback at high resolution | Documented optimisation target; deferred (renderer.md) |
+| Modern feature (deferred): adjustable mouse sensitivity | In the input layer only: scale host motion before it moves the guest cursor (`user::mouse_motion_rt`). The original game code is not modified. The default stays 1 point = 1 guest pixel (RD11). The owner found the default slightly low on macOS (2026-11-15) |

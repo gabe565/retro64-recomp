@@ -160,6 +160,12 @@ pub(crate) fn vblank_wait(rt: &mut crate::Runtime) {
         c.vblank();
         if rt.clock.stop_after_vblanks.is_some_and(|n| c.vblanks >= n) {
             eprintln!("stopping after {} vertical blanks", c.vblanks);
+            if let Some(p) = rt.audio_record_path.clone() {
+                match crate::fmod::write_recording(rt, &p) {
+                    Ok(n) => eprintln!("[audio] recorded {n} frames to {}", p.display()),
+                    Err(e) => eprintln!("[audio] {}: {e}", p.display()),
+                }
+            }
             crate::print_diagnostics(rt);
             std::process::exit(0);
         }

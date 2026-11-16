@@ -15,6 +15,7 @@
 // its live `Cpu` pointer; they cannot be `unsafe fn` and remain FFI-safe.
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
+pub mod audio;
 pub mod clock;
 pub mod cpu;
 pub mod ddraw;
@@ -105,6 +106,8 @@ pub struct Runtime {
     pub capture_dir: std::path::PathBuf,
     /// Display mode to pick in the video dialog ("W x H x BPP"), as a user would.
     pub video_mode: Option<String>,
+    /// Where to write the recorded FMOD output when the run stops (`--record-audio`).
+    pub audio_record_path: Option<std::path::PathBuf>,
     /// Called after every Flip with the flip count (diagnostics, scripted input).
     pub frame_hook: Option<Box<dyn FnMut(&mut Runtime, u64)>>,
     pub mem: GuestMemory,
@@ -198,6 +201,7 @@ impl Runtime {
             capture_dir: std::path::PathBuf::from("."),
             frame_hook: None,
             video_mode: None,
+            audio_record_path: None,
         };
         rt.command_line = rt.alloc_cstr("\"C:\\Bugatron\\Bug3D.exe\"");
         rt.env_block = rt.heap_alloc(16, true);
@@ -241,6 +245,7 @@ impl Runtime {
             capture_dir: std::path::PathBuf::from("."),
             frame_hook: None,
             video_mode: None,
+            audio_record_path: None,
         })
     }
 
@@ -372,6 +377,12 @@ pub fn print_diagnostics(rt: &Runtime) {
     eprintln!("--- COM methods ---");
     for (k, v) in rt.com_calls() {
         eprintln!("{v:>10}  {k}");
+    }
+    let m = rt.fmod.mixer();
+    eprintln!("--- audio ---");
+    eprintln!("device: {}, mix rate {} Hz, {} channels ({} playing), SFX volume {}", rt.fmod.has_device(), m.rate, m.channels.len(), m.playing_channels(), m.sfx_volume);
+    for (h, s) in &m.songs {
+        eprintln!("song {}: playing {}, paused {}, volume {}", rt.fmod.names.get(h).map_or("?", |s| s), s.playing, s.paused, s.volume);
     }
 }
 

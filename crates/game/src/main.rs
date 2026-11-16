@@ -15,6 +15,8 @@
 //! A–Z, 0–9, F1–F12, ESC, ENTER, SPACE, TAB, LEFT, RIGHT, UP, DOWN, CTRL,
 //! SHIFT, ALT, PGUP, PGDN, HOME, END. Mouse: `move@XxY`, `click@XxY` (left
 //! button, released two flips later), in guest screen coordinates.
+//! `--record-audio FILE.wav SECONDS` records the FMOD output from the first song
+//! on (written when `--frames` stops the run).
 //! `--dump-frames A,B,...` saves the front buffer after those flips as PNG in
 //! `--dump-dir` (default `.`).
 //!
@@ -35,6 +37,7 @@ fn main() {
     let mut dumps = Vec::new();
     let mut dump_dir = PathBuf::from(".");
     let mut video_mode = None;
+    let mut record: Option<(PathBuf, f64)> = None;
     let mut input: Vec<(u64, input_script::Input)> = Vec::new();
     let mut it = std::env::args().skip(1);
     while let Some(k) = it.next() {
@@ -47,6 +50,10 @@ fn main() {
             "--dump-frames" => dumps = v.to_string_lossy().split(',').map(str::trim).filter(|x| !x.is_empty()).map(|x| x.parse::<u64>().expect("--dump-frames A,B")).collect(),
             "--dump-dir" => dump_dir = v,
             "--video-mode" => video_mode = Some(display::parse_mode(&v.to_string_lossy()).unwrap_or_else(|e| panic!("--video-mode: {e}"))),
+            "--record-audio" => {
+                let secs = it.next().and_then(|s| s.parse::<f64>().ok()).expect("--record-audio FILE SECONDS");
+                record = Some((v, secs));
+            }
             "--input" => input = input_script::parse(&v.to_string_lossy()).unwrap_or_else(|e| panic!("--input: {e}")),
             _ => panic!("unknown argument {k}"),
         }
@@ -60,6 +67,10 @@ fn main() {
     rt.clock.stop_after_vblanks = frames;
     rt.capture_frames = dumps;
     rt.capture_dir = dump_dir;
+    if let Some((path, secs)) = record {
+        rt.fmod.mixer().recording = Some(bugatron_runtime::audio::mixer::Recording { limit_frames: (secs * 48000.0) as usize, ..Default::default() });
+        rt.audio_record_path = Some(path);
+    }
     // Display mode: explicit, else sized to the host display; offered to the game
     // as a driver mode and picked in its dialog.
     let mode = video_mode.or_else(|| {

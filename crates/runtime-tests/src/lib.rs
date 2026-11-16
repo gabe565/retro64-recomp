@@ -66,6 +66,7 @@ pub fn setup() -> Fixture {
     rt.mem.commit(SCRATCH, SCRATCH_SIZE).expect("commit scratch");
     rt.mem.w32(LOG_PTR, LOG_START);
     rt.user.headless = true;
+    rt.fmod.output = false; // never open a sound device in tests
     rt.install();
     Fixture { cpu: with_rt(|rt| rt.initial_cpu()), _lock: lock }
 }
@@ -194,3 +195,38 @@ pub fn d3d3(cpu: &mut Cpu, dd4: u32) -> u32 {
 pub fn put_f32s(a: u32, v: &[f32]) {
     with_rt(|rt| for (i, x) in v.iter().enumerate() { rt.mem.w32(a + 4 * i as u32, x.to_bits()) });
 }
+
+/// A RIFF WAVE file with PCM data (and an optional `smpl` loop).
+pub fn wav(channels: u16, rate: u32, bits: u16, data: &[u8], smpl_loop: Option<(u32, u32)>) -> Vec<u8> {
+    let mut chunks = Vec::new();
+    let mut fmt = Vec::new();
+    fmt.extend_from_slice(&1u16.to_le_bytes());
+    fmt.extend_from_slice(&channels.to_le_bytes());
+    fmt.extend_from_slice(&rate.to_le_bytes());
+    fmt.extend_from_slice(&(rate * channels as u32 * bits as u32 / 8).to_le_bytes());
+    fmt.extend_from_slice(&(channels * bits / 8).to_le_bytes());
+    fmt.extend_from_slice(&bits.to_le_bytes());
+    for (id, body) in [(b"fmt ", fmt), (b"data", data.to_vec())] {
+        chunks.extend_from_slice(id);
+        chunks.extend_from_slice(&(body.len() as u32).to_le_bytes());
+        chunks.extend_from_slice(&body);
+        if body.len() % 2 == 1 {
+            chunks.push(0);
+        }
+    }
+    if let Some((s, e)) = smpl_loop {
+        let mut b = vec![0u8; 36 + 24];
+        b[28..32].copy_from_slice(&1u32.to_le_bytes());
+        b[36 + 8..36 + 12].copy_from_slice(&s.to_le_bytes());
+        b[36 + 12..36 + 16].copy_from_slice(&e.to_le_bytes());
+        chunks.extend_from_slice(b"smpl");
+        chunks.extend_from_slice(&(b.len() as u32).to_le_bytes());
+        chunks.extend_from_slice(&b);
+    }
+    let mut out = b"RIFF".to_vec();
+    out.extend_from_slice(&(4 + chunks.len() as u32).to_le_bytes());
+    out.extend_from_slice(b"WAVE");
+    out.extend_from_slice(&chunks);
+    out
+}
+

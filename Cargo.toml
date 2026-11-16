@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/pe", "crates/recomp", "crates/runtime", "crates/poc", "crates/game", "crates/runtime-tests", "crates/x86-cases", "crates/x86-tests", "crates/x86-oracle"]
+members = ["crates/pe", "crates/recomp", "crates/runtime", "crates/poc", "crates/game", "crates/xmp-sys", "crates/runtime-tests", "crates/x86-cases", "crates/x86-tests", "crates/x86-oracle"]
 
 [workspace.package]
 edition = "2021"
@@ -12,6 +12,7 @@ publish = false
 bugatron-pe = { path = "crates/pe" }
 bugatron-recomp = { path = "crates/recomp" }
 bugatron-runtime = { path = "crates/runtime" }
+bugatron-xmp-sys = { path = "crates/xmp-sys" }
 bugatron-x86-cases = { path = "crates/x86-cases" }
 iced-x86 = { version = "1.22", default-features = false, features = ["std", "decoder", "intel", "instr_info"] }
 serde = { version = "1", features = ["derive"] }

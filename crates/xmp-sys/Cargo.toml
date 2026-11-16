@@ -1,0 +1,10 @@
+[package]
+name = "bugatron-xmp-sys"
+description = "Vendored libxmp-lite (XM/MOD/S3M/IT player) with a minimal safe wrapper"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[build-dependencies]
+cc.workspace = true

@@ -87,6 +87,7 @@ name = "bugatron-runtime"
 version = "0.1.0"
 dependencies = [
  "bugatron-pe",
+ "bugatron-xmp-sys",
  "libc",
  "naga",
  "num-bigint",
@@ -103,6 +104,7 @@ dependencies = [
  "bugatron-recomp",
  "bugatron-runtime",
  "bugatron-x86-cases",
+ "bugatron-xmp-sys",
  "cc",
 ]
 
@@ -132,6 +134,13 @@ dependencies = [
  "cc",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "bugatron-xmp-sys"
+version = "0.1.0"
+dependencies = [
+ "cc",
 ]
 
 [[package]]
