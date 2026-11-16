@@ -36,7 +36,7 @@ Verified by scripted play. Title, menu, gameplay, game over, title, and a new ga
 
 | # | Item | Check |
 |---|---|---|
-| AU1 | Music comes from libxmp, not FMOD 3.61's own XM player. Effect quirks, interpolation, volume ramping, and the overall music level may differ | Compare captures (below) |
+| AU1 | Music comes from libxmp, not FMOD 3.61's own XM player. Tempo and pitch match a capture of the original; the original's music is 2.1 dB louder at volume 56/256 (open). Effect quirks, interpolation, and volume ramping may differ | Captures (below) |
 | AU2 | The pan law (linear, −6 dB at centre) and the channel-stealing rule follow the FMOD 3 documentation. The game never sets pan, and 32 channels are rarely exhausted | Captures; stealing is only audible with more than 32 simultaneous sounds |
 | AU3 | `FSOUND_PlaySound` returns the plain channel index. FMOD 3.6 may encode extra bits; the game never uses the value | — |
 | AU4 | Output is resampled by SDL from 44100 Hz to the device rate | — |
@@ -44,7 +44,7 @@ Verified by scripted play. Title, menu, gameplay, game over, title, and a new ga
 
 ## Comparing with the original
 
-- **Original:** `tools/frida/capture_fmod_output.js` adds a DSP unit to the original's FMOD (priority 1100, above the clip-and-copy unit). It receives the final 16-bit stereo mix and sends 12 s of it from the first `PlaySong` onwards. Load it with `capture_deterministic_frames.js` so both runs see the same game timeline.
+- **Original:** `tools/frida/capture_fmod_output.js` adds a DSP unit to the original's FMOD (priority 1100, above the clip-and-copy unit). It receives the final 16-bit stereo mix and sends 12 s of it from the first `PlaySong` onwards. Spawn the game with this script plus only a `DialogBoxParamA` hook that returns IDOK for calls from Bug3D.exe. Do not combine it with `capture_deterministic_frames.js`: that script makes `FSOUND_Init` fail.
 - **Native:** `bugatron --frames N --record-audio native.wav 12` records the mixer output from the first song onwards.
 - **Results:** see below.
 
@@ -60,10 +60,27 @@ Verified by scripted play. Title, menu, gameplay, game over, title, and a new ga
 - **Capture attempts that hurt the VM.**
   - The first tap used a stdcall callback. FMOD 3.61 calls DSP units with cdecl (verified in the unpacked fmod.dll: its own units end in a plain `ret`), so the game crashed.
   - The second tap copied buffers through JS arrays and base64-encoded 2 MB inside FMOD's mixer thread. Mixing stalled, DirectSound looped its last buffer, and the game could not exit; the VM was rebooted.
-  - The script now does only a native copy in the callback and sends chunks from a timer. It has not been run yet.
+  - The script now does only a native copy in the callback and sends chunks from a timer.
 - **Native side.** The title music records at −29.3 dBFS RMS (peak 6743/32767) at the game's saved music volume of 56/256.
 - **What holds without a capture:**
   - Effects play at their files' own sample rates, so pitch and speed are the files'.
   - XM tempo follows the module (libxmp).
   - The music and effects lifecycle across scenes matches the original's call sequence, which comes from the same recompiled code.
   - Still unverified: AU1 (relative music level and XM playback details) and AU2 (pan law).
+
+### Results: capture of the original (2026-11-15, later)
+
+The current capture script ran once without harming the game or the VM. It delivered all 12 s of the title music: 2 116 800 bytes at 44100 Hz. The native counterpart is `--video-mode 640x480x32 --record-audio native.wav 12`. Both recordings start at the first `PlaySong`, with the music volume at 56/256.
+
+| Measure | Original (FMOD 3.61) | Native (libxmp) |
+|---|---|---|
+| RMS level | −27.0 dBFS | −29.3 dBFS |
+| Peak | 8205 | 6743 |
+| L / R RMS | 1433 / 1479 | 1128 / 1127 |
+| Side/mid ratio | 0.023 | 0.015 |
+
+- **Tempo and pitch match (AU1, partly confirmed).** The best alignment is at lag 0. Over 1 s windows from 0 to 9 s, the lag stays at 0, with a normalised correlation of 0.96–0.98. There is no drift, so the module tempo, row timing, and the playback rate match.
+- **Music level differs (AU1, open).** A least-squares fit puts the original at 1.272× the native output (+2.1 dB). The residual after that gain is −12 dB below the signal, which leaves room for interpolation, ramping, and effect-detail differences. The level comes from a single setting (56/256), so a constant offset cannot yet be told apart from a different volume curve.
+  - Candidate causes: libxmp's internal mixing scale (`XMP_PLAYER_AMP`/`MIX` defaults), and how FMOD 3.61's XM player applies `FMUSIC_SetMasterVolume`. Next step: read FMOD's music mixer in the unpacked DLL, or capture a second volume setting.
+  - Unchanged for now: correcting the gain blindly could make other volumes worse.
+- **Stereo (AU2).** The title music is almost mono in both recordings: the side signal is about 2 % of the mid. The original is slightly wider and slightly right-weighted. That fits XM panning that libxmp renders with less separation (libxmp's default stereo mix is 70 %), but the signal is too small to settle the pan law, and the effects are not in this capture.
