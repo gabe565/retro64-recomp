@@ -4,7 +4,7 @@ How far the recompiled game runs on the portable runtime, which imports and COM 
 
 ## Current progress
 
-`cargo run --release -p bugatron` translates 772 functions. It runs the CRT, WinMain, `r3d_Enumerate`, the video dialog, and window creation, then enters `r3d_Initialize`. It stops at `IDirectDraw4::SetCooperativeLevel`, the first method of the surface and device milestone.
+`cargo run --release -p bugatron` translates 772 functions. It runs the CRT, WinMain, `r3d_Enumerate`, the video dialog, and window creation, then enters `r3d_Initialize`. Inside it, the cooperative level, display mode, flip chain, and Z-buffer are set up. It stops at `IDirect3D3::CreateDevice`.
 
 Requires SDL3 (found through pkg-config; on macOS `brew install sdl3`). For a headless run, set `SDL_VIDEODRIVER=dummy`.
 
@@ -15,7 +15,8 @@ Requires SDL3 (found through pkg-config; on macOS `brew install sdl3`). For a he
 | DirectDraw/Direct3D enumeration (0x424730 → 0x428a90) | runs through the original code with emulated COM |
 | Video dialog (0x66, proc 0x408280) | runs headless (see deviations) |
 | Window creation (0x407b4e) | runs. The original window procedure receives the creation and activation messages |
-| `r3d_Initialize`: surfaces, device, rendering | next milestone |
+| `r3d_Initialize`: display mode, flip chain, Z-buffer | runs |
+| Direct3D device, rendering | in progress |
 
 ## Implemented imports
 
@@ -36,13 +37,37 @@ Requires SDL3 (found through pkg-config; on macOS `brew install sdl3`). For a he
 |---|---|
 | all | QueryInterface (`IDirectDraw4` and `IDirect3D3` from DirectDraw; others return `E_NOINTERFACE` with a log line), AddRef, Release |
 | `IDirectDraw` / `IDirectDraw4` | GetCaps, GetDisplayMode, EnumDisplayModes (DD4), GetMonitorFrequency (DD4) |
-| `IDirect3D3` | EnumDevices |
+| `IDirectDraw4` | SetCooperativeLevel, SetDisplayMode (one of the enumerated modes), CreateSurface, CreateClipper, RestoreDisplayMode, FlipToGDISurface, RestoreAllSurfaces |
+| `IDirect3D3` | EnumDevices, EnumZBufferFormats (16, 24, then 32-bit Z; the game stops at 16) |
+| `IDirectDrawSurface4` | QueryInterface (itself), AddAttachedSurface, Blt (colour fill, depth fill, copy, nearest-neighbour stretch, `KEYSRC`/`KEYSRCOVERRIDE`), BltFast (`SRCCOLORKEY`), DeleteAttachedSurface, Flip, GetAttachedSurface, GetCaps, GetColorKey, GetPixelFormat, GetSurfaceDesc, IsLost, Lock, Restore, SetClipper, SetColorKey, Unlock |
+| `IDirectDrawClipper` | SetHWnd, GetHWnd |
+
+### Surfaces
+
+- Every surface's pixels live in guest memory in its DirectDraw format. The pitch is the row size rounded up to a DWORD. `Lock` returns a pointer into that memory.
+- The primary surface takes the current display mode's format: XRGB8888 for 32-bit, RGB565 for 16-bit.
+- The flip chain is circular, as in DirectDraw. `Flip` exchanges the pixel storage of the front and back buffers.
+- A per-surface generation counter records CPU changes for the GPU renderer.
+- Render targets drawn by the GPU are read back into guest memory before CPU access (`render::sync_for_cpu`). This is a no-op until the renderer lands.
+- Blits between different pixel formats are not emulated; they stop with a diagnostic, since DirectDraw blits do not convert formats.
+
+### Simulation clock (`clock.rs`)
+
+Guest time = `Flip` count × 1/60 s plus the total of the game's `Sleep` calls. It is exact (rational) arithmetic, with no drift.
+- QPC, `timeGetTime`, and message times all derive from it, so time is constant within a frame.
+- Each `Flip` and `Sleep` then waits for host time to catch up (simulation pacing). Presentation is independent of the cadence.
+- If the host falls more than 250 ms behind, the backlog is forgiven: the simulation slows rather than racing.
+- If the game busy-waits on the clock (1,000,000 reads without a `Flip` or `Sleep`), guest time follows host time until the next frame, with a one-time diagnostic.
 
 The capability records (`DDCAPS`, both `D3DDEVICEDESC`s) are the values the original saw in the reference VM. They are in `crates/runtime/src/ddraw_caps.rs`, generated from `tests/fixtures/ddraw-enumeration-vm-dgvoodoo.json`, which was captured with `tools/frida/dump_ddraw_enumeration.js`.
 
 ## Files
 
 Guest paths resolve case-insensitively against the game directory (`--data`, read-only) and a save directory (`--save`, default `./save`). Writes are copy-on-write into the save directory, so original game files are never modified.
+
+## Tests
+
+`cargo test -p bugatron-runtime-tests` drives imports and COM methods through the same dispatch path as recompiled code. Small recompiled guest helpers act as window procedures and callbacks. Coverage: files, enumeration and capabilities, pixel formats, surfaces (creation, descriptors, locks, flips, blits), window messages and input, list boxes, and the simulation clock.
 
 ## Known deviations
 
@@ -52,6 +77,6 @@ Guest paths resolve case-insensitively against the game directory (`--data`, rea
 | RD2 | Driver enumeration uses the `DirectDrawEnumerateA` fallback: one driver, "Primary Display Driver". The reference VM used `DirectDrawEnumerateExA` and listed two drivers, with dgVoodoo's names. | Driver list and names in the dialog | None needed; selection logic is unchanged |
 | RD3 | The display-mode list is a fixed set (640×480 to 1280×1024, at 32 then 16 bpp), not the host's list. | Mode indices in a `prefs` file copied from Windows may refer to a different mode | By design (r3d-interface.md §9.3) |
 | RD4 | The desktop mode is reported as 1024×768×32. | Only decides whether "Window" is offered | — |
-| RD5 | The full game's QPC, `timeGetTime`, and `Sleep` follow the host clock. | Timing is not yet the decided fixed 60 Hz cadence | Advance virtual time by 1/60 s per presented frame once `Flip` is emulated |
+| RD5 | The simulation runs at exactly one 60 Hz refresh per `Flip`. On a slower host it slows down instead of taking larger steps, as the original would. | Only when the host cannot sustain 60 simulated frames per second | By design (fixed cadence) |
 | RD6 | The exact message sequence of `CreateWindowExA`/`ShowWindow` is modelled on Windows documentation, not traced from the VM. Non-client and paint messages are omitted. | The window procedure handles none of the omitted messages | Confirm against a VM message trace |
 | RD7 | `TranslateMessage` generates no `WM_CHAR`, and `SetCursorPos` does not warp the host pointer. | The window procedure does not use `WM_CHAR` | — |

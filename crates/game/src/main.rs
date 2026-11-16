@@ -33,7 +33,8 @@ fn main() {
     let mut rt = Runtime::load(&image).expect("load Bug3D.exe");
     rt.files.data_dir = data;
     rt.files.save_dir = save;
-    rt.clock.live = Some(std::time::Instant::now());
+    rt.clock.cadence = Some(bugatron_runtime::clock::Cadence::new());
+    rt.clock.pace = true;
     eprintln!("translated functions: {}", Runtime::function_count());
     rt.install();
     let mut cpu = with_rt(|rt| rt.initial_cpu());

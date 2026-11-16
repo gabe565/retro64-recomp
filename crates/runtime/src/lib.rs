@@ -15,11 +15,13 @@
 // its live `Cpu` pointer; they cannot be `unsafe fn` and remain FFI-safe.
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
+pub mod clock;
 pub mod cpu;
 pub mod ddraw;
 pub mod dialog;
 pub mod files;
 mod heap;
+pub mod render;
 pub mod user;
 mod imports;
 pub mod mem;
@@ -65,9 +67,10 @@ pub struct Clock {
     pub time_get_time: u32,
     pub sleeps: u64,
     pub monitor_frequency: u32,
-    /// Live mode (full game): time sources follow the host clock from this instant.
-    /// Interim until the fixed 60 Hz cadence is tied to Flip (docs/runtime-status.md RD5).
-    pub live: Option<std::time::Instant>,
+    /// Full game: the fixed 60 Hz simulation cadence (see clock.rs).
+    pub cadence: Option<clock::Cadence>,
+    /// Wait for real time at frame boundaries (off in tests).
+    pub pace: bool,
 }
 
 #[derive(Default, Debug, Clone)]
@@ -80,7 +83,7 @@ pub struct Diagnostics {
 }
 
 pub struct Runtime {
-    pub(crate) com: ddraw::ComRegistry,
+    pub com: ddraw::Registry,
     pub(crate) dialog: Option<dialog::Dialog>,
     pub user: user::User,
     pub mem: GuestMemory,
@@ -213,9 +216,9 @@ impl Runtime {
     }
 
     /// Milliseconds for `timeGetTime` and message times.
-    pub fn clock_ms(&self) -> u32 {
-        match self.clock.live {
-            Some(t0) => self.clock.time_get_time.wrapping_add(t0.elapsed().as_millis() as u32),
+    pub fn clock_ms(&mut self) -> u32 {
+        match self.clock.cadence.as_mut() {
+            Some(c) => self.clock.time_get_time.wrapping_add(c.read_ticks(1000) as u32),
             None => self.clock.time_get_time,
         }
     }

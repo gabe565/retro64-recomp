@@ -349,9 +349,10 @@ fn call(rt: &mut Runtime, cpu: &mut Cpu, dll: &str, name: &str) {
         }
         ("kernel32.dll", "QueryPerformanceCounter") => {
             let p = a!(0);
-            let v = match (rt.clock.qpc_queue.pop_front(), rt.clock.live) {
+            let freq = rt.clock.qpc_frequency;
+            let v = match (rt.clock.qpc_queue.pop_front(), rt.clock.cadence.as_mut()) {
                 (Some(v), _) => v,
-                (None, Some(t0)) => (t0.elapsed().as_nanos() * rt.clock.qpc_frequency as u128 / 1_000_000_000) as u64,
+                (None, Some(c)) => c.read_ticks(freq),
                 (None, None) => { rt.clock.qpc_underflow = true; 0 }
             };
             rt.mem.w32(p, v as u32);
@@ -360,7 +361,14 @@ fn call(rt: &mut Runtime, cpu: &mut Cpu, dll: &str, name: &str) {
         }
         ("kernel32.dll", "Sleep") => {
             rt.clock.sleeps += 1;
-            if rt.clock.live.is_some() { std::thread::sleep(std::time::Duration::from_millis(a!(0) as u64)); }
+            let ms = a!(0);
+            if let Some(c) = rt.clock.cadence.as_mut() {
+                c.sleep(ms);
+                let d = c.pace_delay();
+                if rt.clock.pace && !d.is_zero() {
+                    std::thread::sleep(d);
+                }
+            }
             ret(cpu, 0, 1);
         }
         ("winmm.dll", "timeGetTime") => ret(cpu, rt.clock_ms(), 0),

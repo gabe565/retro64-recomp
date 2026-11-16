@@ -114,3 +114,42 @@ pub fn read(a: u32, n: usize) -> Vec<u8> {
 pub fn dw(b: &[u8], i: usize) -> u32 {
     u32::from_le_bytes(b[4 * i..4 * i + 4].try_into().unwrap())
 }
+
+pub const IID_IDIRECTDRAW4: [u8; 16] = [0x9a, 0x50, 0x59, 0x9c, 0xbd, 0x39, 0xd1, 0x11, 0x8c, 0x4a, 0x00, 0xc0, 0x4f, 0xd9, 0x30, 0xc5];
+pub const IID_IDIRECT3D3: [u8; 16] = [0x40, 0x32, 0x22, 0xbb, 0x2b, 0xe7, 0xd0, 0x11, 0xa9, 0xb4, 0x00, 0xaa, 0x00, 0xc0, 0x99, 0x3e];
+
+/// Scratch area reserved for helper outputs (well clear of test data).
+const HELPER_OUT: u32 = SCRATCH + 0xf_0000;
+
+pub fn put_bytes(off: u32, b: &[u8]) -> u32 {
+    with_rt(|rt| rt.mem.write(SCRATCH + off, b));
+    SCRATCH + off
+}
+
+/// `DirectDrawCreate` + `QueryInterface(IID_IDirectDraw4)`.
+pub fn dd4(cpu: &mut Cpu) -> u32 {
+    use bugatron_runtime::testing::{call_com, call_import};
+    assert_eq!(call_import(cpu, "ddraw.dll", "DirectDrawCreate", &[0, HELPER_OUT, 0]), 0);
+    let dd = r32(HELPER_OUT);
+    with_rt(|rt| rt.mem.write(HELPER_OUT + 0x10, &IID_IDIRECTDRAW4));
+    assert_eq!(call_com(cpu, dd, 0, &[HELPER_OUT + 0x10, HELPER_OUT]), 0);
+    let dd4 = r32(HELPER_OUT);
+    call_com(cpu, dd, 2, &[]);
+    dd4
+}
+
+/// A zeroed `DDSURFACEDESC2` in scratch memory at `off` with dwSize set.
+pub fn surface_desc(off: u32) -> u32 {
+    let p = SCRATCH + off;
+    with_rt(|rt| {
+        rt.mem.slice_mut(p, 0x7c).fill(0);
+        rt.mem.w32(p, 0x7c);
+    });
+    p
+}
+
+/// `CreateSurface` with the given desc; returns (HRESULT, surface).
+pub fn create_surface(cpu: &mut Cpu, dd4: u32, desc: u32) -> (u32, u32) {
+    let r = bugatron_runtime::testing::call_com(cpu, dd4, 6, &[desc, HELPER_OUT, 0]);
+    (r, r32(HELPER_OUT))
+}

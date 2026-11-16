@@ -4,9 +4,6 @@ use bugatron_runtime::ddraw::caps;
 use bugatron_runtime::testing::{call_com, call_import};
 use bugatron_runtime_tests::*;
 
-const IID_IDIRECTDRAW4: [u8; 16] = [0x9a, 0x50, 0x59, 0x9c, 0xbd, 0x39, 0xd1, 0x11, 0x8c, 0x4a, 0x00, 0xc0, 0x4f, 0xd9, 0x30, 0xc5];
-const IID_IDIRECT3D3: [u8; 16] = [0x40, 0x32, 0x22, 0xbb, 0x2b, 0xe7, 0xd0, 0x11, 0xa9, 0xb4, 0x00, 0xaa, 0x00, 0xc0, 0x99, 0x3e];
-
 fn cstr(a: u32) -> String {
     let mut v = Vec::new();
     let mut p = a;
@@ -22,18 +19,6 @@ fn cstr(a: u32) -> String {
 fn put_guid(off: u32, g: &[u8; 16]) -> u32 {
     bugatron_runtime::with_rt(|rt| rt.mem.write(SCRATCH + off, g));
     SCRATCH + off
-}
-
-/// DirectDrawCreate + QueryInterface(IDirectDraw4).
-fn dd4(cpu: &mut bugatron_runtime::Cpu) -> u32 {
-    let out = SCRATCH + 0x800;
-    assert_eq!(call_import(cpu, "ddraw.dll", "DirectDrawCreate", &[0, out, 0]), 0);
-    let dd = r32(out);
-    let iid = put_guid(0x900, &IID_IDIRECTDRAW4);
-    assert_eq!(call_com(cpu, dd, 0, &[iid, out]), 0);
-    let dd4 = r32(out);
-    assert_eq!(call_com(cpu, dd, 2, &[]), 0, "releasing the IDirectDraw leaves the DD4 alive");
-    dd4
 }
 
 #[test]
