@@ -11,7 +11,7 @@ How far the recompiled game runs on the portable runtime, which imports and COM 
 - `--frames N` stops after N vertical blanks and prints import/COM call counts.
 - `BUGATRON_TRACE=messages,sdl,draws` turns on diagnostic traces.
 - `--dump-frames A,B --dump-dir DIR` saves front buffers as PNG.
-- `--video-mode "1024 x 768 x 32"` selects a display mode in the game's video dialog. The game saves it to `prefs`, as when a user picks it.
+- `--video-mode 1024x768x32` (or "1024 x 768 x 32") selects a display mode in the game's video dialog. The game saves it to `prefs`, as when a user picks it.
 - `--input "600:F1,800:click@70x120,1000:CTRL+"` injects input at flip numbers: key taps, holds (`+`) and releases (`-`), and mouse `move@`/`click@`. It enters at frame boundaries through the same path as SDL events. Because the simulation is deterministic, a script replays identically.
 
 **Interactive status (scripted).**
@@ -19,7 +19,7 @@ How far the recompiled game runs on the portable runtime, which imports and COM 
 - Clicking "Free Levels" starts level 1.
 - In a 100-second session with fire held and left/right sweeps: aliens dive and are shot, the score increases, and lives are lost. No unimplemented function was reached.
 
-**Resolutions.** The title screen renders correctly and at a full 60 Hz at 1024×768, 1600×1200, and 2048×1536 (32-bit). 520 vblanks take about 9 s of wall time (8.7 s ideal) and about 2.8 s of CPU, including the per-frame back-buffer readback and upload.
+**Resolutions.** By default the game renders at the largest 4:3 mode that fits the display: 2616×1962 on a 3024×1964-pixel MacBook Pro display, at a full 60 Hz (900 vblanks in 15.9 s, 5.3 s CPU, 220 MB resident). The title screen also renders correctly and at a full 60 Hz at 1024×768, 1600×1200, and 2048×1536 (32-bit). 520 vblanks take about 9 s of wall time (8.7 s ideal) and about 2.8 s of CPU, including the per-frame back-buffer readback and upload.
 
 | Stage | Status |
 |---|---|
@@ -126,11 +126,12 @@ The runtime keeps this behaviour. QPC and `Sleep` take a fast import path, and c
 |---|---|---|---|
 | RD1 | The video dialog is not shown. The original dialog proc runs against emulated list boxes and receives IDOK. | The driver, device, and mode come from `prefs` or the original defaults; the user cannot change them yet | Visible chooser driving the same dialog state |
 | RD2 | Driver enumeration uses the `DirectDrawEnumerateA` fallback: one driver, "Primary Display Driver". The reference VM used `DirectDrawEnumerateExA` and listed two drivers, with dgVoodoo's names. | Driver list and names in the dialog | None needed; selection logic is unchanged |
-| RD3 | The display-mode list is a fixed, period-typical set, not the host's list: 4:3 from 512×384 to 2048×1536 plus 5:4 1280×1024, at 32 then 16 bpp. The original's fullscreen projection assumes 4:3 (0x421fd0 fixes the aspect at 0.75), so non-4:3 modes stretch, as on real hardware. `--video-mode "W x H x BPP"` picks a mode in the game's own dialog. | Mode indices in a `prefs` file copied from Windows may refer to a different mode | By design (r3d-interface.md §9.3) |
+| RD3 | The display-mode list is a period-typical set (4:3 from 512×384 to 2048×1536 plus 5:4 1280×1024, at 32 then 16 bpp), followed by extra modes.<br><br>**Default:** the largest 4:3 mode that fits the host display in physical pixels (points × density), at 32 bpp, with height capped at 2160. It is offered as one more driver mode and selected in the game's own dialog (`display.rs`).<br><br>**Override:** `--video-mode WxHxBPP` can offer any size. The original's fullscreen projection assumes 4:3 (0x421fd0 fixes the aspect at 0.75), so non-4:3 sizes stretch, as they did on real hardware.<br><br>Presentation letterboxes or pillarboxes, never stretches. | Mode indices in a `prefs` file copied from Windows may refer to a different mode | By design |
 | RD4 | The desktop mode is reported as 1024×768×32. | Only decides whether "Window" is offered | — |
 | RD5 | The simulation runs at exactly one 60 Hz refresh per `Flip`. On a slower host it slows down instead of taking larger steps, as the original would. | Only when the host cannot sustain 60 simulated frames per second | By design (fixed cadence) |
 | RD6 | The exact message sequence of `CreateWindowExA`/`ShowWindow` is modelled on Windows documentation, not traced from the VM. Non-client and paint messages are omitted. | The window procedure handles none of the omitted messages | Confirm against a VM message trace |
-| RD7 | `TranslateMessage` generates no `WM_CHAR`, and `SetCursorPos` does not warp the host pointer. | The window procedure does not use `WM_CHAR` | — |
+| RD7 | `TranslateMessage` generates no `WM_CHAR`. | The window procedure does not use `WM_CHAR` | — |
+| RD11 | The mouse is captured (SDL relative mode) and drives a guest cursor by relative motion, 1 host point per guest pixel, like a mickey at Windows' default pointer speed. `SetCursorPos` moves that guest cursor.<br><br>This matters because the original reads the mouse relatively in gameplay (0x411f70: speed = \|x − centre\| × 0.0625, capped at 2, then `SetCursorPos(centre)`) and absolutely in menus (0x4103a0, which draws its own pointer).<br><br>Pointer acceleration is the host's (macOS), not Windows'. | Gameplay sensitivity is the same at every resolution, window size, and HiDPI scale. The menu pointer covers the screen more slowly at higher resolutions, as on the original | — |
 | RD8 | FMOD is silent: samples and songs are loaded but not played. | No audio | Audio milestone (SDL3 audio + libxmp) |
 | RD9 | Intentional: guest time is idealised. Every frame spans exactly one 1/60 s refresh, `Sleep(0)` takes no time, and a QPC read takes one tick. Real machines add jitter and, depending on their overheads, an occasional dropped frame. | Stable, drift-free 60 Hz; identical simulation on every host | By design (owner decision, 2026-11-15) |
 | RD10 | Rendering approximations A1–A13 | See `graphics/renderer.md` | VM capture comparison |

@@ -7,8 +7,9 @@
 //! Usage: bugatron [--exe Bug3D.exe] [--data GAME_DIR] [--save SAVE_DIR] [--frames N]
 //!
 //! `--frames N` stops after N vertical blanks and prints import/COM call counts.
-//! `--video-mode "W x H x BPP"` picks that mode in the game's video dialog
-//! (saved to prefs by the game, as when a user picks it).
+//! `--video-mode WxHxBPP` (or "W x H x BPP") picks that mode in the game's video
+//! dialog (saved to prefs by the game, as when a user picks it). Without it, the
+//! largest 4:3 mode that fits the display at 32 bits is chosen (display.rs).
 //! `--input "600:F1,700:LEFT+,760:LEFT-"` injects keys at flip numbers: `KEY`
 //! taps (released two flips later), `KEY+` holds, `KEY-` releases. Keys:
 //! A–Z, 0–9, F1–F12, ESC, ENTER, SPACE, TAB, LEFT, RIGHT, UP, DOWN, CTRL,
@@ -20,7 +21,7 @@
 //! Files the game writes (prefs, high scores) go to SAVE_DIR (default `./save`);
 //! the game directory is only read.
 
-use bugatron_runtime::{call_guest, input_script, with_rt, Runtime};
+use bugatron_runtime::{call_guest, display, input_script, with_rt, Runtime};
 use std::path::PathBuf;
 
 const ENTRY: u32 = 0x42ba98;
@@ -45,7 +46,7 @@ fn main() {
             "--frames" => frames = Some(v.to_string_lossy().parse::<u64>().expect("--frames N")),
             "--dump-frames" => dumps = v.to_string_lossy().split(',').map(str::trim).filter(|x| !x.is_empty()).map(|x| x.parse::<u64>().expect("--dump-frames A,B")).collect(),
             "--dump-dir" => dump_dir = v,
-            "--video-mode" => video_mode = Some(v.to_string_lossy().into_owned()),
+            "--video-mode" => video_mode = Some(display::parse_mode(&v.to_string_lossy()).unwrap_or_else(|e| panic!("--video-mode: {e}"))),
             "--input" => input = input_script::parse(&v.to_string_lossy()).unwrap_or_else(|e| panic!("--input: {e}")),
             _ => panic!("unknown argument {k}"),
         }
@@ -59,7 +60,21 @@ fn main() {
     rt.clock.stop_after_vblanks = frames;
     rt.capture_frames = dumps;
     rt.capture_dir = dump_dir;
-    rt.video_mode = video_mode;
+    // Display mode: explicit, else sized to the host display; offered to the game
+    // as a driver mode and picked in its dialog.
+    let mode = video_mode.or_else(|| {
+        let d = display::query()?;
+        let m = display::auto_mode(&d);
+        eprintln!("display {}x{} points at {}x density ({}x{} pixels): rendering at {}", d.w_points, d.h_points, d.density, d.pixels().0, d.pixels().1, display::mode_label(m));
+        Some(m)
+    });
+    if let Some(m) = mode {
+        if (m.0 * 3 != m.1 * 4) && !bugatron_runtime::ddraw::MODES.contains(&m) {
+            eprintln!("note: {}x{} is not 4:3; the original's fullscreen projection assumes 4:3 and stretches", m.0, m.1);
+        }
+        rt.com.offer_mode(m.0, m.1);
+        rt.video_mode = Some(display::mode_label(m));
+    }
     let trace_delta = std::env::var("BUGATRON_TRACE").is_ok_and(|t| t.contains("delta"));
     if trace_delta || !input.is_empty() {
         rt.frame_hook = Some(Box::new(move |rt, n| {

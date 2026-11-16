@@ -6,7 +6,8 @@
 //!   keys: A–Z, 0–9, F1–F12, ESC, ENTER, SPACE, TAB, LEFT, RIGHT, UP, DOWN,
 //!   CTRL, SHIFT, ALT, PGUP, PGDN, HOME, END;
 //! - `move@XxY` moves the pointer, `click@XxY` clicks the left button (released
-//!   two flips later), in guest screen coordinates.
+//!   two flips later), in guest screen coordinates;
+//! - `rel@DXxDY` is host mouse motion of (DX, DY) points (may be negative).
 //!
 //! The simulation is deterministic, so a script replays identically.
 
@@ -44,6 +45,7 @@ pub fn scancode(name: &str) -> Result<i32, String> {
 pub enum Input {
     Key(i32, bool),
     Move((i32, i32)),
+    Rel((i32, i32)),
     Button(bool, (i32, i32)),
 }
 
@@ -57,7 +59,9 @@ pub fn parse(spec: &str) -> Result<Vec<(u64, Input)>, String> {
     for item in spec.split(',').map(str::trim).filter(|s| !s.is_empty()) {
         let (frame, key) = item.split_once(':').ok_or_else(|| format!("expected FRAME:KEY, got {item}"))?;
         let f: u64 = frame.parse().map_err(|_| format!("bad frame in {item}"))?;
-        if let Some(p) = key.strip_prefix("move@") {
+        if let Some(p) = key.strip_prefix("rel@") {
+            ev.push((f, Input::Rel(point(p)?)));
+        } else if let Some(p) = key.strip_prefix("move@") {
             ev.push((f, Input::Move(point(p)?)));
         } else if let Some(p) = key.strip_prefix("click@") {
             let p = point(p)?;
@@ -82,6 +86,7 @@ pub fn apply(rt: &mut Runtime, events: &[(u64, Input)], n: u64) {
         match *ev {
             Input::Key(sc, down) => user::key_input_rt(rt, sc, down, false, false),
             Input::Move(p) => user::mouse_move_rt(rt, p),
+            Input::Rel((dx, dy)) => user::mouse_motion_rt(rt, dx as f32, dy as f32),
             Input::Button(down, p) => user::mouse_button_rt(rt, 1, down, p),
         }
     }

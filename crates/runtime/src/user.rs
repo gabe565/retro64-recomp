@@ -8,8 +8,17 @@
 //! through `PeekMessageA`/`DispatchMessageA`.
 //!
 //! Coordinates: the guest screen is the current guest display mode (desktop
-//! until `SetDisplayMode`). The host window shows it scaled; mouse positions
-//! are mapped back into guest screen coordinates.
+//! until `SetDisplayMode`). The host window shows it scaled and letterboxed.
+//!
+//! Mouse: the guest has its own Windows-style cursor in guest screen pixels.
+//! Host mouse motion moves it by relative deltas (1 host point = 1 guest pixel,
+//! like a mickey at Windows' default pointer speed), clamped to the screen, and
+//! `SetCursorPos` really moves it. The host pointer is captured (SDL relative
+//! mode), as a fullscreen-exclusive game captures it. This matters because the
+//! original reads the mouse relatively in gameplay (0x411f70: speed from the
+//! offset to the screen centre, then `SetCursorPos(centre)`) and absolutely in
+//! menus (0x4103a0, drawing its own pointer), so sensitivity is independent of
+//! window size, HiDPI scaling and letterboxing, as on the original.
 
 use crate::{call_guest_stdcall, fatal, with_rt, Cpu};
 use sdl3_sys::{error::*, events::*, init::*, keycode::*, video::*};
@@ -79,6 +88,8 @@ pub struct User {
     pub screen: (i32, i32),
     /// Cursor position in guest screen coordinates.
     cursor: (i32, i32),
+    /// Sub-pixel remainder of host mouse motion not yet applied to the cursor.
+    cursor_frac: (f32, f32),
     sdl_ready: bool,
     /// No host window or SDL (tests, CI): messages and state only.
     pub headless: bool,
@@ -176,23 +187,6 @@ fn side_vk(sc: i32) -> Option<u32> {
     Some(match sc { 224 => 0xa2, 228 => 0xa3, 225 => 0xa0, 229 => 0xa1, 226 => 0xa4, 230 => 0xa5, _ => return None })
 }
 
-/// Host window position → guest screen coordinates.
-fn to_guest(x: f32, y: f32) -> (i32, i32) {
-    with_rt(|rt| {
-        let (gw, gh) = rt.user.screen;
-        let Some(w) = rt.user.window.as_ref().filter(|w| !w.sdl.is_null()) else { return (0, 0) };
-        let (mut ww, mut wh) = (0, 0);
-        // SAFETY: valid window handle.
-        unsafe { SDL_GetWindowSize(w.sdl, &mut ww, &mut wh) };
-        if ww <= 0 || wh <= 0 {
-            return (0, 0);
-        }
-        let s = (ww as f32 / gw as f32).min(wh as f32 / gh as f32);
-        let (ox, oy) = ((ww as f32 - gw as f32 * s) / 2.0, (wh as f32 - gh as f32 * s) / 2.0);
-        ((((x - ox) / s) as i32).clamp(0, gw - 1), (((y - oy) / s) as i32).clamp(0, gh - 1))
-    })
-}
-
 /// Translate pending SDL events into window messages.
 pub fn pump() {
     if !with_rt(|rt| rt.user.sdl_ready && rt.user.window.is_some() && !rt.user.headless) {
@@ -212,10 +206,11 @@ pub fn pump() {
             key_input(k.scancode.0, k.down, k.repeat, (k.r#mod.0 & SDL_KMOD_ALT.0) != 0);
         } else if ty == SDL_EVENT_MOUSE_MOTION.0 {
             let m = unsafe { ev.motion };
-            mouse_move(to_guest(m.x, m.y));
+            with_rt(|rt| mouse_motion_rt(rt, m.xrel, m.yrel));
         } else if ty == SDL_EVENT_MOUSE_BUTTON_DOWN.0 || ty == SDL_EVENT_MOUSE_BUTTON_UP.0 {
             let b = unsafe { ev.button };
-            mouse_button(b.button as i32, b.down, to_guest(b.x, b.y));
+            let p = with_rt(|rt| rt.user.cursor);
+            mouse_button(b.button as i32, b.down, p);
         }
     }
 }
@@ -255,6 +250,21 @@ pub fn key_input_rt(rt: &mut crate::Runtime, sc: i32, down: bool, repeat: bool, 
         lp |= 1 << 31;
     }
     rt.user.queue.push_back(Msg { hwnd: MAIN_HWND, message, wparam: vk, lparam: lp });
+}
+
+/// Host mouse motion of (`dx`, `dy`) points moves the guest cursor by as many
+/// guest pixels (fractions accumulate), clamped to the guest screen.
+pub fn mouse_motion_rt(rt: &mut crate::Runtime, dx: f32, dy: f32) {
+    let u = &mut rt.user;
+    let (fx, fy) = (u.cursor_frac.0 + dx, u.cursor_frac.1 + dy);
+    let (ix, iy) = (fx.trunc(), fy.trunc());
+    u.cursor_frac = (fx - ix, fy - iy);
+    if ix == 0.0 && iy == 0.0 {
+        return;
+    }
+    let (w, h) = u.screen;
+    let p = ((u.cursor.0 + ix as i32).clamp(0, w - 1), (u.cursor.1 + iy as i32).clamp(0, h - 1));
+    mouse_move_rt(rt, p);
 }
 
 /// The pointer moved to guest screen position `p`.
@@ -313,8 +323,11 @@ pub(crate) fn import(cpu: &mut Cpu, name: &str) -> bool {
                     let w = rt.user.window.as_mut().unwrap();
                     w.visible = true;
                     if !w.sdl.is_null() {
-                        // SAFETY: valid window.
-                        unsafe { SDL_ShowWindow(w.sdl) };
+                        // SAFETY: valid window. Capture the mouse for relative motion.
+                        unsafe {
+                            SDL_ShowWindow(w.sdl);
+                            sdl3_sys::mouse::SDL_SetWindowRelativeMouseMode(w.sdl, true);
+                        }
                     }
                 });
                 // The activation sequence Windows sends to a newly shown top-level window.
@@ -429,9 +442,14 @@ pub(crate) fn import(cpu: &mut Cpu, name: &str) -> bool {
             ret(cpu, 1, 1);
         }
         "SetCursorPos" => {
-            // Moves the guest cursor only; the host pointer is not warped.
+            // Moves the guest cursor (clamped to the screen, as Windows does). The host
+            // pointer is captured, so nothing moves on the host.
             let (x, y) = (arg(cpu, 0) as i32, arg(cpu, 1) as i32);
-            with_rt(|rt| rt.user.cursor = (x, y));
+            with_rt(|rt| {
+                let (w, h) = rt.user.screen;
+                rt.user.cursor = (x.clamp(0, w - 1), y.clamp(0, h - 1));
+                rt.user.cursor_frac = (0.0, 0.0);
+            });
             ret(cpu, 1, 2);
         }
         _ => return false,
@@ -458,7 +476,8 @@ fn create_window(cpu: &mut Cpu) {
         let t = CString::new(title.clone()).unwrap_or_default();
         // Host window: hidden until ShowWindow; the presenter scales the guest screen into it.
         // SAFETY: SDL is initialised; title is NUL-terminated.
-        let sdl = unsafe { SDL_CreateWindow(t.as_ptr(), 1280, 960, SDL_WINDOW_HIDDEN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY) };
+        let (ww, wh) = crate::display::query().map(|d| crate::display::window_size(&d)).unwrap_or((1280, 960));
+        let sdl = unsafe { SDL_CreateWindow(t.as_ptr(), ww as i32, wh as i32, SDL_WINDOW_HIDDEN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY) };
         if sdl.is_null() {
             fatal(&format!("SDL_CreateWindow: {}", sdl_error()));
         }

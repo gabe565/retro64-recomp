@@ -19,6 +19,7 @@ pub mod clock;
 pub mod cpu;
 pub mod ddraw;
 pub mod dialog;
+pub mod display;
 pub mod files;
 pub mod input_script;
 pub mod fmod;

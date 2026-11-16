@@ -37,7 +37,7 @@ pub(super) fn call(cpu: &mut Cpu, iface: u32, _this: u32, slot: u32) -> bool {
                 fatal("EnumDisplayModes: flags/filter not emulated (the game passes none)");
             }
             let buf = with_rt(|rt| rt.heap_alloc(0x7c, true));
-            for &(w, h, bpp) in MODES {
+            for (w, h, bpp) in with_rt(|rt| rt.com.modes()) {
                 with_rt(|rt| rt.mem.write(buf, &mode_desc(w, h, bpp)));
                 if call_guest_stdcall(cpu, cb, &[buf, ctx]) == 0 {
                     break; // DDENUMRET_CANCEL
@@ -112,7 +112,7 @@ pub(super) fn call(cpu: &mut Cpu, iface: u32, _this: u32, slot: u32) -> bool {
         // IDirectDraw4::SetDisplayMode(this, w, h, bpp, refresh, flags)
         (iface::DIRECTDRAW4, 21) => {
             let (w, h, bpp) = (arg(cpu, 1), arg(cpu, 2), arg(cpu, 3));
-            if !MODES.contains(&(w, h, bpp)) {
+            if !with_rt(|rt| rt.com.modes().contains(&(w, h, bpp))) {
                 ret(cpu, DDERR_INVALIDMODE, 6);
                 return true;
             }

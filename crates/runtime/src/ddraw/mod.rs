@@ -207,6 +207,30 @@ pub struct Registry {
     pub flips: u64,
     /// Direct3D objects and recorded rendering commands.
     pub d3d: d3d::State,
+    /// Modes offered after the period list (host-display mode, `--video-mode`), as (w, h, bpp).
+    pub extra_modes: Vec<(u32, u32, u32)>,
+}
+
+impl Registry {
+    /// The enumerated display modes: the period list, then extra modes not already in it.
+    pub fn modes(&self) -> Vec<(u32, u32, u32)> {
+        let mut m = MODES.to_vec();
+        for &e in &self.extra_modes {
+            if !m.contains(&e) {
+                m.push(e);
+            }
+        }
+        m
+    }
+
+    /// Offer (w, h) at both depths after the period list (indices of period modes stay stable).
+    pub fn offer_mode(&mut self, w: u32, h: u32) {
+        for b in [32, 16] {
+            if !MODES.contains(&(w, h, b)) && !self.extra_modes.contains(&(w, h, b)) {
+                self.extra_modes.push((w, h, b));
+            }
+        }
+    }
 }
 
 impl Runtime {
