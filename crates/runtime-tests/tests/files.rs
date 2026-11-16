@@ -90,3 +90,67 @@ fn writes_are_copy_on_write_into_the_save_directory() {
     assert_eq!(call_import(&mut cpu, "kernel32.dll", "GetFileSize", &[h2, 0]), 0);
     assert_eq!(std::fs::read(data.join("prefs")).unwrap(), [1, 0, 0, 0]);
 }
+
+#[test]
+fn current_directory_and_relative_paths() {
+    let mut cpu = setup();
+    dirs("cwd");
+    let gfx = put_str(0, "GRAPHICS");
+    assert_eq!(call_import(&mut cpu, "kernel32.dll", "SetCurrentDirectoryA", &[gfx]), 1);
+    let buf = SCRATCH + 0x100;
+    let n = call_import(&mut cpu, "kernel32.dll", "GetCurrentDirectoryA", &[64, buf]);
+    assert_eq!(String::from_utf8(read(buf, n as usize)).unwrap(), "C:\\Bugatron\\GRAPHICS");
+    let name = put_str(0x40, "title.bmp");
+    let h = call_import(&mut cpu, "kernel32.dll", "CreateFileA", &[name, GENERIC_READ, 0, 0, OPEN_EXISTING, 0, 0]);
+    assert_ne!(h, INVALID, "relative to the current directory");
+    let up = put_str(0x80, "..\\prefs");
+    assert_ne!(call_import(&mut cpu, "kernel32.dll", "CreateFileA", &[up, GENERIC_READ, 0, 0, OPEN_EXISTING, 0, 0]), INVALID);
+    let root = put_str(0xc0, "..");
+    assert_eq!(call_import(&mut cpu, "kernel32.dll", "SetCurrentDirectoryA", &[root]), 1);
+    assert_eq!(call_import(&mut cpu, "kernel32.dll", "SetCurrentDirectoryA", &[root]), 0, "cannot leave the game directory");
+    let missing = put_str(0x100, "Nowhere");
+    assert_eq!(call_import(&mut cpu, "kernel32.dll", "SetCurrentDirectoryA", &[missing]), 0);
+    assert_eq!(last_error(&mut cpu), 3); // ERROR_PATH_NOT_FOUND
+}
+
+#[test]
+fn find_files_merges_directories_in_ntfs_order() {
+    let mut cpu = setup();
+    let (data, save) = dirs("find");
+    for n in ["pack2.XML.lev", "Pack1.xml.lev", "BUG1.XML.lev", "notes.txt"] {
+        std::fs::write(data.join(n), b"x").unwrap();
+    }
+    std::fs::create_dir_all(&save).unwrap();
+    std::fs::write(save.join("pack3.xml.lev"), b"yy").unwrap();
+    std::fs::write(save.join("PACK1.XML.LEV"), b"zzz").unwrap();
+    let pat = put_str(0, "*.xml.lev");
+    let fd = SCRATCH + 0x400;
+    let h = call_import(&mut cpu, "kernel32.dll", "FindFirstFileA", &[pat, fd]);
+    assert_ne!(h, INVALID);
+    let name = |fd: u32| {
+        let b = read(fd + 0x2c, 260);
+        String::from_utf8(b[..b.iter().position(|&c| c == 0).unwrap()].to_vec()).unwrap()
+    };
+    let mut names = vec![(name(fd), r32(fd + 0x20))];
+    while call_import(&mut cpu, "kernel32.dll", "FindNextFileA", &[h, fd]) != 0 {
+        names.push((name(fd), r32(fd + 0x20)));
+    }
+    assert_eq!(last_error(&mut cpu), 18); // ERROR_NO_MORE_FILES
+    assert_eq!(call_import(&mut cpu, "kernel32.dll", "FindClose", &[h]), 1);
+    assert_eq!(names, [("BUG1.XML.lev".into(), 1), ("PACK1.XML.LEV".into(), 3), ("pack2.XML.lev".into(), 1), ("pack3.xml.lev".into(), 2)],
+        "case-insensitive order; the saved copy shadows the original");
+    let none = put_str(0x40, "*.zzz");
+    assert_eq!(call_import(&mut cpu, "kernel32.dll", "FindFirstFileA", &[none, fd]), INVALID);
+    assert_eq!(last_error(&mut cpu), 2);
+}
+
+#[test]
+fn wildcard_matching() {
+    use bugatron_runtime::files::wildcard_match as m;
+    assert!(m("*.*", "prefs"));
+    assert!(m("*.lev", "BUG1.XML.LEV"));
+    assert!(m("bug?.xml.lev", "BUG7.XML.lev"));
+    assert!(!m("bug?.xml.lev", "bug17.xml.lev"));
+    assert!(m("pack*", "PACK1.hs"));
+    assert!(!m("*.hs", "pack1.hsx"));
+}

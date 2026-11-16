@@ -119,6 +119,9 @@ pub fn ensure_sdl() {
 /// Send `msg` to the window procedure (synchronous, like SendMessage).
 pub fn send(cpu: &mut Cpu, hwnd: u32, msg: u32, wp: u32, lp: u32) -> u32 {
     let proc_ = with_rt(|rt| rt.user.window.as_ref().map(|w| w.wndproc)).unwrap_or_else(|| fatal("message to a window that does not exist"));
+    if crate::trace_enabled("messages") {
+        eprintln!("[msg] {hwnd:#x} {msg:#06x} wp={wp:#x} lp={lp:#x}");
+    }
     call_guest_stdcall(cpu, proc_, &[hwnd, msg, wp, lp])
 }
 
@@ -199,6 +202,9 @@ pub fn pump() {
     let mut ev: SDL_Event = unsafe { std::mem::zeroed() };
     while unsafe { SDL_PollEvent(&mut ev) } {
         let ty = unsafe { ev.r#type };
+        if crate::trace_enabled("sdl") {
+            eprintln!("[sdl] event {ty:#x}");
+        }
         if ty == SDL_EVENT_QUIT.0 || ty == SDL_EVENT_WINDOW_CLOSE_REQUESTED.0 {
             post(Msg { hwnd: MAIN_HWND, message: WM_SYSCOMMAND, wparam: SC_CLOSE, lparam: 0 });
         } else if ty == SDL_EVENT_KEY_DOWN.0 || ty == SDL_EVENT_KEY_UP.0 {

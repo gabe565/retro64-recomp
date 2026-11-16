@@ -1,4 +1,4 @@
-//! The simulation clock the game observes: a fixed 60 Hz cadence per Flip.
+//! The simulation clock the game observes: refresh-boundary waits at 60 Hz.
 
 use bugatron_runtime::clock::{Cadence, STALL_READS};
 use bugatron_runtime::testing::{call_com, call_import};
@@ -22,46 +22,68 @@ fn install_cadence() {
 }
 
 #[test]
-fn cadence_is_exact_and_drift_free() {
+fn vblanks_land_exactly_on_refresh_boundaries() {
     let mut c = Cadence::new();
-    assert_eq!(c.now_ns(), 0);
     for _ in 0..60 {
-        c.frame();
+        c.vblank();
     }
-    assert_eq!(c.now_ns(), 1_000_000_000, "60 frames are exactly one second");
-    for _ in 0..3600 * 60 - 60 {
-        c.frame();
-    }
-    assert_eq!(c.now_ns(), 3600 * 1_000_000_000, "no drift after an hour");
-    c.sleep(5);
-    assert_eq!(c.now_ns(), 3600 * 1_000_000_000 + 5_000_000);
-    assert_eq!(c.ticks(24_000_000), 3600 * 24_000_000 + 120_000);
-    // 1/60 s in the game's 1/1024-second ticks: deltas of 17 or 18 summing to 1024 per second.
+    assert_eq!(c.now_ns(), 1_000_000_000, "60 vblanks are exactly one second");
+    assert_eq!(c.ticks(FREQ), FREQ);
+    // A vblank wait from mid-refresh goes to the next boundary, not a full period later.
+    c.sleep(3);
+    c.vblank();
+    assert_eq!(c.ticks(60), 61);
+    // No drift after an hour of refreshes.
     let mut c = Cadence::new();
-    let mut prev = 0u64;
-    let mut sum = 0;
+    for _ in 0..3600 * 60 {
+        c.vblank();
+    }
+    assert_eq!(c.ticks(FREQ), 3600 * FREQ);
+    // The game's 1/1024-second ticks per refresh: 17 or 18, summing to 1024 per second.
+    let mut c = Cadence::new();
+    let (mut prev, mut sum) = (0, 0);
     for _ in 0..60 {
-        c.frame();
+        c.vblank();
         let t = c.ticks(1024);
-        let d = t - prev;
-        assert!(d == 17 || d == 18, "delta {d}");
-        sum += d;
+        assert!(t - prev == 17 || t - prev == 18);
+        sum += t - prev;
         prev = t;
     }
     assert_eq!(sum, 1024);
 }
 
 #[test]
-fn guest_time_is_constant_within_a_frame_and_advances_per_flip() {
+fn sleep_zero_is_a_short_yield() {
+    let mut c = Cadence::new();
+    c.sleep(0);
+    assert_eq!(c.now_ns(), 1_000);
+    c.sleep(10);
+    assert_eq!(c.now_ns(), 10_001_000);
+}
+
+/// The original's timer calibration (0x41c180): QPC around each of 60
+/// WaitForVerticalBlank calls; the median interval is the refresh period.
+#[test]
+fn timer_calibration_measures_one_refresh() {
     let mut cpu = setup();
     install_cadence();
-    let freq = SCRATCH + 0x200;
-    call_import(&mut cpu, "kernel32.dll", "QueryPerformanceFrequency", &[freq]);
-    assert_eq!(r32(freq) as u64, FREQ);
-    let t0 = qpc(&mut cpu);
-    let ms0 = call_import(&mut cpu, "winmm.dll", "timeGetTime", &[]);
-    assert_eq!(qpc(&mut cpu), t0, "no time passes without a frame boundary");
-    // A Flip is the frame boundary.
+    let dd4 = dd4(&mut cpu);
+    let mut intervals = Vec::new();
+    for _ in 0..60 {
+        let a = qpc(&mut cpu);
+        assert_eq!(call_com(&mut cpu, dd4, 22, &[1, 0]), 0);
+        intervals.push(qpc(&mut cpu) - a);
+    }
+    intervals.sort();
+    assert_eq!(intervals[30], FREQ / 60, "the game sets its timer to exactly one 60 Hz refresh");
+}
+
+/// The original's per-frame limiter (0x41c180): busy-wait with QPC + Sleep(0)
+/// until one period after its previous exit, then Flip(DDFLIP_WAIT).
+#[test]
+fn limiter_and_flip_keep_one_frame_per_refresh() {
+    let mut cpu = setup();
+    install_cadence();
     let dd4 = dd4(&mut cpu);
     call_com(&mut cpu, dd4, 20, &[0x0001_0010, 0x13]);
     call_com(&mut cpu, dd4, 21, &[640, 480, 32, 0, 0]);
@@ -70,25 +92,39 @@ fn guest_time_is_constant_within_a_frame_and_advances_per_flip() {
     w32(d + 0x14, 1);
     w32(d + 0x68, 0x2218);
     let (_, front) = create_surface(&mut cpu, dd4, d);
-    for n in 1..=3u64 {
+    let period = FREQ / 60;
+    let mut prev_exit = qpc(&mut cpu);
+    let mut frame_starts = Vec::new();
+    for _ in 0..120 {
+        frame_starts.push(qpc(&mut cpu));
+        loop {
+            let now = qpc(&mut cpu);
+            call_import(&mut cpu, "kernel32.dll", "Sleep", &[0]);
+            if now > prev_exit + period {
+                prev_exit = now;
+                break;
+            }
+        }
         assert_eq!(call_com(&mut cpu, front, 11, &[0, 1]), 0);
-        assert_eq!(qpc(&mut cpu), t0 + n * FREQ / 60, "frame {n}");
     }
-    assert_eq!(call_import(&mut cpu, "winmm.dll", "timeGetTime", &[]), ms0 + 50, "3 frames = 50 ms");
-    // Sleep advances guest time by its argument.
-    call_import(&mut cpu, "kernel32.dll", "Sleep", &[10]);
-    assert_eq!(call_import(&mut cpu, "winmm.dll", "timeGetTime", &[]), ms0 + 60);
+    for w in frame_starts.windows(2).skip(1) {
+        assert_eq!(w[1] - w[0], period, "each frame spans exactly one refresh");
+    }
+    // Message times and timeGetTime read the same clock.
+    let ms = call_import(&mut cpu, "winmm.dll", "timeGetTime", &[]);
+    assert_eq!(ms as u64, qpc(&mut cpu) * 1000 / FREQ);
 }
 
 #[test]
-fn busy_wait_falls_back_to_host_time() {
+fn busy_wait_without_sleep_falls_back_to_host_time() {
     let mut c = Cadence::new();
     for _ in 0..STALL_READS {
-        assert_eq!(c.read_ns(), 0);
+        c.read_ticks(1_000_000_000);
     }
+    let t0 = c.now_ns();
     std::thread::sleep(std::time::Duration::from_millis(5));
-    assert!(c.read_ns() >= 5_000_000, "a stalled busy-wait sees time pass");
-    let before = c.now_ns();
-    c.frame();
-    assert_eq!(c.read_ns(), before + 1_000_000_000 / 60, "the next frame returns to the cadence");
+    c.read_ticks(1_000_000_000);
+    assert!(c.now_ns() >= t0 + 5_000_000, "a stalled busy-wait sees time pass");
+    c.vblank();
+    assert_eq!(c.ticks(600) % 10, 0, "the next wait returns to a refresh boundary");
 }

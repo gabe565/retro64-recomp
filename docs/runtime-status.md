@@ -4,19 +4,22 @@ How far the recompiled game runs on the portable runtime, which imports and COM 
 
 ## Current progress
 
-`cargo run --release -p bugatron` translates 772 functions. It runs the CRT, WinMain, `r3d_Enumerate`, the video dialog, and window creation, then enters `r3d_Initialize`. Inside it, the cooperative level, display mode, flip chain, and Z-buffer are set up. It stops at `IDirect3D3::CreateDevice`.
+`cargo run --release -p bugatron` translates 772 functions. It runs the original start-up, `r3d_Initialize` (display mode, flip chain, Z-buffer, Direct3D device, viewport, light, states), timer calibration, asset loading (288 textures), and the title-screen frame loop at a paced 60 Hz. Draw calls are recorded with full state; nothing is displayed yet, because the GPU renderer is the next step.
 
-Requires SDL3 (found through pkg-config; on macOS `brew install sdl3`). For a headless run, set `SDL_VIDEODRIVER=dummy`.
+- Requires SDL3 (found through pkg-config; on macOS `brew install sdl3`).
+- `SDL_VIDEODRIVER=dummy` runs headless.
+- `--frames N` stops after N vertical blanks and prints import/COM call counts.
+- `BUGATRON_TRACE=messages,sdl,draws` turns on diagnostic traces.
 
 | Stage | Status |
 |---|---|
 | CRT start-up | runs (PoC P1) |
-| Prefs file read and write | runs. `save/prefs` = driver 0, device 1 (Direct3D HAL), mode 1 (640×480×32) |
-| DirectDraw/Direct3D enumeration (0x424730 → 0x428a90) | runs through the original code with emulated COM |
-| Video dialog (0x66, proc 0x408280) | runs headless (see deviations) |
-| Window creation (0x407b4e) | runs. The original window procedure receives the creation and activation messages |
-| `r3d_Initialize`: display mode, flip chain, Z-buffer | runs |
-| Direct3D device, rendering | in progress |
+| Prefs, video dialog (headless) | runs. `save/prefs` = driver 0, device 1 (Direct3D HAL), mode 1 (640×480×32) |
+| Enumeration, window creation | runs through original code |
+| `r3d_Initialize`: display, surfaces, device | runs |
+| Timer calibration (0x41c180) | runs. It measures 400000 QPC ticks (exactly 1/60 s at 24 MHz) |
+| Asset loading, title frame loop | runs. Per frame: one Clear2, about 88 lit, textured draws, one back-buffer lock for 2D, one Flip |
+| Rendering and presentation | next step (SDL3 GPU) |
 
 ## Implemented imports
 
@@ -26,7 +29,9 @@ Requires SDL3 (found through pkg-config; on macOS `brew install sdl3`). For a he
   - `CreateWindowExA` sends `WM_GETMINMAXINFO`, `WM_NCCREATE`, `WM_NCCALCSIZE`, and `WM_CREATE`.
   - The first `ShowWindow` sends `WM_SHOWWINDOW`, `WM_ACTIVATEAPP`, `WM_ACTIVATE`, `WM_SETFOCUS`, `WM_SIZE`, and `WM_MOVE`.
   - SDL events become `WM_KEYDOWN`/`UP` (or `WM_SYSKEYDOWN`/`UP`) with Win32 virtual keys and scan codes, `WM_MOUSEMOVE`, and `WM_[LR]BUTTONDOWN`/`UP`. Window close becomes `WM_SYSCOMMAND(SC_CLOSE)`, then `WM_CLOSE`, then `WM_DESTROY`.
-- **WINMM:** `timeGetTime`.
+- **WINMM:** `timeGetTime`, `joyGetPos` (returns `JOYERR_UNPLUGGED`: no joystick).
+- **KERNEL32 files and scheduling:** `SetCurrentDirectoryA`/`GetCurrentDirectoryA` (the guest current directory, confined to the game directory), `FindFirstFileA`/`FindNextFileA`/`FindClose` (wildcards; game and save directories merged, in NTFS case-insensitive order), and `SetPriorityClass`/`SetThreadPriority` (no-ops).
+- **FMOD 3.61** (`fmod.rs`): all 13 imports with their return contracts. Loads read the real files and return NULL when one is missing. No audio is produced yet (RD8).
 - **DDRAW:** `DirectDrawEnumerateA`, `DirectDrawCreate` (primary driver only).
 
 `GetModuleHandleA("DDRAW.DLL")` returns a module handle. `GetProcAddress` returns NULL for everything, so the game uses its `DirectDrawEnumerateA` fallback rather than `DirectDrawEnumerateExA`.
@@ -41,6 +46,15 @@ Requires SDL3 (found through pkg-config; on macOS `brew install sdl3`). For a he
 | `IDirect3D3` | EnumDevices, EnumZBufferFormats (16, 24, then 32-bit Z; the game stops at 16) |
 | `IDirectDrawSurface4` | QueryInterface (itself), AddAttachedSurface, Blt (colour fill, depth fill, copy, nearest-neighbour stretch, `KEYSRC`/`KEYSRCOVERRIDE`), BltFast (`SRCCOLORKEY`), DeleteAttachedSurface, Flip, GetAttachedSurface, GetCaps, GetColorKey, GetPixelFormat, GetSurfaceDesc, IsLost, Lock, Restore, SetClipper, SetColorKey, Unlock |
 | `IDirectDrawClipper` | SetHWnd, GetHWnd |
+| `IDirectDraw4` (timing) | WaitForVerticalBlank (`DDWAITVB_BLOCKBEGIN`) |
+| `IDirect3D3` | CreateDevice (HAL/RGB), CreateViewport, CreateLight, CreateMaterial, EvictManagedTextures |
+| `IDirect3DDevice3` | AddViewport, EnumTextureFormats (the five reference formats), BeginScene/EndScene, SetCurrentViewport, Begin/Vertex/End, Get/SetRenderState (legacy texture states mirror onto stage 0), Get/SetLightState, SetTransform, DrawPrimitive, DrawIndexedPrimitive, SetTexture, Get/SetTextureStageState |
+| `IDirect3DViewport3` | SetViewport2, GetViewport2, AddLight, DeleteLight, Clear2 |
+| `IDirect3DLight` | SetLight |
+| `IDirect3DMaterial3` | SetMaterial, GetHandle |
+| `IDirect3DTexture2` | GetHandle, Load; created by `QueryInterface` on a surface |
+
+The device starts with the documented Direct3D 6 defaults. Z is enabled when the render target has a Z-buffer attached. Each draw is recorded with a snapshot of everything it depends on: vertices and indices, render and texture-stage states, light states, transforms, the viewport, active lights, the selected material, and each texture's surface and generation.
 
 ### Surfaces
 
@@ -53,21 +67,33 @@ Requires SDL3 (found through pkg-config; on macOS `brew install sdl3`). For a he
 
 ### Simulation clock (`clock.rs`)
 
-Guest time = `Flip` count × 1/60 s plus the total of the game's `Sleep` calls. It is exact (rational) arithmetic, with no drift.
-- QPC, `timeGetTime`, and message times all derive from it, so time is constant within a frame.
-- Each `Flip` and `Sleep` then waits for host time to catch up (simulation pacing). Presentation is independent of the cadence.
-- If the host falls more than 250 ms behind, the backlog is forgiven: the simulation slows rather than racing.
-- If the game busy-waits on the clock (1,000,000 reads without a `Flip` or `Sleep`), guest time follows host time until the next frame, with a one-time diagnostic.
+The original paces itself against vertical blanks:
+- At start-up it calibrates a refresh period from 60 `WaitForVerticalBlank` intervals timed with QPC (median; 0x41c180).
+- Every frame it busy-waits (QPC + `Sleep(0)`) for one period since its previous exit, then calls `Flip(DDFLIP_WAIT)`.
 
-The capability records (`DDCAPS`, both `D3DDEVICEDESC`s) are the values the original saw in the reference VM. They are in `crates/runtime/src/ddraw_caps.rs`, generated from `tests/fixtures/ddraw-enumeration-vm-dgvoodoo.json`, which was captured with `tools/frida/dump_ddraw_enumeration.js`.
+Guest time is one exact counter that advances only when the guest waits:
+- `Flip(WAIT)` and `WaitForVerticalBlank` advance it to the next 1/60 s refresh boundary.
+- `Sleep(n)` adds n ms; `Sleep(0)` (a yield) adds 1 µs.
+- QPC, `timeGetTime`, and message times all read it.
 
-## Files
-
-Guest paths resolve case-insensitively against the game directory (`--data`, read-only) and a save directory (`--save`, default `./save`). Writes are copy-on-write into the save directory, so original game files are never modified.
+Consequences:
+- Calibration measures exactly 1/60 s, and every frame starts on a refresh boundary.
+- The limiter's 1 µs overshoot drops one frame every 16,667 frames, deterministically. Accumulated overshoot does the same on real hardware.
+- After each wait, the host sleeps until real time catches up. Presentation never drives the cadence. If the host falls more than 250 ms behind, the backlog is forgiven.
+- A busy-wait without `Sleep` (1,000,000 clock reads) follows host time until the next wait, with a one-time diagnostic.
 
 ## Tests
 
-`cargo test -p bugatron-runtime-tests` drives imports and COM methods through the same dispatch path as recompiled code. Small recompiled guest helpers act as window procedures and callbacks. Coverage: files, enumeration and capabilities, pixel formats, surfaces (creation, descriptors, locks, flips, blits), window messages and input, list boxes, and the simulation clock.
+`cargo test -p bugatron-runtime-tests` drives imports and COM methods through the same dispatch path as recompiled code. Small recompiled guest helpers act as window procedures and callbacks. Coverage:
+- files (including search and the current directory);
+- FMOD contracts;
+- enumeration and capabilities;
+- pixel formats;
+- surfaces (creation, descriptors, locks, flips, blits);
+- the Direct3D device (defaults, legacy state mirroring, scenes, draw recording and snapshots, textures, clears);
+- window messages and input;
+- list boxes;
+- the simulation clock, including the original's calibration and limiter loops reproduced against the runtime.
 
 ## Known deviations
 
@@ -80,3 +106,5 @@ Guest paths resolve case-insensitively against the game directory (`--data`, rea
 | RD5 | The simulation runs at exactly one 60 Hz refresh per `Flip`. On a slower host it slows down instead of taking larger steps, as the original would. | Only when the host cannot sustain 60 simulated frames per second | By design (fixed cadence) |
 | RD6 | The exact message sequence of `CreateWindowExA`/`ShowWindow` is modelled on Windows documentation, not traced from the VM. Non-client and paint messages are omitted. | The window procedure handles none of the omitted messages | Confirm against a VM message trace |
 | RD7 | `TranslateMessage` generates no `WM_CHAR`, and `SetCursorPos` does not warp the host pointer. | The window procedure does not use `WM_CHAR` | — |
+| RD8 | FMOD is silent: samples and songs are loaded but not played. | No audio | Audio milestone (SDL3 audio + libxmp) |
+| RD9 | `Sleep(0)` takes exactly 1 µs of guest time. | Sets how often the limiter's overshoot drops a frame (1 in 16,667) | By design (deterministic) |

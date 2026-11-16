@@ -20,6 +20,7 @@ pub mod cpu;
 pub mod ddraw;
 pub mod dialog;
 pub mod files;
+pub mod fmod;
 mod heap;
 pub mod render;
 pub mod user;
@@ -71,6 +72,8 @@ pub struct Clock {
     pub cadence: Option<clock::Cadence>,
     /// Wait for real time at frame boundaries (off in tests).
     pub pace: bool,
+    /// Stop the run (diagnostics, smoke tests) after this many vertical blanks.
+    pub stop_after_vblanks: Option<u64>,
 }
 
 #[derive(Default, Debug, Clone)]
@@ -86,6 +89,7 @@ pub struct Runtime {
     pub com: ddraw::Registry,
     pub(crate) dialog: Option<dialog::Dialog>,
     pub user: user::User,
+    pub fmod: fmod::Fmod,
     pub mem: GuestMemory,
     pub pe: Pe,
     pub(crate) import_names: Vec<(String, String)>,
@@ -165,6 +169,7 @@ impl Runtime {
             com: Default::default(),
             dialog: None,
             user: user::User::new((1024, 768)),
+            fmod: Default::default(),
         };
         rt.command_line = rt.alloc_cstr("\"C:\\Bugatron\\Bug3D.exe\"");
         rt.env_block = rt.heap_alloc(16, true);
@@ -199,6 +204,7 @@ impl Runtime {
             com: Default::default(),
             dialog: None,
             user: user::User::new((1024, 768)),
+            fmod: Default::default(),
         })
     }
 
@@ -310,6 +316,27 @@ pub fn call_guest_stdcall(cpu: &mut Cpu, addr: u32, args: &[u32]) -> u32 {
         fatal(&format!("call_guest_stdcall({addr:#010x}): stack imbalance, esp {:#x} expected {esp0:#x}", cpu.esp));
     }
     cpu.eax
+}
+
+/// Whether diagnostic tracing of `what` is enabled (`BUGATRON_TRACE=messages,com,...`).
+pub fn trace_enabled(what: &str) -> bool {
+    static TRACE: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
+    TRACE
+        .get_or_init(|| std::env::var("BUGATRON_TRACE").unwrap_or_default().split(',').map(|s| s.trim().to_string()).collect())
+        .iter()
+        .any(|t| t == what || t == "all")
+}
+
+/// Print call histograms (imports and COM methods) to stderr.
+pub fn print_diagnostics(rt: &Runtime) {
+    eprintln!("--- imports ---");
+    for (k, v) in &rt.diag.import_calls {
+        eprintln!("{v:>10}  {k}");
+    }
+    eprintln!("--- COM methods ---");
+    for (k, v) in &rt.diag.com_calls {
+        eprintln!("{v:>10}  {k}");
+    }
 }
 
 pub fn fatal(msg: &str) -> ! {

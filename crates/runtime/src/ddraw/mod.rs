@@ -12,6 +12,7 @@ use crate::{call_guest_stdcall, fatal, with_rt, Cpu, Runtime};
 use std::collections::HashMap;
 
 pub mod caps;
+pub mod d3d;
 mod dd;
 pub mod pixel;
 pub mod surface;
@@ -25,6 +26,11 @@ pub mod iface {
     pub const DIRECT3D3: u32 = 3;
     pub const SURFACE4: u32 = 4;
     pub const CLIPPER: u32 = 5;
+    pub const DEVICE3: u32 = 6;
+    pub const VIEWPORT3: u32 = 7;
+    pub const LIGHT: u32 = 8;
+    pub const MATERIAL3: u32 = 9;
+    pub const TEXTURE2: u32 = 10;
 }
 
 /// Interface and device GUIDs, in memory byte order.
@@ -39,6 +45,7 @@ pub(crate) mod guid {
     pub const IID_IDIRECT3D3: [u8; 16] = g(0xbb223240, 0xe72b, 0x11d0, [0xa9, 0xb4, 0x00, 0xaa, 0x00, 0xc0, 0x99, 0x3e]);
     pub const IID_IDIRECT3DRGBDEVICE: [u8; 16] = g(0xa4665c60, 0x2673, 0x11cf, [0xa3, 0x1a, 0x00, 0xaa, 0x00, 0xb9, 0x33, 0x56]);
     pub const IID_IDIRECT3DHALDEVICE: [u8; 16] = g(0x84e63de0, 0x46aa, 0x11cf, [0x81, 0x6f, 0x00, 0x00, 0xc0, 0x20, 0x15, 0x6e]);
+    pub const IID_IDIRECT3DTEXTURE2: [u8; 16] = g(0x93281502, 0x8cf8, 0x11d0, [0x89, 0xab, 0x00, 0xa0, 0xc9, 0x05, 0x41, 0x29]);
     pub const IID_IDIRECTDRAWSURFACE4: [u8; 16] = g(0x0b2b8630, 0xad35, 0x11d0, [0x8e, 0xa6, 0x00, 0x60, 0x97, 0x97, 0xea, 0x5b]);
 }
 
@@ -96,6 +103,25 @@ fn method_name(iface: u32, slot: u32) -> &'static str {
             "QueryInterface", "AddRef", "Release", "GetClipList", "GetHWnd", "Initialize", "IsClipListChanged",
             "SetClipList", "SetHWnd",
         ],
+        iface::DEVICE3 => &[
+            "QueryInterface", "AddRef", "Release", "GetCaps", "GetStats", "AddViewport", "DeleteViewport",
+            "NextViewport", "EnumTextureFormats", "BeginScene", "EndScene", "GetDirect3D", "SetCurrentViewport",
+            "GetCurrentViewport", "SetRenderTarget", "GetRenderTarget", "Begin", "BeginIndexed", "Vertex", "Index",
+            "End", "GetRenderState", "SetRenderState", "GetLightState", "SetLightState", "SetTransform",
+            "GetTransform", "MultiplyTransform", "DrawPrimitive", "DrawIndexedPrimitive", "SetClipStatus",
+            "GetClipStatus", "DrawPrimitiveStrided", "DrawIndexedPrimitiveStrided", "DrawPrimitiveVB",
+            "DrawIndexedPrimitiveVB", "ComputeSphereVisibility", "GetTexture", "SetTexture",
+            "GetTextureStageState", "SetTextureStageState", "ValidateDevice",
+        ],
+        iface::VIEWPORT3 => &[
+            "QueryInterface", "AddRef", "Release", "Initialize", "GetViewport", "SetViewport", "TransformVertices",
+            "LightElements", "SetBackground", "GetBackground", "SetBackgroundDepth", "GetBackgroundDepth", "Clear",
+            "AddLight", "DeleteLight", "NextLight", "GetViewport2", "SetViewport2", "SetBackgroundDepth2",
+            "GetBackgroundDepth2", "Clear2",
+        ],
+        iface::LIGHT => &["QueryInterface", "AddRef", "Release", "Initialize", "SetLight", "GetLight"],
+        iface::MATERIAL3 => &["QueryInterface", "AddRef", "Release", "SetMaterial", "GetMaterial", "GetHandle"],
+        iface::TEXTURE2 => &["QueryInterface", "AddRef", "Release", "GetHandle", "PaletteChanged", "Load"],
         _ => &UNKNOWN,
     };
     table.get(slot as usize).copied().unwrap_or("<beyond vtable>")
@@ -108,6 +134,11 @@ fn iface_name(iface: u32) -> &'static str {
         iface::DIRECT3D3 => "IDirect3D3",
         iface::SURFACE4 => "IDirectDrawSurface4",
         iface::CLIPPER => "IDirectDrawClipper",
+        iface::DEVICE3 => "IDirect3DDevice3",
+        iface::VIEWPORT3 => "IDirect3DViewport3",
+        iface::LIGHT => "IDirect3DLight",
+        iface::MATERIAL3 => "IDirect3DMaterial3",
+        iface::TEXTURE2 => "IDirect3DTexture2",
         _ => "<unknown interface>",
     }
 }
@@ -120,6 +151,11 @@ fn slot_count(iface: u32) -> u32 {
         iface::DIRECT3D3 => 12,
         iface::SURFACE4 => 45,
         iface::CLIPPER => 9,
+        iface::DEVICE3 => 42,
+        iface::VIEWPORT3 => 21,
+        iface::LIGHT => 6,
+        iface::MATERIAL3 => 6,
+        iface::TEXTURE2 => 6,
         _ => 3,
     }
 }
@@ -131,6 +167,11 @@ pub enum Kind {
     /// Pixels and state in [`Registry::surfaces`] under the same object address.
     Surface,
     Clipper { hwnd: u32 },
+    Device,
+    Viewport,
+    Light,
+    Material,
+    Texture,
 }
 
 #[derive(Debug)]
@@ -153,6 +194,8 @@ pub struct Registry {
     pub primary: Option<u32>,
     /// Number of `Flip` calls (frame boundaries of the original game loop).
     pub flips: u64,
+    /// Direct3D objects and recorded rendering commands.
+    pub d3d: d3d::State,
 }
 
 impl Runtime {
@@ -280,6 +323,7 @@ pub(crate) fn dispatch(cpu: &mut Cpu, iface: u32, slot: u32) {
         }
         (iface::DIRECTDRAW | iface::DIRECTDRAW4 | iface::DIRECT3D3, _) => dd::call(cpu, iface, this, slot),
         (iface::SURFACE4 | iface::CLIPPER, _) => surface::call(cpu, iface, this, slot),
+        (iface::DEVICE3 | iface::VIEWPORT3 | iface::LIGHT | iface::MATERIAL3 | iface::TEXTURE2, _) => d3d::call(cpu, iface, this, slot),
         _ => false,
     };
     if !handled {
@@ -298,12 +342,46 @@ fn add_ref_release(cpu: &mut Cpu, this: u32, add: bool) {
         if add { o.refs += 1 } else { o.refs -= 1 }
         let n = o.refs;
         if n == 0 {
-            rt.com.objs.remove(&this);
-            surface::destroy(rt, this);
+            if let Some(o) = rt.com.objs.remove(&this) {
+                destroy_object(rt, this, o.kind);
+            }
         }
         n
     });
     ret(cpu, n, 1);
+}
+
+/// Free the emulation state of an object whose last reference went away.
+pub(crate) fn destroy_object(rt: &mut Runtime, this: u32, kind: Kind) {
+    match kind {
+        Kind::Surface => surface::destroy(rt, this),
+        Kind::Device => {
+            rt.com.d3d.devices.remove(&this);
+        }
+        Kind::Viewport => {
+            rt.com.d3d.viewports.remove(&this);
+        }
+        Kind::Light => {
+            rt.com.d3d.lights.remove(&this);
+        }
+        Kind::Material => {
+            rt.com.d3d.materials.remove(&this);
+            rt.com.d3d.material_handles.retain(|_, &mut o| o != this);
+        }
+        Kind::Texture => {
+            rt.com.d3d.texture_handles.retain(|_, &mut o| o != this);
+            if let Some(s) = rt.com.d3d.textures.remove(&this) {
+                if let Some(o) = rt.com.objs.get_mut(&s) {
+                    o.refs -= 1;
+                    if o.refs == 0 {
+                        rt.com.objs.remove(&s);
+                        surface::destroy(rt, s);
+                    }
+                }
+            }
+        }
+        Kind::DirectDraw | Kind::Direct3D | Kind::Clipper { .. } => {}
+    }
 }
 
 /// Write `obj` to `out` and return DD_OK, or clear `out` and log for unsupported interfaces.

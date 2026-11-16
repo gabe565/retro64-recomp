@@ -153,3 +153,44 @@ pub fn create_surface(cpu: &mut Cpu, dd4: u32, desc: u32) -> (u32, u32) {
     let r = bugatron_runtime::testing::call_com(cpu, dd4, 6, &[desc, HELPER_OUT, 0]);
     (r, r32(HELPER_OUT))
 }
+
+/// Fullscreen 640×480 at `bpp` with r3d's flip chain and a Z16 buffer attached
+/// to the back buffer. Returns (dd4, front, back, zbuffer).
+pub fn display(cpu: &mut Cpu, bpp: u32) -> (u32, u32, u32, u32) {
+    use bugatron_runtime::ddraw::pixel::PixelFormat;
+    use bugatron_runtime::testing::call_com;
+    let dd4 = dd4(cpu);
+    assert_eq!(call_com(cpu, dd4, 20, &[0x0001_0010, 0x13]), 0);
+    assert_eq!(call_com(cpu, dd4, 21, &[640, 480, bpp, 0, 0]), 0);
+    let d = surface_desc(0x1000);
+    w32(d + 4, 0x21);
+    w32(d + 0x14, 1);
+    w32(d + 0x68, 0x2218);
+    let (r, front) = create_surface(cpu, dd4, d);
+    assert_eq!(r, 0);
+    w32(HELPER_OUT + 0x40, 4);
+    assert_eq!(call_com(cpu, front, 12, &[HELPER_OUT + 0x40, HELPER_OUT + 0x44]), 0);
+    let back = r32(HELPER_OUT + 0x44);
+    let d = surface_desc(0x1000);
+    w32(d + 4, 0x1007);
+    w32(d + 8, 480);
+    w32(d + 0xc, 640);
+    with_rt(|rt| rt.mem.write(d + 0x48, &PixelFormat::Z16.to_ddpf()));
+    w32(d + 0x68, 0x24000);
+    let (r, z) = create_surface(cpu, dd4, d);
+    assert_eq!(r, 0);
+    assert_eq!(call_com(cpu, back, 3, &[z]), 0);
+    (dd4, front, back, z)
+}
+
+/// `QueryInterface(IID_IDirect3D3)` on a DirectDraw4 object.
+pub fn d3d3(cpu: &mut Cpu, dd4: u32) -> u32 {
+    with_rt(|rt| rt.mem.write(HELPER_OUT + 0x10, &IID_IDIRECT3D3));
+    assert_eq!(bugatron_runtime::testing::call_com(cpu, dd4, 0, &[HELPER_OUT + 0x10, HELPER_OUT]), 0);
+    r32(HELPER_OUT)
+}
+
+/// Write `v` as consecutive f32 values at `a`.
+pub fn put_f32s(a: u32, v: &[f32]) {
+    with_rt(|rt| for (i, x) in v.iter().enumerate() { rt.mem.w32(a + 4 * i as u32, x.to_bits()) });
+}

@@ -82,6 +82,7 @@ pub(super) fn call(cpu: &mut Cpu, iface: u32, _this: u32, slot: u32) -> bool {
             with_rt(|rt| rt.mem.w32(p, rt.clock.monitor_frequency));
             ret(cpu, 0, 2);
         }
+        (iface::DIRECT3D3, 4 | 5 | 6 | 8 | 11) => return super::d3d::call_d3d(cpu, _this, slot),
         // IDirect3D3::EnumZBufferFormats(this, REFCLSID device, callback, ctx)
         (iface::DIRECT3D3, 10) => {
             let (cb, ctx) = (arg(cpu, 2), arg(cpu, 3));
@@ -120,6 +121,15 @@ pub(super) fn call(cpu: &mut Cpu, iface: u32, _this: u32, slot: u32) -> bool {
                 rt.user.screen = (w as i32, h as i32);
             });
             ret(cpu, DD_OK, 6);
+        }
+        // IDirectDraw4::WaitForVerticalBlank(this, flags, event)
+        (iface::DIRECTDRAW4, 22) => {
+            let flags = arg(cpu, 1);
+            if flags != 1 {
+                fatal(&format!("WaitForVerticalBlank: flags {flags:#x} not emulated (the game uses DDWAITVB_BLOCKBEGIN)"));
+            }
+            with_rt(crate::clock::vblank_wait);
+            ret(cpu, DD_OK, 3);
         }
         // IDirectDraw4::RestoreDisplayMode / FlipToGDISurface / RestoreAllSurfaces
         (iface::DIRECTDRAW4, 19) | (iface::DIRECTDRAW4, 10) | (iface::DIRECTDRAW4, 25) => ret(cpu, DD_OK, 1),

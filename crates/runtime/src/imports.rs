@@ -47,6 +47,13 @@ pub(crate) fn dispatch_named(cpu: &mut Cpu, dll: &str, name: &str) {
 
 fn call(rt: &mut Runtime, cpu: &mut Cpu, dll: &str, name: &str) {
     macro_rules! a { ($i:expr) => { arg(rt, cpu, $i) }; }
+    if dll.eq_ignore_ascii_case("fmod.dll") {
+        let args: Vec<u32> = (0..4).map(|i| arg(rt, cpu, i)).collect();
+        if let Some((v, n)) = crate::fmod::call(rt, name, &|i| args[i as usize]) {
+            ret(cpu, v, n);
+            return;
+        }
+    }
     match (dll, name) {
         // ---- process / module -------------------------------------------------
         ("kernel32.dll", "GetVersion") => ret(cpu, 0x0a28_0105, 0), // Windows XP SP-era 5.1.2600
@@ -290,6 +297,41 @@ fn call(rt: &mut Runtime, cpu: &mut Cpu, dll: &str, name: &str) {
                 Err(e) => { rt.last_error = e; ret(cpu, crate::files::INVALID_HANDLE_VALUE, 7) }
             }
         }
+        ("kernel32.dll", "FindFirstFileA") => {
+            let (pat, out) = (rt.mem.cstr(a!(0)), a!(1));
+            match rt.files.find_first(&pat) {
+                Ok((h, e)) => { write_find_data(rt, out, &e); ret(cpu, h, 2) }
+                Err(e) => { rt.last_error = e; ret(cpu, crate::files::INVALID_HANDLE_VALUE, 2) }
+            }
+        }
+        ("kernel32.dll", "FindNextFileA") => {
+            let (h, out) = (a!(0), a!(1));
+            match rt.files.find_next(h) {
+                Some(Some(e)) => { write_find_data(rt, out, &e); ret(cpu, 1, 2) }
+                Some(None) => { rt.last_error = 18; ret(cpu, 0, 2) } // ERROR_NO_MORE_FILES
+                None => { rt.last_error = 6; ret(cpu, 0, 2) }
+            }
+        }
+        ("kernel32.dll", "FindClose") => { let ok = rt.files.find_close(a!(0)); ret(cpu, ok as u32, 1) }
+        ("kernel32.dll", "SetCurrentDirectoryA") => {
+            let path = rt.mem.cstr(a!(0));
+            match rt.files.set_cwd(&path) {
+                Ok(()) => ret(cpu, 1, 1),
+                Err(e) => { rt.last_error = e; ret(cpu, 0, 1) }
+            }
+        }
+        ("kernel32.dll", "GetCurrentDirectoryA") => {
+            let (size, buf) = (a!(0), a!(1));
+            let p = rt.files.cwd_path();
+            let n = p.len() as u32;
+            if size > n {
+                rt.mem.write(buf, p.as_bytes());
+                rt.mem.w8(buf + n, 0);
+                ret(cpu, n, 2);
+            } else {
+                ret(cpu, n + 1, 2); // required size including the terminator
+            }
+        }
         ("kernel32.dll", "ReadFile") => {
             let (h, buf, n, read) = (a!(0), a!(1), a!(2), a!(3));
             let mut tmp = vec![0u8; n as usize];
@@ -364,14 +406,18 @@ fn call(rt: &mut Runtime, cpu: &mut Cpu, dll: &str, name: &str) {
             let ms = a!(0);
             if let Some(c) = rt.clock.cadence.as_mut() {
                 c.sleep(ms);
-                let d = c.pace_delay();
-                if rt.clock.pace && !d.is_zero() {
-                    std::thread::sleep(d);
+                if ms > 0 {
+                    crate::clock::pace(rt);
                 }
             }
             ret(cpu, 0, 1);
         }
         ("winmm.dll", "timeGetTime") => ret(cpu, rt.clock_ms(), 0),
+        // No joystick is attached (controller support is a later enhancement).
+        ("winmm.dll", "joyGetPos") => ret(cpu, 167, 2), // JOYERR_UNPLUGGED
+        // The timer-calibration code (0x41c180) raises its priority; scheduling is not emulated.
+        ("kernel32.dll", "SetPriorityClass") => ret(cpu, 1, 2),
+        ("kernel32.dll", "SetThreadPriority") => ret(cpu, 1, 2),
         ("kernel32.dll", "OutputDebugStringA") => {
             eprintln!("[debug] {}", rt.mem.cstr(a!(0)).trim_end());
             ret(cpu, 0, 1);
@@ -388,6 +434,20 @@ fn call(rt: &mut Runtime, cpu: &mut Cpu, dll: &str, name: &str) {
 pub(crate) fn dispatch_com(cpu: &mut Cpu, thunk: u32) {
     let off = thunk - crate::COM_THUNK_BASE;
     crate::ddraw::dispatch(cpu, off / 0x1000, (off % 0x1000) / 16);
+}
+
+/// Fill a `WIN32_FIND_DATAA` (0x140 bytes). Timestamps are zero.
+fn write_find_data(rt: &Runtime, p: u32, e: &crate::files::FindEntry) {
+    rt.mem.slice_mut(p, 0x140).fill(0);
+    rt.mem.w32(p, if e.dir { 0x10 } else { 0x20 }); // FILE_ATTRIBUTE_DIRECTORY / ARCHIVE
+    rt.mem.w32(p + 0x1c, (e.size >> 32) as u32);
+    rt.mem.w32(p + 0x20, e.size as u32);
+    let n = e.name.as_bytes();
+    let n = &n[..n.len().min(259)];
+    rt.mem.write(p + 0x2c, n);
+    if n.len() <= 12 {
+        rt.mem.write(p + 0x130, &n.to_ascii_uppercase());
+    }
 }
 
 /// CT_CTYPE1 classification for the "C" locale (ASCII); other code units get 0.

@@ -272,10 +272,14 @@ pub(super) fn call(cpu: &mut Cpu, iface_id: u32, this: u32, slot: u32) -> bool {
         0 => {
             let (riid, out) = (arg(cpu, 1), arg(cpu, 2));
             let id = read_guid(riid);
-            let obj = (id == guid::IID_IDIRECTDRAWSURFACE4).then(|| {
+            let obj = if id == guid::IID_IDIRECTDRAWSURFACE4 {
                 with_rt(|rt| rt.com.objs.get_mut(&this).unwrap().refs += 1);
-                this
-            });
+                Some(this)
+            } else if id == guid::IID_IDIRECT3DTEXTURE2 {
+                Some(with_rt(|rt| super::d3d::texture_for_surface(rt, this)))
+            } else {
+                None
+            };
             qi_result(cpu, iface_id, id, out, obj);
         }
         // AddAttachedSurface(this, surface)
@@ -324,8 +328,12 @@ pub(super) fn call(cpu: &mut Cpu, iface_id: u32, this: u32, slot: u32) -> bool {
         }
         // Flip(this, override, flags)
         11 => {
-            let r = with_rt(|rt| flip(rt, this).map(|_| DD_OK).unwrap_or_else(|e| e));
-            crate::clock::frame_boundary();
+            let r = with_rt(|rt| {
+                let r = flip(rt, this).map(|_| DD_OK).unwrap_or_else(|e| e);
+                // DDFLIP_WAIT: the flip happens at the next vertical blank.
+                crate::clock::vblank_wait(rt);
+                r
+            });
             ret(cpu, r, 3);
         }
         // GetAttachedSurface(this, LPDDSCAPS2, LPDIRECTDRAWSURFACE4*)
@@ -463,8 +471,8 @@ fn add_ref_release_internal(obj: u32) {
         let Some(o) = rt.com.objs.get_mut(&obj) else { return };
         o.refs -= 1;
         if o.refs == 0 {
-            rt.com.objs.remove(&obj);
-            destroy(rt, obj);
+            let o = rt.com.objs.remove(&obj).unwrap();
+            super::destroy_object(rt, obj, o.kind);
         }
     });
 }

@@ -4,7 +4,9 @@
 //! portable runtime. The runtime implements the imports the game uses; anything
 //! not yet implemented stops the run with its name (see docs/runtime-status.md).
 //!
-//! Usage: bugatron [--exe Bug3D.exe] [--data GAME_DIR] [--save SAVE_DIR]
+//! Usage: bugatron [--exe Bug3D.exe] [--data GAME_DIR] [--save SAVE_DIR] [--frames N]
+//!
+//! `--frames N` stops after N vertical blanks and prints import/COM call counts.
 //!
 //! Files the game writes (prefs, high scores) go to SAVE_DIR (default `./save`);
 //! the game directory is only read.
@@ -19,6 +21,7 @@ fn main() {
     let mut exe = std::env::var("BUGATRON_EXE").map(PathBuf::from).unwrap_or_else(|_| root.join("_work/ext/gold120/app/Bug3D.exe"));
     let mut data = exe.parent().map(PathBuf::from).unwrap_or_default();
     let mut save = PathBuf::from("save");
+    let mut frames = None;
     let mut it = std::env::args().skip(1);
     while let Some(k) = it.next() {
         let v = PathBuf::from(it.next().unwrap_or_else(|| panic!("{k} needs a value")));
@@ -26,6 +29,7 @@ fn main() {
             "--exe" => exe = v,
             "--data" => data = v,
             "--save" => save = v,
+            "--frames" => frames = Some(v.to_string_lossy().parse::<u64>().expect("--frames N")),
             _ => panic!("unknown argument {k}"),
         }
     }
@@ -35,6 +39,7 @@ fn main() {
     rt.files.save_dir = save;
     rt.clock.cadence = Some(bugatron_runtime::clock::Cadence::new());
     rt.clock.pace = true;
+    rt.clock.stop_after_vblanks = frames;
     eprintln!("translated functions: {}", Runtime::function_count());
     rt.install();
     let mut cpu = with_rt(|rt| rt.initial_cpu());
