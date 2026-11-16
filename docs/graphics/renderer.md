@@ -59,7 +59,7 @@ device state model (ddraw/d3d.rs) ── records Clear / Draw commands with full
 | A7 | GPU rasterisation (top-left fill rule, sub-pixel precision) matches Direct3D's rules, but not any one 2001 card's precision. | Edge pixels can differ | VM comparison |
 | A8 | Partial-rectangle `Clear2` stops with a diagnostic. | The game only clears the full target | — |
 | A9 | Destination alpha is always 1, because the guest targets have no alpha channel. | Matches XRGB/RGB565 semantics | — |
-| A10 | The SPIR-V (Vulkan) shader path shares one binding between the texture and its sampler (SDL's combined image sampler). It is not yet run; only the Metal path is tested. | Windows/Linux builds may need adjustment | Run the `gpu` tests on Windows/Linux |
+| A10 | The SPIR-V (Vulkan) shader path shares one binding between the texture and its sampler (SDL's combined image sampler), and leaves out naga's Y flip because SDL's Vulkan backend already presents a Y-up clip space. Verified on Linux with Mesa lavapipe: the `gpu` tests pass and game frames match Metal to within 4/255 per channel (`testing/linux-validation.md`). Not yet run on a hardware Vulkan driver or on Windows | Vendor drivers could still differ | Run the `gpu` tests on hardware Vulkan and on Windows |
 | A11 | Presentation scales with linear filtering and letterboxing. | Presentation only; guest pixels are unaffected | — |
 | A12 | Lines and points are not emulated (they stop with a diagnostic). | Not used by the title or menus | — |
 | A13 | Fog is not emulated; a warning is printed if the game enables it. | r3d sets `FOGENABLE` to 0 at init and never changes it (r3d-interface.md G6) | — |
