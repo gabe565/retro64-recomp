@@ -18,6 +18,8 @@ const IDOK: u32 = 1;
 pub const LB_ERR: u32 = 0xffff_ffff;
 
 pub const DIALOG_HWND: u32 = 0x0002_0066;
+/// The video dialog's display-mode list box.
+const MODE_LIST: u32 = 0x3ed;
 
 /// An unsorted, single-selection Win32 list box.
 #[derive(Default, Debug)]
@@ -101,6 +103,23 @@ pub(crate) fn import(cpu: &mut Cpu, name: &str) -> bool {
             }
             with_rt(|rt| rt.dialog = Some(Dialog::default()));
             call_guest_stdcall(cpu, proc_, &[DIALOG_HWND, WM_INITDIALOG, 0, param]);
+            // A requested display mode ("W x H x BPP", as the dialog lists it) is
+            // selected in the mode list, as a user would, before OK.
+            if let Some(want) = with_rt(|rt| rt.video_mode.clone()) {
+                let r = with_rt(|rt| {
+                    let lb = rt.dialog.as_mut().unwrap().lists.entry(MODE_LIST).or_default();
+                    match lb.items.iter().position(|i| i.eq_ignore_ascii_case(&want)) {
+                        Some(i) => {
+                            lb.sel = Some(i);
+                            Ok(())
+                        }
+                        None => Err(lb.items.clone()),
+                    }
+                });
+                if let Err(items) = r {
+                    fatal(&format!("--video-mode {want:?} is not offered; the dialog lists: {items:?}"));
+                }
+            }
             if with_rt(|rt| rt.dialog.as_ref().unwrap().result.is_none()) {
                 call_guest_stdcall(cpu, proc_, &[DIALOG_HWND, WM_COMMAND, IDOK, 0]);
             }

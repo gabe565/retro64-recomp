@@ -50,9 +50,6 @@ pub(crate) fn sync_for_cpu(rt: &mut Runtime, obj: u32) {
 
 /// Called before `front` and `back` exchange their pixel storage in `Flip`.
 pub(crate) fn before_flip(rt: &mut Runtime, _front: u32, _back: u32) {
-    if crate::trace_enabled("draws") {
-        trace_frame(rt);
-    }
     if backend(rt) {
         gpu::flush(rt);
     } else {
@@ -87,6 +84,9 @@ pub fn gpu_available(rt: &mut Runtime) -> bool {
 
 /// `EndScene`: recorded commands may be submitted.
 pub(crate) fn end_scene(rt: &mut Runtime) {
+    if crate::trace_enabled("draws") {
+        trace_frame(rt);
+    }
     if backend(rt) {
         gpu::flush(rt);
     }
@@ -120,6 +120,9 @@ fn trace_frame(rt: &Runtime) {
         *kinds.entry(k).or_default() += 1;
     }
     eprintln!("=== frame {} ===", rt.com.flips);
+    if let Some(Command::Draw(d)) = rt.com.d3d.commands.iter().find(|c| matches!(c, Command::Draw(_))) {
+        eprintln!("viewport {:?}\nprojection {:?}\nview {:?}", d.viewport, d.projection, d.view);
+    }
     for (k, n) in kinds {
         eprintln!("{n:>5} {k}");
     }

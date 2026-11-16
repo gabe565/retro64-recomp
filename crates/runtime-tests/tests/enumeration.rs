@@ -72,6 +72,13 @@ fn display_modes_are_32_bit_first_with_correct_pixel_formats() {
     let modes: Vec<(u32, u32, u32)> = b.chunks(0x7c).map(|m| (dw(m, 3), dw(m, 2), dw(m, 21))).collect();
     assert_eq!(modes[0], (640, 480, 32), "the game's default rule picks the first 640-wide mode");
     assert!(modes.contains(&(800, 600, 16)), "the README's 800x600x16 mode stays available");
+    // The original's fullscreen projection assumes 4:3 (0x421fd0): offer 4:3 modes up to
+    // 2048×1536, plus the period-common 5:4 1280×1024, at 16 and 32 bits.
+    for &(w, h, bpp) in &modes {
+        assert!(w * 3 == h * 4 || (w, h) == (1280, 1024), "{w}x{h}x{bpp}");
+        assert!(modes.contains(&(w, h, if bpp == 32 { 16 } else { 32 })), "both depths for {w}x{h}");
+    }
+    assert_eq!(modes.iter().map(|m| m.0 * m.1).max(), Some(2048 * 1536));
     for m in b.chunks(0x7c) {
         assert_eq!(dw(m, 0), 0x7c);
         assert_eq!(dw(m, 1) & 0x100f, 0x100f, "CAPS|HEIGHT|WIDTH|PITCH|PIXELFORMAT");

@@ -11,6 +11,9 @@ How far the recompiled game runs on the portable runtime, which imports and COM 
 - `--frames N` stops after N vertical blanks and prints import/COM call counts.
 - `BUGATRON_TRACE=messages,sdl,draws` turns on diagnostic traces.
 - `--dump-frames A,B --dump-dir DIR` saves front buffers as PNG.
+- `--video-mode "1024 x 768 x 32"` selects a display mode in the game's video dialog. The game saves it to `prefs`, as when a user picks it.
+
+**Resolutions.** The title screen renders correctly and at a full 60 Hz at 1024×768, 1600×1200, and 2048×1536 (32-bit). 520 vblanks take about 9 s of wall time (8.7 s ideal) and about 2.8 s of CPU, including the per-frame back-buffer readback and upload.
 
 | Stage | Status |
 |---|---|
@@ -111,7 +114,7 @@ Measured in the game over 1,236 frames, its frame delta (global 0x8429e0, in 1/1
 |---|---|---|---|
 | RD1 | The video dialog is not shown. The original dialog proc runs against emulated list boxes and receives IDOK. | The driver, device, and mode come from `prefs` or the original defaults; the user cannot change them yet | Visible chooser driving the same dialog state |
 | RD2 | Driver enumeration uses the `DirectDrawEnumerateA` fallback: one driver, "Primary Display Driver". The reference VM used `DirectDrawEnumerateExA` and listed two drivers, with dgVoodoo's names. | Driver list and names in the dialog | None needed; selection logic is unchanged |
-| RD3 | The display-mode list is a fixed set (640×480 to 1280×1024, at 32 then 16 bpp), not the host's list. | Mode indices in a `prefs` file copied from Windows may refer to a different mode | By design (r3d-interface.md §9.3) |
+| RD3 | The display-mode list is a fixed, period-typical set, not the host's list: 4:3 from 512×384 to 2048×1536 plus 5:4 1280×1024, at 32 then 16 bpp. The original's fullscreen projection assumes 4:3 (0x421fd0 fixes the aspect at 0.75), so non-4:3 modes stretch, as on real hardware. `--video-mode "W x H x BPP"` picks a mode in the game's own dialog. | Mode indices in a `prefs` file copied from Windows may refer to a different mode | By design (r3d-interface.md §9.3) |
 | RD4 | The desktop mode is reported as 1024×768×32. | Only decides whether "Window" is offered | — |
 | RD5 | The simulation runs at exactly one 60 Hz refresh per `Flip`. On a slower host it slows down instead of taking larger steps, as the original would. | Only when the host cannot sustain 60 simulated frames per second | By design (fixed cadence) |
 | RD6 | The exact message sequence of `CreateWindowExA`/`ShowWindow` is modelled on Windows documentation, not traced from the VM. Non-client and paint messages are omitted. | The window procedure handles none of the omitted messages | Confirm against a VM message trace |

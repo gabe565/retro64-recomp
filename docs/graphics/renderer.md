@@ -26,6 +26,13 @@ device state model (ddraw/d3d.rs) ── records Clear / Draw commands with full
 - **Presentation.** After each `Flip`, the front buffer is scaled into the window (aspect-preserving, letterboxed, linear filter). This is presentation only and is never visible to the guest.
 - **Shaders.** `shaders/fixed.wgsl` is translated at build time by naga into MSL (Metal) and SPIR-V (Vulkan), following SDL3 GPU's binding conventions.
 
+## Performance notes and optimisation targets
+
+- **Per-frame readback.** The game locks the back buffer for its 2D overlay every frame (`r3d_2DBegin`, `DDLOCK_WAIT|DDLOCK_NOSYSLOCK`, not write-only). Each frame therefore reads the render target back to guest memory and uploads it again after `Unlock`. That is 2 × 12 MB per frame at 2048×1536×32, and it still runs at a full 60 Hz on the Apple M-series test machine.
+  - This is the main optimisation target for future high-resolution or high-refresh rendering. Options: asynchronous readback, tracking which rows the CPU actually writes, or compositing CPU writes as an overlay when the game provably never reads the pixels.
+  - Any such change must keep the original's lock semantics (the screen capture in 0x422e10 does read pixels). Deferred until the vanilla baseline is complete.
+- **Resolution range.** Nothing in the renderer assumes 640×480. Surfaces, GPU textures, and presentation follow the display mode the game selects, up to 2048×1536 in the emulated mode list. True widescreen remains a later enhancement, because the original's fullscreen projection is fixed at 4:3.
+
 ## Direct3D 6 behaviour reproduced
 
 | Area | Behaviour | Evidence |

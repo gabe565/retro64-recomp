@@ -7,6 +7,8 @@
 //! Usage: bugatron [--exe Bug3D.exe] [--data GAME_DIR] [--save SAVE_DIR] [--frames N]
 //!
 //! `--frames N` stops after N vertical blanks and prints import/COM call counts.
+//! `--video-mode "W x H x BPP"` picks that mode in the game's video dialog
+//! (saved to prefs by the game, as when a user picks it).
 //! `--dump-frames A,B,...` saves the front buffer after those flips as PNG in
 //! `--dump-dir` (default `.`).
 //!
@@ -26,6 +28,7 @@ fn main() {
     let mut frames = None;
     let mut dumps = Vec::new();
     let mut dump_dir = PathBuf::from(".");
+    let mut video_mode = None;
     let mut it = std::env::args().skip(1);
     while let Some(k) = it.next() {
         let v = PathBuf::from(it.next().unwrap_or_else(|| panic!("{k} needs a value")));
@@ -36,6 +39,7 @@ fn main() {
             "--frames" => frames = Some(v.to_string_lossy().parse::<u64>().expect("--frames N")),
             "--dump-frames" => dumps = v.to_string_lossy().split(',').map(|x| x.parse::<u64>().expect("--dump-frames A,B")).collect(),
             "--dump-dir" => dump_dir = v,
+            "--video-mode" => video_mode = Some(v.to_string_lossy().into_owned()),
             _ => panic!("unknown argument {k}"),
         }
     }
@@ -52,6 +56,7 @@ fn main() {
         rt.frame_hook = Some(Box::new(|rt, n| eprintln!("[delta] flip {n}: {}", rt.mem.r32(0x8429e0))));
     }
     rt.capture_dir = dump_dir;
+    rt.video_mode = video_mode;
     eprintln!("translated functions: {}", Runtime::function_count());
     rt.install();
     let mut cpu = with_rt(|rt| rt.initial_cpu());

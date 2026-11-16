@@ -58,13 +58,19 @@ pub const DDERR_NOTLOCKED: u32 = 0x8876_0248;
 pub const DDERR_INVALIDMODE: u32 = 0x8876_0078;
 pub const DDERR_NOCOLORKEY: u32 = 0x8876_00d7;
 
-/// Display modes offered to the game (width, height, bpp). Not the host's list:
-/// a fixed, period-plausible set. 32-bit modes come first so the game's own
-/// default rule (first enumerated 640-wide mode, WinMain 0x4047xx) selects
-/// 640×480×32, the owner-decided default (r3d-interface.md §9.3).
+/// Display modes offered to the game (width, height, bpp): the set a typical
+/// 2001 display driver offered, not the host's list. The original accepts any
+/// enumerated mode, but its fullscreen projection assumes 4:3 (0x421fd0 fixes
+/// the aspect at 0.75), so the list is 4:3 apart from the period-common 5:4
+/// 1280×1024, which the original stretches as it did on real hardware.
+/// 32-bit modes come first so the game's own default rule (first enumerated
+/// 640-wide mode, WinMain 0x4047xx) selects 640×480×32, the owner-decided
+/// default (r3d-interface.md §9.3).
 pub const MODES: &[(u32, u32, u32)] = &[
-    (640, 480, 32), (800, 600, 32), (1024, 768, 32), (1280, 1024, 32),
-    (640, 480, 16), (800, 600, 16), (1024, 768, 16), (1280, 1024, 16),
+    (640, 480, 32), (512, 384, 32), (800, 600, 32), (1024, 768, 32), (1152, 864, 32), (1280, 960, 32),
+    (1280, 1024, 32), (1600, 1200, 32), (1920, 1440, 32), (2048, 1536, 32),
+    (640, 480, 16), (512, 384, 16), (800, 600, 16), (1024, 768, 16), (1152, 864, 16), (1280, 960, 16),
+    (1280, 1024, 16), (1600, 1200, 16), (1920, 1440, 16), (2048, 1536, 16),
 ];
 /// Desktop mode reported by GetDisplayMode (32-bit, so windowed rendering is offered).
 const DESKTOP: (u32, u32, u32) = (1024, 768, 32);
