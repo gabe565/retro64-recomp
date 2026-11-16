@@ -47,3 +47,13 @@ Verified by scripted play. Title, menu, gameplay, game over, title, and a new ga
 - **Original:** `tools/frida/capture_fmod_output.js` adds a DSP unit to the original's FMOD (priority 1100, above the clip-and-copy unit). It receives the final 16-bit stereo mix and sends 12 s of it from the first `PlaySong` onwards. Load it with `capture_deterministic_frames.js` so both runs see the same game timeline.
 - **Native:** `bugatron --frames N --record-audio native.wav 12` records the mixer output from the first song onwards.
 - **Results:** see below.
+
+### Results (2026-11-15)
+
+- **The original is silent in the reference VM.** Probed with Frida, its `FSOUND_Init` fails at 44100 Hz, again at 22050 Hz, and again with 16 channels. The game then disables sound (0x438144 = 0). The VM has no working DirectSound output, most likely because no sound device is configured in UTM. So there was no mix to capture. The DSP capture script is ready for a VM with a sound device, or for any Windows machine running Frida.
+- **Native side.** The title music records at −29.3 dBFS RMS (peak 6743/32767) at the game's saved music volume of 56/256.
+- **What holds without a capture:**
+  - Effects play at their files' own sample rates, so pitch and speed are the files'.
+  - XM tempo follows the module (libxmp).
+  - The music and effects lifecycle across scenes matches the original's call sequence, which comes from the same recompiled code.
+  - Still unverified: AU1 (relative music level and XM playback details) and AU2 (pan law).

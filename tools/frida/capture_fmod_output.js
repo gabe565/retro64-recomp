@@ -10,10 +10,7 @@
 'use strict';
 
 const RECORD_SECONDS = 12;
-const fmod = Process.getModuleByName('fmod.dll');
-const e = (n) => fmod.getExportByName(n);
-const dspCreate = new NativeFunction(e('_FSOUND_DSP_Create@12'), 'pointer', ['pointer', 'int', 'int'], 'stdcall');
-const dspActive = new NativeFunction(e('_FSOUND_DSP_SetActive@8'), 'void', ['pointer', 'int'], 'stdcall');
+let e, dspCreate, dspActive;
 
 let rate = 44100, recording = false, chunks = [], bytes = 0, sent = false;
 
@@ -43,6 +40,20 @@ const tap = new NativeCallback((orig, buf, length, param) => {
   return buf;
 }, 'pointer', ['pointer', 'pointer', 'int', 'int'], 'stdcall');
 
+// fmod.dll may not be mapped yet when the process is spawned: set up when the
+// game's sound initialisation (0x4172b0) starts.
+let setUp = false;
+Interceptor.attach(ptr(0x4172b0), { onEnter() {
+  if (setUp) return;
+  setUp = true;
+  const fmod = Process.getModuleByName('fmod.dll');
+  e = (n) => fmod.getExportByName(n);
+  dspCreate = new NativeFunction(e('_FSOUND_DSP_Create@12'), 'pointer', ['pointer', 'int', 'int'], 'stdcall');
+  dspActive = new NativeFunction(e('_FSOUND_DSP_SetActive@8'), 'void', ['pointer', 'int'], 'stdcall');
+  hookFmod();
+} });
+
+function hookFmod() {
 Interceptor.attach(e('_FSOUND_Init@12'), {
   onEnter(args) { rate = args[0].toInt32(); },
   onLeave(ret) {
@@ -53,4 +64,5 @@ Interceptor.attach(e('_FSOUND_Init@12'), {
   },
 });
 Interceptor.attach(e('_FMUSIC_PlaySong@4'), { onEnter() { recording = true; } });
+}
 send({ type: 'ready' });

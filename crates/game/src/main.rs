@@ -68,7 +68,7 @@ fn main() {
     rt.capture_frames = dumps;
     rt.capture_dir = dump_dir;
     if let Some((path, secs)) = record {
-        rt.fmod.mixer().recording = Some(bugatron_runtime::audio::mixer::Recording { limit_frames: (secs * 48000.0) as usize, ..Default::default() });
+        rt.fmod.mixer().recording = Some(bugatron_runtime::audio::mixer::Recording { seconds: secs, ..Default::default() });
         rt.audio_record_path = Some(path);
     }
     // Display mode: explicit, else sized to the host display; offered to the game

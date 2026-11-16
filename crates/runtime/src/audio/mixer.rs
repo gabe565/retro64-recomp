@@ -91,7 +91,8 @@ pub struct Song {
 pub struct Recording {
     /// Interleaved stereo frames.
     pub samples: Vec<f32>,
-    pub limit_frames: usize,
+    /// Length to record, in seconds of output at the mix rate.
+    pub seconds: f64,
     /// Capture starts at the first FMUSIC_PlaySong, like tools/frida/capture_fmod_output.js.
     pub started: bool,
 }
@@ -239,7 +240,8 @@ impl Mixer {
             *o = o.clamp(-1.0, 1.0);
         }
         if let Some(r) = self.recording.as_mut().filter(|r| r.started) {
-            let room = (r.limit_frames * 2).saturating_sub(r.samples.len());
+            let limit = (r.seconds * self.rate as f64) as usize;
+            let room = (limit * 2).saturating_sub(r.samples.len());
             r.samples.extend_from_slice(&out[..room.min(out.len())]);
         }
     }
