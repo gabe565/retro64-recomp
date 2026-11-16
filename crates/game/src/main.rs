@@ -12,7 +12,7 @@
 use bugatron_runtime::{call_guest, display, input_script, with_rt, Runtime};
 use clap::{CommandFactory, Parser};
 use sha2::Digest;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 const ENTRY: u32 = 0x42ba98;
 
@@ -24,7 +24,8 @@ struct Script(Vec<(u64, input_script::Input)>);
 #[derive(Parser)]
 #[command(version, about, after_help = "Environment: BUGATRON_TRACE=fmod,audio,imports,messages,sdl,gpu,draws,delta (or all) prints diagnostics.")]
 struct Args {
-    /// Your Bug3D.exe (Gold v1.20a; checked by SHA-256)
+    /// Your Bug3D.exe (Gold v1.20a; checked by SHA-256) [default: found in the current directory,
+    /// next to this program, the Windows install folder, or the copy this program was built from]
     #[arg(long, value_name = "FILE", env = "BUGATRON_EXE")]
     exe: Option<PathBuf>,
     /// Game folder (Audio, Graphics, levels) [default: Bug3D.exe's folder]
@@ -63,11 +64,87 @@ struct Args {
     record_audio: Option<Vec<String>>,
 }
 
+/// `name` in `dir`, matching the file name case-insensitively (Linux file systems are not).
+fn find_in(dir: &Path, name: &str) -> Option<PathBuf> {
+    std::fs::read_dir(dir).ok()?.flatten().map(|e| e.path()).find(|p| {
+        p.is_file() && p.file_name().is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case(name))
+    })
+}
+
+/// Folders searched for the game when --exe/--data are not given: the current
+/// directory, the folder of this program, the Windows install folder, and the
+/// folder of the Bug3D.exe this program was built from (keeps `cargo run` working).
+fn search_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    dirs.extend(std::env::current_dir().ok());
+    dirs.extend(std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf)));
+    if cfg!(windows) {
+        for var in ["ProgramFiles(x86)", "ProgramFiles"] {
+            dirs.extend(std::env::var_os(var).map(|p| PathBuf::from(p).join("Bugatron Gold")));
+        }
+        dirs.push(PathBuf::from(r"C:\Program Files (x86)\Bugatron Gold"));
+    }
+    dirs.extend(Path::new(env!("BUGATRON_BUILT_FROM")).parent().map(Path::to_path_buf));
+    let mut out: Vec<PathBuf> = Vec::new();
+    for d in dirs {
+        if !out.contains(&d) {
+            out.push(d);
+        }
+    }
+    out
+}
+
+/// The first search folder holding Bug3D.exe, or (when the exe is embedded and only
+/// the assets are needed) the game's Audio and Graphics folders. Exits with the
+/// list of folders tried if none does.
+fn find_game(need_exe: bool) -> (Option<PathBuf>, PathBuf) {
+    let dirs = search_dirs();
+    for d in &dirs {
+        if let Some(exe) = find_in(d, "Bug3D.exe") {
+            return (Some(exe), d.clone());
+        }
+        let has_dir = |n: &str| std::fs::read_dir(d).ok().into_iter().flatten().flatten()
+            .any(|e| e.path().is_dir() && e.file_name().to_string_lossy().eq_ignore_ascii_case(n));
+        if !need_exe && has_dir("Audio") && has_dir("Graphics") {
+            return (None, d.clone());
+        }
+    }
+    let list: Vec<String> = dirs.iter().map(|d| format!("  {}", d.display())).collect();
+    let what = if need_exe { "Bug3D.exe (Bugatron Gold v1.20a)" } else { "the Bugatron Gold game folder (Audio, Graphics)" };
+    eprintln!("error: {what} not found. Looked in:\n{}\nRun from the game folder, or pass --exe/--data (or set BUGATRON_EXE).", list.join("\n"));
+    std::process::exit(2);
+}
+
+/// The game folder built into this program (`--features embed-game`; empty without it).
+mod embedded {
+    include!(concat!(env!("OUT_DIR"), "/pack.rs"));
+}
+
+/// The embedded game folder and its Bug3D.exe, if the program was built with them.
+fn embedded() -> Option<(bugatron_runtime::files::Pack, &'static [u8])> {
+    let exe = embedded::PACK.iter().find(|(p, _)| p.eq_ignore_ascii_case("Bug3D.exe"))?.1;
+    Some((embedded::PACK, exe))
+}
+
 fn main() {
     let args = Args::parse();
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let exe = args.exe.unwrap_or_else(|| root.join("_work/ext/gold120/app/Bug3D.exe"));
-    let data = args.data;
+    // Bug3D.exe: --exe (or BUGATRON_EXE), else the embedded copy, else found on disk.
+    // Game files: --data, else the embedded folder (with the embedded exe), else the
+    // folder of the Bug3D.exe used, else (embedded exe only) a game folder found on disk.
+    let embedded = embedded();
+    let (exe, game_dir) = match (args.exe, embedded) {
+        (Some(p), _) => {
+            let dir = p.parent().map(PathBuf::from).unwrap_or_default();
+            (Some(p), Some(dir))
+        }
+        (None, Some(_)) => (None, None),
+        (None, None) => {
+            let (exe, dir) = find_game(true);
+            (exe, Some(dir))
+        }
+    };
+    let pack = if exe.is_none() && args.data.is_none() { embedded.map(|e| e.0) } else { None };
+    let data = args.data.or(game_dir).or_else(|| pack.is_none().then(|| find_game(false).1));
     let save = args.save;
     let frames = args.frames;
     let dumps = args.dump_frames;
@@ -89,20 +166,33 @@ fn main() {
         }
         (path, secs)
     });
-    let image = std::fs::read(&exe).unwrap_or_else(|e| {
-        eprintln!("error: cannot read {}: {e}\nPoint --exe (or BUGATRON_EXE) at your copy of Bugatron Gold v1.20a's Bug3D.exe.", exe.display());
-        std::process::exit(2)
-    });
+    let (image, exe_label) = match &exe {
+        Some(p) => {
+            let image = std::fs::read(p).unwrap_or_else(|e| {
+                eprintln!("error: cannot read {}: {e}\nPoint --exe (or BUGATRON_EXE) at your copy of Bugatron Gold v1.20a's Bug3D.exe.", p.display());
+                std::process::exit(2)
+            });
+            (image, p.display().to_string())
+        }
+        None => (embedded.expect("embedded Bug3D.exe").1.to_vec(), "embedded".to_string()),
+    };
+    eprintln!("Bug3D.exe: {exe_label}");
     let sha: String = sha2::Sha256::digest(&image).iter().map(|b| format!("{b:02x}")).collect();
     if sha != env!("BUGATRON_EXE_SHA256") {
-        eprintln!("error: {} is not Bugatron Gold v1.20a's Bug3D.exe (SHA-256 {sha});\nthis build was translated from {}.", exe.display(), env!("BUGATRON_EXE_SHA256"));
+        eprintln!("error: {exe_label} is not Bugatron Gold v1.20a's Bug3D.exe (SHA-256 {sha});\nthis build was translated from {}.", env!("BUGATRON_EXE_SHA256"));
         std::process::exit(2);
     }
     let mut rt = Runtime::load(&image).expect("load Bug3D.exe");
     rt.user.ignore_host_input = scripted;
     rt.user.host_fullscreen = !windowed && !scripted;
     rt.user.run_in_background = args.run_in_background;
-    rt.files.data_dir = data.unwrap_or_else(|| exe.parent().map(PathBuf::from).unwrap_or_default());
+    match (&data, pack) {
+        (Some(d), _) => eprintln!("game folder: {}", d.display()),
+        (None, Some(p)) => eprintln!("game folder: embedded ({} files)", p.len()),
+        (None, None) => {}
+    }
+    rt.files.data_dir = data.unwrap_or_default();
+    rt.files.pack = pack;
     rt.files.save_dir = save;
     rt.clock.cadence = Some(bugatron_runtime::clock::Cadence::new());
     rt.clock.pace = true;

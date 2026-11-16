@@ -1,6 +1,7 @@
 //! Win32 file imports over the game and save directories.
 
 use bugatron_runtime::testing::call_import;
+use bugatron_runtime::files::{FindEntry, Files, ERROR_FILE_NOT_FOUND};
 use bugatron_runtime::with_rt;
 use bugatron_runtime_tests::*;
 use std::path::PathBuf;
@@ -153,4 +154,52 @@ fn wildcard_matching() {
     assert!(!m("bug?.xml.lev", "bug17.xml.lev"));
     assert!(m("pack*", "PACK1.hs"));
     assert!(!m("*.hs", "pack1.hsx"));
+}
+
+/// Game files built into the program (`embed-game`) behave like a data folder:
+/// case-insensitive reads, folder listings, the current directory, and
+/// copy-on-write into the save folder.
+#[test]
+fn embedded_pack_serves_as_the_game_folder() {
+    static PACK: &[(&str, &[u8])] = &[
+        ("Bug3D.exe", b"MZ"),
+        ("prefs", b"\x01\x02"),
+        ("Audio/boing.wav", b"RIFF"),
+        ("Audio/explode.wav", b"RIFF!"),
+        ("Graphics/back0.bmp", b"BM"),
+    ];
+    let save = std::env::temp_dir().join(format!("bugatron-pack-test-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&save);
+    let mut f = Files::default();
+    f.pack = Some(PACK);
+    f.save_dir = save.clone();
+
+    let h = f.create("AUDIO\\Explode.WAV", 0x8000_0000, 3).unwrap();
+    assert_eq!(f.size(h), Some(5));
+    let mut buf = [0u8; 8];
+    assert_eq!(f.read(h, &mut buf), Some(5));
+    assert_eq!(&buf[..5], b"RIFF!");
+    assert_eq!(f.seek(h, 1, 0), Some(1));
+    f.close(h);
+    assert_eq!(f.create("missing.txt", 0x8000_0000, 3), Err(ERROR_FILE_NOT_FOUND));
+
+    f.set_cwd("audio").unwrap();
+    let (h, first) = f.find_first("*.wav").unwrap();
+    assert_eq!(first.name, "boing.wav");
+    assert_eq!(f.find_next(h), Some(Some(FindEntry { name: "explode.wav".into(), size: 5, dir: false })));
+    assert_eq!(f.find_next(h), Some(None));
+    f.set_cwd("..").unwrap();
+    let (_, first) = f.find_first("*.*").unwrap();
+    assert_eq!(first, FindEntry { name: "Audio".into(), size: 0, dir: true });
+    assert_eq!(f.set_cwd("Fonts"), Err(3));
+
+    // Writing an original file copies it out of the pack first.
+    let h = f.create("PREFS", 0xC000_0000, 3).unwrap();
+    assert_eq!(f.write(h, b"\x09"), Some(1));
+    f.close(h);
+    assert_eq!(std::fs::read(save.join("prefs")).unwrap(), b"\x09\x02");
+    let h = f.create("prefs", 0x8000_0000, 3).unwrap();
+    assert_eq!(f.read(h, &mut buf), Some(2));
+    assert_eq!(&buf[..2], b"\x09\x02", "the save folder wins over the pack");
+    let _ = std::fs::remove_dir_all(&save);
 }

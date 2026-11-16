@@ -16,7 +16,7 @@ export BUGATRON_DXC=$R/_work/dxc/bin/dxc
 export PKG_CONFIG_ALLOW_CROSS=1 PKG_CONFIG_PATH=$R/$SDL/lib/pkgconfig PKG_CONFIG_LIBDIR=$R/$SDL/lib/pkgconfig
 export CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc
 T=x86_64-pc-windows-gnu
-cargo build --release --target $T -p bugatron
+cargo build --release --target $T -p bugatron "$@"   # e.g. --features embed-game
 K=_work/winkit
 rm -rf $K && mkdir -p $K/tests/tests/fixtures
 cp $CARGO_TARGET_DIR/$T/release/bugatron.exe $SDL/bin/SDL3.dll $K/

@@ -32,6 +32,10 @@ fn main() {
     assert_eq!(sha, BUG3D_GOLD_120A_SHA256, "BUGATRON_EXE is not Bugatron Gold v1.20a");
     // The binary checks the Bug3D.exe it is given at run time against the one it was built from.
     println!("cargo:rustc-env=BUGATRON_EXE_SHA256={BUG3D_GOLD_120A_SHA256}");
+    write_pack(&exe_path);
+    // Last-resort default for finding Bug3D.exe at run time (keeps `cargo run` working in the repo).
+    let built_from = exe_path.canonicalize().unwrap_or_else(|_| exe_path.clone());
+    println!("cargo:rustc-env=BUGATRON_BUILT_FROM={}", built_from.display());
     let hints: Hints = serde_json::from_slice(&std::fs::read(&hints_path).unwrap_or_else(|e| panic!(
         "cannot read hints at {} ({e}). Run tools/extract_reference.sh --ghidra.", hints_path.display()))).expect("parse hints");
 
@@ -73,4 +77,34 @@ fn main() {
     build.link_lib_modifier("+whole-archive");
     build.compile("bugatron_gen");
     println!("cargo:rustc-env=BUGATRON_GEN_STATS={}", gen.join("stats.json").display());
+}
+
+/// `embed-game`: a table of every file in the game folder, each included with
+/// `include_bytes!` (OUT_DIR/pack.rs). Without the feature the table is empty.
+fn write_pack(exe_path: &std::path::Path) {
+    let out = PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("pack.rs");
+    let mut rs = String::from("pub static PACK: &[(&str, &[u8])] = &[\n");
+    if std::env::var_os("CARGO_FEATURE_EMBED_GAME").is_some() {
+        let dir = exe_path.parent().expect("game folder").canonicalize().expect("game folder");
+        println!("cargo:rerun-if-changed={}", dir.display());
+        let mut files = Vec::new();
+        let mut stack = vec![dir.clone()];
+        while let Some(d) = stack.pop() {
+            for e in std::fs::read_dir(&d).expect("read game folder").flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    stack.push(p);
+                } else if p.file_name().is_some_and(|n| n != ".DS_Store") {
+                    files.push(p);
+                }
+            }
+        }
+        files.sort();
+        for p in files {
+            let rel = p.strip_prefix(&dir).unwrap().components().map(|c| c.as_os_str().to_string_lossy().into_owned()).collect::<Vec<_>>().join("/");
+            rs.push_str(&format!("    ({rel:?}, include_bytes!({:?})),\n", p.display().to_string()));
+        }
+    }
+    rs.push_str("];\n");
+    std::fs::write(out, rs).unwrap();
 }

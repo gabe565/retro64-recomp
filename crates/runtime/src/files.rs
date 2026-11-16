@@ -7,10 +7,13 @@
 //!
 //! Reads prefer `save_dir`. Opening an original file for writing first copies it
 //! into `save_dir` (copy-on-write), so original game files are never modified.
+//!
+//! Instead of `data_dir`, the game files can come from a `pack` built into the
+//! program (the game crate's `embed-game` feature); it behaves the same way.
 
 use std::collections::HashMap;
 use std::fs::{File, OpenOptions};
-use std::io::{Read, Seek, SeekFrom, Write};
+use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 pub const FIRST_HANDLE: u32 = 0x1000;
@@ -24,11 +27,28 @@ pub const ERROR_FILE_EXISTS: u32 = 80;
 
 const GENERIC_WRITE: u32 = 0x4000_0000;
 
+/// Read-only game files built into the program: (path relative to the game folder
+/// with `/` separators, contents).
+pub type Pack = &'static [(&'static str, &'static [u8])];
+
+enum Handle {
+    Disk(File),
+    Pack(Cursor<&'static [u8]>),
+}
+
+/// An original game file, on disk or in the pack.
+enum DataFile {
+    Disk(PathBuf),
+    Pack(&'static [u8]),
+}
+
 #[derive(Default)]
 pub struct Files {
     pub data_dir: PathBuf,
+    /// Game files built into the program; used instead of `data_dir` when set.
+    pub pack: Option<Pack>,
     pub save_dir: PathBuf,
-    open: HashMap<u32, (File, String)>,
+    open: HashMap<u32, (Handle, String)>,
     next: u32,
     /// Current directory relative to the game directory ("" = the game directory itself).
     pub cwd: String,
@@ -106,7 +126,73 @@ pub fn guest_relative(cwd: &str, name: &str) -> Result<String, String> {
     Ok(parts.join("\\"))
 }
 
+/// `rel` (separated by `\\` or `/`) as pack path components, lower-cased for matching.
+fn pack_key(rel: &str) -> String {
+    rel.split(['\\', '/']).filter(|c| !c.is_empty() && *c != ".").collect::<Vec<_>>().join("/").to_ascii_lowercase()
+}
+
 impl Files {
+    /// An original game file (`rel` relative to the game folder), case-insensitively.
+    fn data_file(&self, rel: &str) -> Option<DataFile> {
+        match self.pack {
+            Some(pack) => {
+                let key = pack_key(rel);
+                pack.iter().find(|(p, _)| p.eq_ignore_ascii_case(&key)).map(|(_, d)| DataFile::Pack(d))
+            }
+            None => resolve_ci(&self.data_dir, rel).filter(|p| p.is_file()).map(DataFile::Disk),
+        }
+    }
+
+    /// Whether `rel` is a folder of the original game files.
+    fn data_dir_exists(&self, rel: &str) -> bool {
+        match self.pack {
+            Some(pack) => {
+                let key = pack_key(rel);
+                key.is_empty() || pack.iter().any(|(p, _)| p.len() > key.len() && p.as_bytes()[key.len()] == b'/' && p[..key.len()].eq_ignore_ascii_case(&key))
+            }
+            None => resolve_ci(&self.data_dir, rel).is_some_and(|p| p.is_dir()),
+        }
+    }
+
+    /// The entries of a folder of the original game files (None if it does not exist).
+    fn data_entries(&self, rel: &str) -> Option<Vec<FindEntry>> {
+        match self.pack {
+            Some(pack) => {
+                if !self.data_dir_exists(rel) {
+                    return None;
+                }
+                let key = pack_key(rel);
+                let mut out: Vec<FindEntry> = Vec::new();
+                for (p, d) in pack {
+                    let rest = if key.is_empty() {
+                        *p
+                    } else if p.len() > key.len() && p.as_bytes()[key.len()] == b'/' && p[..key.len()].eq_ignore_ascii_case(&key) {
+                        &p[key.len() + 1..]
+                    } else {
+                        continue;
+                    };
+                    let e = match rest.split_once('/') {
+                        Some((dir, _)) => FindEntry { name: dir.to_string(), size: 0, dir: true },
+                        None => FindEntry { name: rest.to_string(), size: d.len() as u64, dir: false },
+                    };
+                    if !out.iter().any(|f| f.name.eq_ignore_ascii_case(&e.name)) {
+                        out.push(e);
+                    }
+                }
+                Some(out)
+            }
+            None => {
+                let d = resolve_ci(&self.data_dir, rel).filter(|p| p.is_dir())?;
+                let mut out = Vec::new();
+                for e in std::fs::read_dir(d).ok()?.flatten() {
+                    let md = e.metadata().ok()?;
+                    out.push(FindEntry { name: e.file_name().to_string_lossy().into_owned(), size: md.len(), dir: md.is_dir() });
+                }
+                Some(out)
+            }
+        }
+    }
+
     /// CreateFileA. Returns a handle or a Win32 error code.
     pub fn create(&mut self, name: &str, access: u32, disposition: u32) -> Result<u32, u32> {
         let rel = guest_relative(&self.cwd, name).map_err(|e| {
@@ -115,17 +201,21 @@ impl Files {
         })?;
         let write = access & GENERIC_WRITE != 0;
         let in_save = resolve_ci(&self.save_dir, &rel).filter(|p| p.is_file());
-        let in_data = resolve_ci(&self.data_dir, &rel).filter(|p| p.is_file());
-        let existing = in_save.clone().or(in_data.clone());
+        let in_data = self.data_file(&rel);
+        let exists = in_save.is_some() || in_data.is_some();
         // CREATE_NEW 1, CREATE_ALWAYS 2, OPEN_EXISTING 3, OPEN_ALWAYS 4, TRUNCATE_EXISTING 5
         match disposition {
-            1 if existing.is_some() => return Err(ERROR_FILE_EXISTS),
-            3 | 5 if existing.is_none() => return Err(ERROR_FILE_NOT_FOUND),
+            1 if exists => return Err(ERROR_FILE_EXISTS),
+            3 | 5 if !exists => return Err(ERROR_FILE_NOT_FOUND),
             1..=5 => {}
             d => crate::fatal(&format!("CreateFileA({name}): unsupported disposition {d}")),
         }
         let file = if !write {
-            File::open(existing.ok_or(ERROR_FILE_NOT_FOUND)?).map_err(|_| ERROR_ACCESS_DENIED)?
+            match (in_save, in_data) {
+                (Some(p), _) | (None, Some(DataFile::Disk(p))) => Handle::Disk(File::open(p).map_err(|_| ERROR_ACCESS_DENIED)?),
+                (None, Some(DataFile::Pack(d))) => Handle::Pack(Cursor::new(d)),
+                (None, None) => return Err(ERROR_FILE_NOT_FOUND),
+            }
         } else {
             let target = in_save.unwrap_or_else(|| self.save_dir.join(rel.replace('\\', "/")));
             if let Some(parent) = target.parent() {
@@ -133,11 +223,14 @@ impl Files {
             }
             let truncate = matches!(disposition, 2 | 5);
             if !target.exists() && !truncate {
-                if let Some(orig) = &in_data {
-                    std::fs::copy(orig, &target).map_err(|_| ERROR_ACCESS_DENIED)?; // copy-on-write
+                // copy-on-write
+                match &in_data {
+                    Some(DataFile::Disk(orig)) => { std::fs::copy(orig, &target).map_err(|_| ERROR_ACCESS_DENIED)?; }
+                    Some(DataFile::Pack(d)) => std::fs::write(&target, d).map_err(|_| ERROR_ACCESS_DENIED)?,
+                    None => {}
                 }
             }
-            OpenOptions::new().read(true).write(true).create(true).truncate(truncate).open(&target).map_err(|_| ERROR_ACCESS_DENIED)?
+            Handle::Disk(OpenOptions::new().read(true).write(true).create(true).truncate(truncate).open(&target).map_err(|_| ERROR_ACCESS_DENIED)?)
         };
         if self.next == 0 {
             self.next = FIRST_HANDLE;
@@ -151,8 +244,8 @@ impl Files {
     /// SetCurrentDirectoryA: the directory must exist in the game or save directory.
     pub fn set_cwd(&mut self, path: &str) -> Result<(), u32> {
         let rel = guest_relative(&self.cwd, path).map_err(|_| ERROR_PATH_NOT_FOUND)?;
-        let exists = |root: &Path| resolve_ci(root, &rel).is_some_and(|p| p.is_dir());
-        if !exists(&self.data_dir) && !exists(&self.save_dir) {
+        let in_save = resolve_ci(&self.save_dir, &rel).is_some_and(|p| p.is_dir());
+        if !self.data_dir_exists(&rel) && !in_save {
             return Err(ERROR_PATH_NOT_FOUND);
         }
         self.cwd = rel;
@@ -174,16 +267,19 @@ impl Files {
         };
         let mut found: Vec<FindEntry> = Vec::new();
         let mut any_dir = false;
-        for root in [&self.save_dir, &self.data_dir] {
-            let Some(d) = resolve_ci(root, dir).filter(|p| p.is_dir()) else { continue };
+        let mut in_save = Vec::new();
+        if let Some(d) = resolve_ci(&self.save_dir, dir).filter(|p| p.is_dir()) {
             any_dir = true;
             for e in std::fs::read_dir(d).map_err(|_| ERROR_PATH_NOT_FOUND)?.flatten() {
-                let name = e.file_name().to_string_lossy().into_owned();
-                if !wildcard_match(pat, &name) || found.iter().any(|f| f.name.eq_ignore_ascii_case(&name)) {
-                    continue;
-                }
                 let md = e.metadata().map_err(|_| ERROR_ACCESS_DENIED)?;
-                found.push(FindEntry { name, size: md.len(), dir: md.is_dir() });
+                in_save.push(FindEntry { name: e.file_name().to_string_lossy().into_owned(), size: md.len(), dir: md.is_dir() });
+            }
+        }
+        let in_data = self.data_entries(dir);
+        any_dir |= in_data.is_some();
+        for e in in_save.into_iter().chain(in_data.into_iter().flatten()) {
+            if wildcard_match(pat, &e.name) && !found.iter().any(|f| f.name.eq_ignore_ascii_case(&e.name)) {
+                found.push(e);
             }
         }
         if !any_dir {
@@ -218,7 +314,11 @@ impl Files {
         let f = &mut self.open.get_mut(&h)?.0;
         let mut n = 0;
         while n < buf.len() {
-            match f.read(&mut buf[n..]) {
+            let r = match f {
+                Handle::Disk(f) => f.read(&mut buf[n..]),
+                Handle::Pack(c) => c.read(&mut buf[n..]),
+            };
+            match r {
                 Ok(0) => break,
                 Ok(k) => n += k,
                 Err(_) => return None,
@@ -228,7 +328,7 @@ impl Files {
     }
 
     pub fn write(&mut self, h: u32, data: &[u8]) -> Option<usize> {
-        let f = &mut self.open.get_mut(&h)?.0;
+        let Handle::Disk(f) = &mut self.open.get_mut(&h)?.0 else { return None };
         f.write_all(data).ok()?;
         Some(data.len())
     }
@@ -242,11 +342,17 @@ impl Files {
             2 => SeekFrom::End(dist as i64),
             _ => return None,
         };
-        f.seek(pos).ok()
+        match f {
+            Handle::Disk(f) => f.seek(pos).ok(),
+            Handle::Pack(c) => c.seek(pos).ok(),
+        }
     }
 
     pub fn size(&mut self, h: u32) -> Option<u64> {
-        Some(self.open.get(&h)?.0.metadata().ok()?.len())
+        match &self.open.get(&h)?.0 {
+            Handle::Disk(f) => Some(f.metadata().ok()?.len()),
+            Handle::Pack(c) => Some(c.get_ref().len() as u64),
+        }
     }
 
     pub fn close(&mut self, h: u32) -> bool {
