@@ -1,26 +1,91 @@
 //! Renderer integration points used by the DirectDraw/Direct3D emulation.
 //!
-//! The GPU renderer (SDL3 GPU) plugs in here. Until a render target has been
-//! drawn by the GPU, guest memory is authoritative and these are no-ops.
+//! The SDL3 GPU backend (gpu.rs) is created lazily for the game window. In
+//! headless runs (tests, `SDL_VIDEODRIVER=dummy`) there is no backend: recorded
+//! commands are dropped at each frame and guest memory stays authoritative.
 
+pub mod capture;
+pub mod gpu;
+pub mod shaders;
 pub mod tnl;
 
 use crate::Runtime;
 
+/// The GPU backend, created on first use for the game window.
+fn backend(rt: &mut Runtime) -> bool {
+    if rt.gpu.is_some() {
+        return true;
+    }
+    if rt.gpu_unavailable {
+        return false;
+    }
+    let window = if rt.offscreen_gpu {
+        std::ptr::null_mut()
+    } else {
+        if rt.user.headless {
+            return false;
+        }
+        let Some(w) = rt.user.window.as_ref().filter(|w| !w.sdl.is_null()) else { return false };
+        w.sdl
+    };
+    match gpu::Gpu::new(window) {
+        Some(g) => {
+            rt.gpu = Some(g);
+            true
+        }
+        None => {
+            eprintln!("[render] no SDL3 GPU device available; running without display");
+            rt.gpu_unavailable = true;
+            false
+        }
+    }
+}
+
 /// Bring `obj`'s guest pixels up to date before CPU access (GPU → guest readback).
-pub(crate) fn sync_for_cpu(_rt: &mut Runtime, _obj: u32) {}
+pub(crate) fn sync_for_cpu(rt: &mut Runtime, obj: u32) {
+    if (rt.gpu.is_some() || !rt.com.d3d.commands.is_empty()) && backend(rt) {
+        gpu::sync_for_cpu(rt, obj);
+    }
+}
 
 /// Called before `front` and `back` exchange their pixel storage in `Flip`.
 pub(crate) fn before_flip(rt: &mut Runtime, _front: u32, _back: u32) {
     if crate::trace_enabled("draws") {
         trace_frame(rt);
     }
-    // No renderer yet: recorded commands are dropped at each frame.
-    rt.com.d3d.commands.clear();
+    if backend(rt) {
+        gpu::flush(rt);
+    } else {
+        rt.com.d3d.commands.clear();
+    }
+}
+
+/// After `Flip`: show the new front buffer.
+pub(crate) fn after_flip(rt: &mut Runtime, front: u32) {
+    if backend(rt) {
+        gpu::present(rt, front);
+    }
+    capture::maybe_capture(rt, front);
+}
+
+/// A surface's pixel storage is going away.
+pub(crate) fn surface_destroyed(rt: &mut Runtime, obj: u32, bits: u32) {
+    if rt.gpu.is_some() {
+        gpu::surface_destroyed(rt, obj, bits);
+    }
+}
+
+/// Whether a GPU backend is (or can be) active.
+pub fn gpu_available(rt: &mut Runtime) -> bool {
+    backend(rt)
 }
 
 /// `EndScene`: recorded commands may be submitted.
-pub(crate) fn end_scene(_rt: &mut Runtime) {}
+pub(crate) fn end_scene(rt: &mut Runtime) {
+    if backend(rt) {
+        gpu::flush(rt);
+    }
+}
 
 /// Summarise a frame's recorded commands (BUGATRON_TRACE=draws).
 fn trace_frame(rt: &Runtime) {

@@ -13,3 +13,9 @@ bugatron-runtime.workspace = true
 bugatron-recomp.workspace = true
 bugatron-x86-cases.workspace = true
 cc.workspace = true
+
+# SDL's video subsystem (needed by GPU devices) must run on the main thread on
+# macOS, so the GPU tests use their own runner instead of libtest's threads.
+[[test]]
+name = "gpu"
+harness = false

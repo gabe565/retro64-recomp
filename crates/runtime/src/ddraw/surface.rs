@@ -219,6 +219,7 @@ pub(crate) fn cpu_modified(rt: &mut Runtime, obj: u32) {
 /// Free a surface's pixels when its last reference goes; implicit chain members go with the primary.
 pub(crate) fn destroy(rt: &mut Runtime, obj: u32) {
     let Some(s) = rt.com.surfaces.remove(&obj) else { return };
+    crate::render::surface_destroyed(rt, obj, s.bits);
     rt.heap.free(s.bits);
     if rt.com.primary == Some(obj) {
         rt.com.primary = None;
@@ -241,6 +242,7 @@ pub(crate) fn flip(rt: &mut Runtime, front: u32) -> Result<u32, u32> {
     { let f = rt.com.surface_mut(front); f.bits = bb; f.generation = bg; }
     { let b = rt.com.surface_mut(back); b.bits = fb; b.generation = fg; }
     rt.com.flips += 1;
+    crate::render::after_flip(rt, front);
     Ok(back)
 }
 

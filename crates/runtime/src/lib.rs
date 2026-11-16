@@ -90,6 +90,13 @@ pub struct Runtime {
     pub(crate) dialog: Option<dialog::Dialog>,
     pub user: user::User,
     pub fmod: fmod::Fmod,
+    pub(crate) gpu: Option<render::gpu::Gpu>,
+    pub(crate) gpu_unavailable: bool,
+    /// Render on an offscreen GPU device without a window (tests).
+    pub offscreen_gpu: bool,
+    /// Flip numbers after which the front buffer is saved as PNG (diagnostics).
+    pub capture_frames: Vec<u64>,
+    pub capture_dir: std::path::PathBuf,
     pub mem: GuestMemory,
     pub pe: Pe,
     pub(crate) import_names: Vec<(String, String)>,
@@ -170,6 +177,11 @@ impl Runtime {
             dialog: None,
             user: user::User::new((1024, 768)),
             fmod: Default::default(),
+            gpu: None,
+            gpu_unavailable: false,
+            offscreen_gpu: false,
+            capture_frames: Vec::new(),
+            capture_dir: std::path::PathBuf::from("."),
         };
         rt.command_line = rt.alloc_cstr("\"C:\\Bugatron\\Bug3D.exe\"");
         rt.env_block = rt.heap_alloc(16, true);
@@ -205,6 +217,11 @@ impl Runtime {
             dialog: None,
             user: user::User::new((1024, 768)),
             fmod: Default::default(),
+            gpu: None,
+            gpu_unavailable: false,
+            offscreen_gpu: false,
+            capture_frames: Vec::new(),
+            capture_dir: std::path::PathBuf::from("."),
         })
     }
 

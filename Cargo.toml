@@ -20,6 +20,7 @@ sha2 = "0.10"
 crc32fast = "1"
 cc = "1"
 sdl3-sys = { version = "0.7", features = ["use-pkg-config"] }
+naga = { version = "30", features = ["wgsl-in", "msl-out", "spv-out"] }
 libc = "0.2"
 num-bigint = "0.4"
 num-traits = "0.2"

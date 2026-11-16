@@ -174,7 +174,7 @@ Totals: **R** 54 functions, **K** 36 (54 + 36 = 90). R functions still return va
 
 Typing of the local-pointer calls is inferred from slot ranges; the runtime's named stubs confirm each one as it is reached.
 
-## 6. Graphics interface (superseded in part by §5)
+## 6. Graphics interface (superseded by §5; the implemented design is in renderer.md)
 
 ```
 recompiled game ──(stdcall overrides)──► r3d facade (Rust)

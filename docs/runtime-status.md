@@ -4,12 +4,13 @@ How far the recompiled game runs on the portable runtime, which imports and COM 
 
 ## Current progress
 
-`cargo run --release -p bugatron` translates 772 functions. It runs the original start-up, `r3d_Initialize` (display mode, flip chain, Z-buffer, Direct3D device, viewport, light, states), timer calibration, asset loading (288 textures), and the title-screen frame loop at a paced 60 Hz. Draw calls are recorded with full state; nothing is displayed yet, because the GPU renderer is the next step.
+`cargo run --release -p bugatron` translates 772 functions. It runs the original start-up, `r3d_Initialize` (display mode, flip chain, Z-buffer, Direct3D device, viewport, light, states), timer calibration, asset loading (288 textures), and the title-screen frame loop at a paced 60 Hz. **The original title screen renders** through the recompiled code on SDL3 GPU (Metal on macOS). See `graphics/renderer.md`.
 
 - Requires SDL3 (found through pkg-config; on macOS `brew install sdl3`).
 - `SDL_VIDEODRIVER=dummy` runs headless.
 - `--frames N` stops after N vertical blanks and prints import/COM call counts.
 - `BUGATRON_TRACE=messages,sdl,draws` turns on diagnostic traces.
+- `--dump-frames A,B --dump-dir DIR` saves front buffers as PNG.
 
 | Stage | Status |
 |---|---|
@@ -19,7 +20,7 @@ How far the recompiled game runs on the portable runtime, which imports and COM 
 | `r3d_Initialize`: display, surfaces, device | runs |
 | Timer calibration (0x41c180) | runs. It measures 400000 QPC ticks (exactly 1/60 s at 24 MHz) |
 | Asset loading, title frame loop | runs. Per frame: one Clear2, about 88 lit, textured draws, one back-buffer lock for 2D, one Flip |
-| Rendering and presentation | next step (SDL3 GPU) |
+| Rendering and presentation | title screen renders (SDL3 GPU; renderer.md) |
 
 ## Implemented imports
 
@@ -91,6 +92,8 @@ Consequences:
 - pixel formats;
 - surfaces (creation, descriptors, locks, flips, blits);
 - the Direct3D device (defaults, legacy state mirroring, scenes, draw recording and snapshots, textures, clears);
+- transform and lighting;
+- the GPU backend, run offscreen on the main thread (`--test gpu`; skipped without a GPU): clears, pixel centres, depth, blending, texturing, colour key, CPU/GPU coherence, and RGB565.
 - window messages and input;
 - list boxes;
 - the simulation clock, including the original's calibration and limiter loops reproduced against the runtime.
@@ -108,3 +111,4 @@ Consequences:
 | RD7 | `TranslateMessage` generates no `WM_CHAR`, and `SetCursorPos` does not warp the host pointer. | The window procedure does not use `WM_CHAR` | — |
 | RD8 | FMOD is silent: samples and songs are loaded but not played. | No audio | Audio milestone (SDL3 audio + libxmp) |
 | RD9 | `Sleep(0)` takes exactly 1 µs of guest time. | Sets how often the limiter's overshoot drops a frame (1 in 16,667) | By design (deterministic) |
+| RD10 | Rendering approximations A1–A13 | See `graphics/renderer.md` | VM capture comparison |
