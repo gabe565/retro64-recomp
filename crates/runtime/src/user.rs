@@ -153,11 +153,18 @@ pub fn focus_changed_rt(rt: &mut crate::Runtime, focused: bool) {
 /// PeekMessage: on deactivation WM_ACTIVATE(WA_INACTIVE), WM_ACTIVATEAPP(FALSE),
 /// WM_KILLFOCUS; on activation WM_ACTIVATEAPP(TRUE), WM_ACTIVATE(WA_ACTIVE),
 /// WM_SETFOCUS (as for a newly shown window). Non-client messages are omitted (RD6).
+/// A window holding exclusive fullscreen DirectDraw (`DDSCL_FULLSCREEN |
+/// DDSCL_EXCLUSIVE`) is also minimised when it loses focus and restored when it
+/// regains it: WM_SIZE(SIZE_MINIMIZED) after deactivation, WM_SIZE(SIZE_RESTORED,
+/// client size) after activation.
 ///
-/// The game's window procedure (0x407d10) pauses the music and stops updating on
-/// WM_KILLFOCUS and resumes on WM_SETFOCUS. Its FMOD has no global focus
-/// (`FSOUND_Init` flags 0), so DirectSound silenced all its output while the window
-/// was in the background; the output is muted here likewise (the mix continues).
+/// The game's window procedure (0x407d10) pauses the music and clears its active
+/// flag (0x8429a8) on WM_KILLFOCUS. WM_SETFOCUS resumes the music, but sets the
+/// flag again only in windowed mode (0x8429a4); in fullscreen the flag follows
+/// WM_SIZE (active unless minimised), so the restore is what resumes the game. Its
+/// FMOD has no global focus (`FSOUND_Init` flags 0), so DirectSound silenced all its
+/// output while the window was in the background; the output is muted here likewise
+/// (the mix continues).
 fn deliver_focus(cpu: &mut Cpu) {
     let change = with_rt(|rt| {
         let f = rt.user.focus_pending.take()?;
@@ -168,16 +175,31 @@ fn deliver_focus(cpu: &mut Cpu) {
             f
         })
     });
+    const DDSCL_FULLSCREEN: u32 = 0x1;
+    const DDSCL_EXCLUSIVE: u32 = 0x10;
+    const SIZE_RESTORED: u32 = 0;
+    const SIZE_MINIMIZED: u32 = 1;
+    let (exclusive, w, h) = with_rt(|rt| {
+        let excl = rt.com.coop & (DDSCL_FULLSCREEN | DDSCL_EXCLUSIVE) == DDSCL_FULLSCREEN | DDSCL_EXCLUSIVE;
+        let (w, h) = rt.user.window.as_ref().map_or((0, 0), |w| (w.w, w.h));
+        (excl, w, h)
+    });
     match change {
         Some(false) => {
             send(cpu, MAIN_HWND, WM_ACTIVATE, 0, 0);
             send(cpu, MAIN_HWND, WM_ACTIVATEAPP, 0, 0);
             send(cpu, MAIN_HWND, WM_KILLFOCUS, 0, 0);
+            if exclusive {
+                send(cpu, MAIN_HWND, WM_SIZE, SIZE_MINIMIZED, 0);
+            }
         }
         Some(true) => {
             send(cpu, MAIN_HWND, WM_ACTIVATEAPP, 1, 0);
             send(cpu, MAIN_HWND, WM_ACTIVATE, 1, 0);
             send(cpu, MAIN_HWND, WM_SETFOCUS, 0, 0);
+            if exclusive {
+                send(cpu, MAIN_HWND, WM_SIZE, SIZE_RESTORED, mk_lparam(w, h));
+            }
         }
         None => {}
     }

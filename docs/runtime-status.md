@@ -39,8 +39,10 @@ How far the recompiled game runs on the portable runtime, which imports and COM 
   - `CreateWindowExA` sends `WM_GETMINMAXINFO`, `WM_NCCREATE`, `WM_NCCALCSIZE`, and `WM_CREATE`.
   - The first `ShowWindow` sends `WM_SHOWWINDOW`, `WM_ACTIVATEAPP`, `WM_ACTIVATE`, `WM_SETFOCUS`, `WM_SIZE`, and `WM_MOVE`.
   - Host focus changes (Cmd-Tab/Alt-Tab, clicking elsewhere) are delivered by the next `PeekMessageA`, as Windows sends them. Losing focus sends `WM_ACTIVATE(WA_INACTIVE)`, `WM_ACTIVATEAPP(FALSE)` and `WM_KILLFOCUS`. Regaining it sends `WM_ACTIVATEAPP(TRUE)`, `WM_ACTIVATE(WA_ACTIVE)` and `WM_SETFOCUS`.
+    - A window in exclusive fullscreen (`DDSCL_FULLSCREEN | DDSCL_EXCLUSIVE`) is also minimised and restored, as Windows does for exclusive DirectDraw apps. Losing focus ends with `WM_SIZE(SIZE_MINIMIZED)`; regaining it ends with `WM_SIZE(SIZE_RESTORED, client size)`.
     - The game's window procedure (0x407d10) handles them itself. On `WM_KILLFOCUS` it pauses the music (`FMUSIC_SetPaused(1)`), clears its "active" flag 0x8429a8 and its key array. Its main loop (0x407c51) then stops updating and just polls messages.
-    - On `WM_SETFOCUS` it resumes.
+    - `WM_SETFOCUS` resumes the music. It sets the active flag again only in windowed mode (0x8429a4 = 1, the "Window" choice). In fullscreen the flag follows `WM_SIZE` (active unless minimised), so the restore is what resumes the game.
+    - Surfaces are never lost, which differs from real exclusive mode, where an Alt-Tab loses them and the game restores them.
     - The audio output is muted while the window is unfocused (`audio.md`).
     - While unfocused, `PeekMessageA` waits up to 10 ms for host events instead of spinning. No guest time passes either way.
     - Scripted runs (`--input`) ignore host focus.

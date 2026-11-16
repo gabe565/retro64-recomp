@@ -97,6 +97,22 @@ fn host_focus_changes_send_what_windows_sends_inside_peek_message() {
 }
 
 #[test]
+fn exclusive_fullscreen_windows_are_minimised_and_restored_with_focus() {
+    let mut cpu = setup();
+    let hwnd = create(&mut cpu);
+    call_import(&mut cpu, "user32.dll", "ShowWindow", &[hwnd, 1]);
+    with_rt(|rt| rt.com.coop = 0x11); // DDSCL_FULLSCREEN | DDSCL_EXCLUSIVE
+    clear_log();
+    with_rt(|rt| user::focus_changed_rt(rt, false));
+    peek(&mut cpu);
+    assert_eq!(messages(), [(WM_ACTIVATE, 0, 0), (WM_ACTIVATEAPP, 0, 0), (WM_KILLFOCUS, 0, 0), (WM_SIZE, 1, 0)], "SIZE_MINIMIZED");
+    clear_log();
+    with_rt(|rt| user::focus_changed_rt(rt, true));
+    peek(&mut cpu);
+    assert_eq!(messages(), [(WM_ACTIVATEAPP, 1, 0), (WM_ACTIVATE, 1, 0), (WM_SETFOCUS, 0, 0), (WM_SIZE, 0, 1024 | (768 << 16))], "SIZE_RESTORED");
+}
+
+#[test]
 fn posted_messages_are_peeked_and_dispatched_in_order() {
     let mut cpu = setup();
     create(&mut cpu);
