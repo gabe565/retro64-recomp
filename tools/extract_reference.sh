@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # Rebuild the local analysis workspace (_work/, gitignored) from reference/.
 #
+# Only reference/Bugatron_Win_EN_Gold_120.zip is required; the other releases
+# (Bugatron_Win_EN_Gold.zip, Bugatron_Win_EN_v151d.exe) are extracted if present.
 # Never modifies anything under reference/. Requires: unzip, innoextract (>=1.9),
 # python3. Optional: Ghidra 12.x (set GHIDRA_HOME or install via Homebrew) for
 # the headless decompile export.
@@ -15,12 +17,20 @@ W="$ROOT/_work"   # NOTE: Ghidra rejects project paths with a component starting
 
 mkdir -p "$W/zips" "$W/carve" "$W/ext/gold120" "$W/ext/gold115" "$W/ext/v151d"
 
-echo "== Gold 1.20 / Gold 1.15 (Inno Setup inside zip)"
+echo "== Gold 1.20 (Inno Setup inside zip): required"
 unzip -o -q "$REF/Bugatron_Win_EN_Gold_120.zip" -d "$W/zips"
-unzip -o -q "$REF/Bugatron_Win_EN_Gold.zip" -d "$W/zips"
 innoextract -s -d "$W/ext/gold120" "$W/zips/buggold_120.exe"
-innoextract -s -d "$W/ext/gold115" "$W/zips/Setup.exe"
 
+# The other releases are reference material only; skipped when absent.
+versions=(gold120)
+if [[ -f "$REF/Bugatron_Win_EN_Gold.zip" ]]; then
+  echo "== Gold 1.15 (Inno Setup inside zip)"
+  unzip -o -q "$REF/Bugatron_Win_EN_Gold.zip" -d "$W/zips"
+  innoextract -s -d "$W/ext/gold115" "$W/zips/Setup.exe"
+  versions+=(gold115)
+fi
+
+if [[ -f "$REF/Bugatron_Win_EN_v151d.exe" ]]; then
 echo "== Standard 1.51d (Inno Setup 4.2.6 appended to a wrapper stub at 0x2d004)"
 python3 - "$REF/Bugatron_Win_EN_v151d.exe" "$W/carve/v151d_inner_setup.exe" <<'EOF'
 import re, struct, sys
@@ -38,11 +48,13 @@ else:
     sys.exit('inner installer not found')
 EOF
 innoextract -s -d "$W/ext/v151d" "$W/carve/v151d_inner_setup.exe" || true  # warns about the carved name
+versions+=(v151d)
+fi
 
 echo "== Standard 1.20: Ghost Installer (UPX-packed); no extractor available, skipped"
 
 echo "== Decoding .lev files"
-for v in gold120 gold115 v151d; do
+for v in "${versions[@]}"; do
   python3 "$ROOT/tools/lev_decode.py" -o "$W/decoded/$v" "$W/ext/$v/app/"*.lev >/dev/null
   echo "   $v: $(ls "$W/decoded/$v" | wc -l | tr -d ' ') files"
 done
