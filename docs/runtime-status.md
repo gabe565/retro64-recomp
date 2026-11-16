@@ -12,6 +12,12 @@ How far the recompiled game runs on the portable runtime, which imports and COM 
 - `BUGATRON_TRACE=messages,sdl,draws` turns on diagnostic traces.
 - `--dump-frames A,B --dump-dir DIR` saves front buffers as PNG.
 - `--video-mode "1024 x 768 x 32"` selects a display mode in the game's video dialog. The game saves it to `prefs`, as when a user picks it.
+- `--input "600:F1,800:click@70x120,1000:CTRL+"` injects input at flip numbers: key taps, holds (`+`) and releases (`-`), and mouse `move@`/`click@`. It enters at frame boundaries through the same path as SDL events. Because the simulation is deterministic, a script replays identically.
+
+**Interactive status (scripted).**
+- F1 on the title opens "Select Level Pack" (all six packs render).
+- Clicking "Free Levels" starts level 1.
+- In a 100-second session with fire held and left/right sweeps: aliens dive and are shot, the score increases, and lives are lost. No unimplemented function was reached.
 
 **Resolutions.** The title screen renders correctly and at a full 60 Hz at 1024×768, 1600×1200, and 2048×1536 (32-bit). 520 vblanks take about 9 s of wall time (8.7 s ideal) and about 2.8 s of CPU, including the per-frame back-buffer readback and upload.
 
@@ -90,6 +96,12 @@ Guest time is one exact counter (no drift) that advances only when the guest wai
 Measured in the game over 1,236 frames, its frame delta (global 0x8429e0, in 1/1024 s) is 17 or 18 ticks: exactly the 1024/60 pattern, with no doubled frames. The regression test `limiter_and_flip_keep_one_frame_per_refresh` runs the original's calibration and limiter loops for 20,000 frames.
 
 **Pacing.** After each wait, the host sleeps until real time catches up. Presentation never drives the cadence. If the host falls more than 250 ms behind, the backlog is forgiven.
+
+**Limiter cost.** During gameplay the original's limiter polls about 90,000 times per frame. The cause:
+- One early frame makes many clock reads before the limiter, which leaves its exit phase late in the refresh.
+- The original's strict `>` test exactly cancels the calibration's one-tick shortfall, so that phase persists, and every later frame busy-waits the same amount. Real hardware behaves the same, but there the spin is free.
+
+The runtime keeps this behaviour. QPC and `Sleep` take a fast import path, and calls are counted by index rather than by formatted name. That costs about 0.08 µs per poll (0.34 µs before), and gameplay runs in real time at about 34% CPU with identical poll counts.
 
 **Busy-wait fallback.** A busy-wait on `timeGetTime` (1,000,000 reads without advancing time) follows host time until the next wait, with a one-time diagnostic.
 

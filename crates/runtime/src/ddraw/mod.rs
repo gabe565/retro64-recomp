@@ -133,6 +133,11 @@ fn method_name(iface: u32, slot: u32) -> &'static str {
     table.get(slot as usize).copied().unwrap_or("<beyond vtable>")
 }
 
+/// "Interface::Method" for diagnostics.
+pub fn method_label(iface: u32, slot: u32) -> String {
+    format!("{}::{}", iface_name(iface), method_name(iface, slot))
+}
+
 fn iface_name(iface: u32) -> &'static str {
     match iface {
         iface::DIRECTDRAW4 => "IDirectDraw4",
@@ -320,7 +325,7 @@ pub(crate) fn import(cpu: &mut Cpu, name: &str) -> bool {
 // ---- COM dispatch ------------------------------------------------------------------
 
 pub(crate) fn dispatch(cpu: &mut Cpu, iface: u32, slot: u32) {
-    with_rt(|rt| *rt.diag.com_calls.entry(format!("{}::{}", iface_name(iface), method_name(iface, slot))).or_default() += 1);
+    with_rt(|rt| *rt.diag.com_counts.entry((iface, slot)).or_default() += 1);
     let this = arg(cpu, 0);
     let handled = match (iface, slot) {
         (_, 1) | (_, 2) => {

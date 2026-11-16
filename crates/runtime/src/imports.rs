@@ -23,26 +23,66 @@ const FAKE_STDERR: u32 = 0x102;
 const KERNEL32_HANDLE: u32 = 0x7c80_0000;
 const DDRAW_HANDLE: u32 = 0x7380_0000;
 
-pub(crate) fn dispatch_import(cpu: &mut Cpu, idx: usize) {
-    let (dll, name) = with_rt(|rt| rt.import_names.get(idx).cloned().unwrap_or_else(|| fatal(&format!("bad import thunk {idx}"))));
-    dispatch_named(cpu, &dll, &name);
+/// Imports on the hot path (the original's frame limiter polls them in a loop).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum Hot {
+    Other,
+    Qpc,
+    Sleep,
 }
 
-/// Dispatch an import by DLL and function name (lower-case DLL name).
+impl Hot {
+    pub(crate) fn of(dll: &str, name: &str) -> Hot {
+        match (dll, name) {
+            ("kernel32.dll", "QueryPerformanceCounter") => Hot::Qpc,
+            ("kernel32.dll", "Sleep") => Hot::Sleep,
+            _ => Hot::Other,
+        }
+    }
+}
+
+pub(crate) fn dispatch_import(cpu: &mut Cpu, idx: usize) {
+    let fast = with_rt(|rt| {
+        let Some(&(dll, name)) = rt.import_names.get(idx) else { fatal(&format!("bad import thunk {idx}")) };
+        if rt.diag.import_counts.len() <= idx {
+            rt.diag.import_counts.resize(rt.import_names.len(), 0);
+        }
+        rt.diag.import_counts[idx] += 1;
+        match rt.import_hot[idx] {
+            Hot::Qpc => {
+                qpc(rt, cpu);
+                None
+            }
+            Hot::Sleep => {
+                sleep(rt, cpu);
+                None
+            }
+            Hot::Other => Some((dll, name)),
+        }
+    });
+    if let Some((dll, name)) = fast {
+        dispatch_inner(cpu, dll, name);
+    }
+}
+
+/// Dispatch an import by DLL and function name (lower-case DLL name), as tests do.
 pub(crate) fn dispatch_named(cpu: &mut Cpu, dll: &str, name: &str) {
-    with_rt(|rt| *rt.diag.import_calls.entry(format!("{dll}!{name}")).or_default() += 1);
-    let (dll, name) = (dll.to_string(), name.to_string());
+    with_rt(|rt| *rt.diag.named_import_calls.entry(format!("{dll}!{name}")).or_default() += 1);
+    dispatch_inner(cpu, dll, name);
+}
+
+fn dispatch_inner(cpu: &mut Cpu, dll: &str, name: &str) {
     // DDRAW imports may call back into guest code, so they run unborrowed.
-    if dll.eq_ignore_ascii_case("ddraw.dll") && crate::ddraw::import(cpu, &name) {
+    if dll.eq_ignore_ascii_case("ddraw.dll") && crate::ddraw::import(cpu, name) {
         return;
     }
-    if dll.eq_ignore_ascii_case("user32.dll") && crate::dialog::import(cpu, &name) {
+    if dll.eq_ignore_ascii_case("user32.dll") && crate::dialog::import(cpu, name) {
         return;
     }
-    if (dll.eq_ignore_ascii_case("user32.dll") || dll.eq_ignore_ascii_case("gdi32.dll")) && crate::user::import(cpu, &name) {
+    if (dll.eq_ignore_ascii_case("user32.dll") || dll.eq_ignore_ascii_case("gdi32.dll")) && crate::user::import(cpu, name) {
         return;
     }
-    with_rt(|rt| call(rt, cpu, &dll, &name));
+    with_rt(|rt| call(rt, cpu, dll, name));
 }
 
 fn call(rt: &mut Runtime, cpu: &mut Cpu, dll: &str, name: &str) {
@@ -389,29 +429,8 @@ fn call(rt: &mut Runtime, cpu: &mut Cpu, dll: &str, name: &str) {
             rt.mem.w32(p + 4, (f >> 32) as u32);
             ret(cpu, 1, 1);
         }
-        ("kernel32.dll", "QueryPerformanceCounter") => {
-            let p = a!(0);
-            let freq = rt.clock.qpc_frequency;
-            let v = match (rt.clock.qpc_queue.pop_front(), rt.clock.cadence.as_mut()) {
-                (Some(v), _) => v,
-                (None, Some(c)) => c.read_qpc(freq),
-                (None, None) => { rt.clock.qpc_underflow = true; 0 }
-            };
-            rt.mem.w32(p, v as u32);
-            rt.mem.w32(p + 4, (v >> 32) as u32);
-            ret(cpu, 1, 1);
-        }
-        ("kernel32.dll", "Sleep") => {
-            rt.clock.sleeps += 1;
-            let ms = a!(0);
-            if let Some(c) = rt.clock.cadence.as_mut() {
-                c.sleep(ms);
-                if ms > 0 {
-                    crate::clock::pace(rt);
-                }
-            }
-            ret(cpu, 0, 1);
-        }
+        ("kernel32.dll", "QueryPerformanceCounter") => qpc(rt, cpu),
+        ("kernel32.dll", "Sleep") => sleep(rt, cpu),
         ("winmm.dll", "timeGetTime") => ret(cpu, rt.clock_ms(), 0),
         // No joystick is attached (controller support is a later enhancement).
         ("winmm.dll", "joyGetPos") => ret(cpu, 167, 2), // JOYERR_UNPLUGGED
@@ -434,6 +453,36 @@ fn call(rt: &mut Runtime, cpu: &mut Cpu, dll: &str, name: &str) {
 pub(crate) fn dispatch_com(cpu: &mut Cpu, thunk: u32) {
     let off = thunk - crate::COM_THUNK_BASE;
     crate::ddraw::dispatch(cpu, off / 0x1000, (off % 0x1000) / 16);
+}
+
+/// QueryPerformanceCounter(LARGE_INTEGER*): replay queue (PoC), else the simulation clock.
+fn qpc(rt: &mut Runtime, cpu: &mut Cpu) {
+    let p = arg(rt, cpu, 0);
+    let freq = rt.clock.qpc_frequency;
+    let v = match (rt.clock.qpc_queue.pop_front(), rt.clock.cadence.as_mut()) {
+        (Some(v), _) => v,
+        (None, Some(c)) => c.read_qpc(freq),
+        (None, None) => {
+            rt.clock.qpc_underflow = true;
+            0
+        }
+    };
+    rt.mem.w32(p, v as u32);
+    rt.mem.w32(p + 4, (v >> 32) as u32);
+    ret(cpu, 1, 1);
+}
+
+/// Sleep(ms): guest time passes by `ms` (Sleep(0) only yields); the host is paced.
+fn sleep(rt: &mut Runtime, cpu: &mut Cpu) {
+    rt.clock.sleeps += 1;
+    let ms = arg(rt, cpu, 0);
+    if let Some(c) = rt.clock.cadence.as_mut() {
+        c.sleep(ms);
+        if ms > 0 {
+            crate::clock::pace(rt);
+        }
+    }
+    ret(cpu, 0, 1);
 }
 
 /// Fill a `WIN32_FIND_DATAA` (0x140 bytes). Timestamps are zero.

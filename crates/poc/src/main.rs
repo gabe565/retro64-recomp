@@ -144,7 +144,7 @@ fn winmain(cpu: &mut Cpu, report: &Rc<RefCell<Report>>, reference: &Reference, d
         let e = cpu.esp;
         (rt.mem.r32(e + 4), rt.mem.r32(e + 8), rt.mem.r32(e + 12), rt.mem.r32(e + 16), cpu.fcw)
     });
-    let (cmd_text, imports) = with_rt(|rt| (rt.mem.cstr(cmdline), rt.diag.import_calls.clone()));
+    let (cmd_text, imports) = with_rt(|rt| (rt.mem.cstr(cmdline), rt.import_calls()));
     let p1 = hinst == 0x400000 && hprev == 0 && cw == 0x27f;
     report.borrow_mut().add("P1 translated MSVC CRT start-up reached WinMain", p1, json!({
         "hInstance": format!("{hinst:#x}"), "hPrevInstance": hprev, "lpCmdLine_guest_ptr": format!("{cmdline:#x}"),
@@ -299,16 +299,15 @@ fn p4_rand(cpu: &mut Cpu, report: &Rc<RefCell<Report>>, reference: &Reference) {
 }
 
 fn memory_after(cpu: &Cpu, report: &Rc<RefCell<Report>>) {
-    let d = with_rt(|rt| rt.diag.clone());
+    let (d, com, import_total) = with_rt(|rt| (rt.diag.clone(), rt.com_calls(), rt.import_calls().values().sum::<u64>()));
     let guest_indirect: Vec<String> = d.guest_indirect_sites.iter()
         .map(|(site, ts)| format!("{site:#010x} -> {}", ts.iter().map(|t| format!("{t:#010x}")).collect::<Vec<_>>().join(",")))
         .collect();
-    let com = d.com_calls.clone();
     let ok = !guest_indirect.is_empty() && com.values().sum::<u64>() > 0 && d.host_to_guest_calls > 0;
     report.borrow_mut().add("I1 real indirect calls executed: guest->guest function pointers, COM vtable, IAT imports, host->guest calls", ok, json!({
         "guest_to_guest_indirect_sites": guest_indirect,
         "com_vtable_calls": com,
-        "import_calls_total": d.import_calls.values().sum::<u64>(),
+        "import_calls_total": import_total,
         "host_to_guest_calls": d.host_to_guest_calls,
         "final_esp": format!("{:#x}", cpu.esp),
     }));

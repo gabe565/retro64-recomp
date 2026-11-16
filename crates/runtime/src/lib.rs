@@ -78,8 +78,12 @@ pub struct Clock {
 
 #[derive(Default, Debug, Clone)]
 pub struct Diagnostics {
-    pub import_calls: BTreeMap<String, u64>,
-    pub com_calls: BTreeMap<String, u64>,
+    /// Calls per import-table entry (index into the import names).
+    pub import_counts: Vec<u64>,
+    /// Calls made by name (tests) rather than through the import table.
+    pub named_import_calls: BTreeMap<String, u64>,
+    /// COM calls per (interface id, vtable slot).
+    pub com_counts: HashMap<(u32, u32), u64>,
     pub host_to_guest_calls: u64,
     pub guest_indirect_targets: BTreeMap<u32, u64>,
     pub guest_indirect_sites: BTreeMap<u32, std::collections::BTreeSet<u32>>,
@@ -103,7 +107,9 @@ pub struct Runtime {
     pub frame_hook: Option<Box<dyn FnMut(&mut Runtime, u64)>>,
     pub mem: GuestMemory,
     pub pe: Pe,
-    pub(crate) import_names: Vec<(String, String)>,
+    pub(crate) import_names: Vec<(&'static str, &'static str)>,
+    /// Fast-path kind per import (see imports::Hot).
+    pub(crate) import_hot: Vec<imports::Hot>,
     pub(crate) heap: heap::Heap,
     pub(crate) valloc: heap::VirtualRegions,
     pub(crate) tls: Vec<u32>,
@@ -149,7 +155,8 @@ impl Runtime {
         let mut import_names = Vec::new();
         for (i, imp) in pe.imports.iter().enumerate() {
             mem.w32(imp.iat_va, THUNK_BASE + (i as u32) * 16);
-            import_names.push((imp.dll.to_ascii_lowercase(), imp.name.clone()));
+            // Interned for the life of the process: names are compared on every call.
+            import_names.push((&*Box::leak(imp.dll.to_ascii_lowercase().into_boxed_str()), &*Box::leak(imp.name.clone().into_boxed_str())));
         }
         // Stack and thread information block.
         mem.commit(STACK_LOW, (STACK_TOP - STACK_LOW) as usize).map_err(|e| e.to_string())?;
@@ -164,6 +171,7 @@ impl Runtime {
         let mut rt = Runtime {
             mem,
             pe,
+            import_hot: import_names.iter().map(|(d, n)| imports::Hot::of(d, n)).collect(),
             import_names,
             heap: heap::Heap::new(HEAP_LOW, HEAP_HIGH),
             valloc: heap::VirtualRegions::new(VALLOC_LOW, VALLOC_HIGH),
@@ -207,6 +215,7 @@ impl Runtime {
             mem,
             pe,
             import_names: Vec::new(),
+            import_hot: Vec::new(),
             heap: heap::Heap::new(HEAP_LOW, HEAP_HIGH),
             valloc: heap::VirtualRegions::new(VALLOC_LOW, VALLOC_HIGH),
             tls: Vec::new(),
@@ -355,12 +364,35 @@ pub fn trace_enabled(what: &str) -> bool {
 /// Print call histograms (imports and COM methods) to stderr.
 pub fn print_diagnostics(rt: &Runtime) {
     eprintln!("--- imports ---");
-    for (k, v) in &rt.diag.import_calls {
+    for (k, v) in rt.import_calls() {
         eprintln!("{v:>10}  {k}");
     }
     eprintln!("--- COM methods ---");
-    for (k, v) in &rt.diag.com_calls {
+    for (k, v) in rt.com_calls() {
         eprintln!("{v:>10}  {k}");
+    }
+}
+
+impl Runtime {
+    /// Import call counts by "dll!name".
+    pub fn import_calls(&self) -> BTreeMap<String, u64> {
+        let mut m = self.diag.named_import_calls.clone();
+        for (i, &n) in self.diag.import_counts.iter().enumerate() {
+            if n > 0 {
+                let (d, f) = self.import_names[i];
+                *m.entry(format!("{d}!{f}")).or_default() += n;
+            }
+        }
+        m
+    }
+
+    /// COM call counts by "Interface::Method".
+    pub fn com_calls(&self) -> BTreeMap<String, u64> {
+        let mut m = BTreeMap::new();
+        for (&(i, s), &n) in &self.diag.com_counts {
+            *m.entry(ddraw::method_label(i, s)).or_default() += n;
+        }
+        m
     }
 }
 

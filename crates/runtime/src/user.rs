@@ -224,16 +224,19 @@ pub fn pump() {
 /// `WM_KEYDOWN`/`WM_KEYUP`, or the `WM_SYS*` variants for Alt combinations and
 /// F10, with Windows' lParam layout (repeat 1, scan code, extended, context, previous, transition).
 pub fn key_input(sc: i32, down: bool, repeat: bool, alt: bool) {
+    with_rt(|rt| key_input_rt(rt, sc, down, repeat, alt));
+}
+
+/// [`key_input`] for callers that already hold the runtime (e.g. `Runtime::frame_hook`).
+pub fn key_input_rt(rt: &mut crate::Runtime, sc: i32, down: bool, repeat: bool, alt: bool) {
     let Some((vk, scan)) = vk_from_scancode(sc) else { return };
-    with_rt(|rt| {
-        for v in [Some(vk), side_vk(sc)].into_iter().flatten() {
-            let e = &mut rt.user.keys[v as usize];
-            if down && !e.0 {
-                e.1 = true;
-            }
-            e.0 = down;
+    for v in [Some(vk), side_vk(sc)].into_iter().flatten() {
+        let e = &mut rt.user.keys[v as usize];
+        if down && !e.0 {
+            e.1 = true;
         }
-    });
+        e.0 = down;
+    }
     let sys = alt || vk == 0x79 || vk == 0x12;
     let message = match (down, sys) {
         (true, false) => WM_KEYDOWN,
@@ -251,17 +254,25 @@ pub fn key_input(sc: i32, down: bool, repeat: bool, alt: bool) {
     if !down {
         lp |= 1 << 31;
     }
-    post(Msg { hwnd: MAIN_HWND, message, wparam: vk, lparam: lp });
+    rt.user.queue.push_back(Msg { hwnd: MAIN_HWND, message, wparam: vk, lparam: lp });
 }
 
 /// The pointer moved to guest screen position `p`.
 pub fn mouse_move(p: (i32, i32)) {
-    with_rt(|rt| rt.user.cursor = p);
-    post(Msg { hwnd: MAIN_HWND, message: WM_MOUSEMOVE, wparam: 0, lparam: mk_lparam(p.0, p.1) });
+    with_rt(|rt| mouse_move_rt(rt, p));
+}
+
+pub fn mouse_move_rt(rt: &mut crate::Runtime, p: (i32, i32)) {
+    rt.user.cursor = p;
+    rt.user.queue.push_back(Msg { hwnd: MAIN_HWND, message: WM_MOUSEMOVE, wparam: 0, lparam: mk_lparam(p.0, p.1) });
 }
 
 /// Mouse button (1 = left, 3 = right) changed state at guest screen position `p`.
 pub fn mouse_button(button: i32, down: bool, p: (i32, i32)) {
+    with_rt(|rt| mouse_button_rt(rt, button, down, p));
+}
+
+pub fn mouse_button_rt(rt: &mut crate::Runtime, button: i32, down: bool, p: (i32, i32)) {
     let (vk, message) = match (button, down) {
         (1, true) => (0x01, WM_LBUTTONDOWN),
         (1, false) => (0x01, WM_LBUTTONUP),
@@ -269,16 +280,14 @@ pub fn mouse_button(button: i32, down: bool, p: (i32, i32)) {
         (3, false) => (0x02, WM_RBUTTONUP),
         _ => return,
     };
-    with_rt(|rt| {
-        rt.user.cursor = p;
-        let e = &mut rt.user.keys[vk as usize];
-        if down && !e.0 {
-            e.1 = true;
-        }
-        e.0 = down;
-    });
+    rt.user.cursor = p;
+    let e = &mut rt.user.keys[vk as usize];
+    if down && !e.0 {
+        e.1 = true;
+    }
+    e.0 = down;
     let wparam = if down { vk } else { 0 }; // MK_LBUTTON = 1, MK_RBUTTON = 2
-    post(Msg { hwnd: MAIN_HWND, message, wparam, lparam: mk_lparam(p.0, p.1) });
+    rt.user.queue.push_back(Msg { hwnd: MAIN_HWND, message, wparam, lparam: mk_lparam(p.0, p.1) });
 }
 
 /// USER32/GDI32 imports for windows and messages. Returns false if not handled here.
