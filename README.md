@@ -105,4 +105,4 @@ Comparisons against the original game use Frida in a Windows VM; see `tools/frid
 
 ## License
 
-The code in this repository is licensed MIT OR Apache-2.0 (per `Cargo.toml`). Bugatron itself belongs to its rights holders; none of it is included here.
+[GPL-3.0](LICENSE). Vendored libxmp-lite is MIT, which is compatible. Bugatron itself belongs to its rights holders; none of it is included here.
