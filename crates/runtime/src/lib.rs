@@ -20,6 +20,7 @@ pub mod cpu;
 pub mod ddraw;
 pub mod dialog;
 pub mod files;
+pub mod input_script;
 pub mod fmod;
 mod heap;
 pub mod render;
