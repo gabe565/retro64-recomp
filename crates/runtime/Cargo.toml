@@ -23,3 +23,8 @@ windows-sys.workspace = true
 [build-dependencies]
 naga.workspace = true
 spirv-cross2.workspace = true
+
+[features]
+# Build SDL3 from source and link it statically, instead of finding it with
+# pkg-config (used for Windows CI; MSVC has no pkg-config).
+sdl3-from-source = ["sdl3-sys/build-from-source-static"]
