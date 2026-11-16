@@ -8,7 +8,15 @@ The game's original 32-bit x86 code is translated to C at build time and compile
 
 ## You need your own copy of the game
 
-This repository contains no game files. You supply **Bugatron Gold v1.20a**: the download `Bugatron_Win_EN_Gold_120.zip`, its installer `buggold_120.exe`, or an installed `Bug3D.exe`. Files are checked by SHA-256: `Bug3D.exe` must be `be581a63…758919e`. Other releases are not supported.
+This repository contains no game files, and builds of it must not include them. You supply **Bugatron Gold v1.20a** (Retro64, Inc.) yourself, in any of these forms:
+
+| File | SHA-256 |
+|---|---|
+| `Bugatron_Win_EN_Gold_120.zip` (the download) | `f3ee37e54c998eb8167c997f95b9dd4c81c482633c454bb2d4d5ba2f52e894f9` |
+| `buggold_120.exe` (the installer inside it) | `4519e88049371d562d4a932f4701a81da6360f84d30a8215a1401ef94ce4669b` |
+| `Bug3D.exe` (installed) | `be581a63bccfc7dcc78a5c55cacc02e9f7aab9e5398540d2cc86a7aba758919e` |
+
+The game is listed on [MyAbandonware](https://www.myabandonware.com/game/bugatron-g23) as "Bugatron Gold version 1.20". The other versions listed there are different releases and are not supported. Only `Bug3D.exe` is checked when you build or run; the other hashes let you confirm a download.
 
 ## Building
 
