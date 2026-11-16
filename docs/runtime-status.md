@@ -146,6 +146,6 @@ The runtime keeps this behaviour. QPC and `Sleep` take a fast import path, and c
 | Windows (Vulkan or D3D12) and Linux (Vulkan) graphics validation | Not started. Only Metal is tested; the SPIR-V shader path is untested (renderer.md A10) |
 | 16-bit display mode comparison | Pending (A6) |
 | Visible video dialog (RD1) | Not started |
-| Audio: FMOD 3.61 on SDL3 audio + libxmp | Done (`audio.md`). Comparison with the original's mix is pending: the original is silent in the reference VM (`FSOUND_Init` fails; no sound device in UTM). Needs a VM sound device, or Frida on a Windows PC |
+| Audio: FMOD 3.61 on SDL3 audio + libxmp | Done (`audio.md`). Comparison with the original's mix is pending. The original plays sound when launched normally in the VM, but its `FSOUND_Init` fails when spawned under Frida (likely a foreground-window binding; see `audio.md`) |
 | Performance: per-frame back-buffer readback at high resolution | Documented optimisation target; deferred (renderer.md) |
 | Modern feature (deferred): adjustable mouse sensitivity | In the input layer only: scale host motion before it moves the guest cursor (`user::mouse_motion_rt`). The original game code is not modified. The default stays 1 point = 1 guest pixel (RD11). The owner found the default slightly low on macOS (2026-11-15) |

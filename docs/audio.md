@@ -50,7 +50,12 @@ Verified by scripted play. Title, menu, gameplay, game over, title, and a new ga
 
 ### Results (2026-11-15)
 
-- **The original is silent in the reference VM.** Probed with Frida, its `FSOUND_Init` fails at 44100 Hz, again at 22050 Hz, and again with 16 channels. The game then disables sound (0x438144 = 0). The VM has no working DirectSound output, most likely because no sound device is configured in UTM. So there was no mix to capture. The DSP capture script is ready for a VM with a sound device, or for any Windows machine running Frida.
+- **Original in the reference VM.** Launched normally, the original plays its music; the owner listened to the menu music. There are occasional pops and skips, most likely because the VM cannot keep up with real-time audio under x86 emulation.
+  - When the game loses focus its sound stops. This is expected: DirectSound buffers are silent while their window is in the background, and the game pauses its music on `WM_KILLFOCUS` (`FMUSIC_SetPaused`).
+  - Separately, the guest's audio went silent after pausing and resuming the VM with `utmctl`; quitting UTM fixed it.
+- **Instrumented launches.** When the original is *spawned under Frida*, its `FSOUND_Init` fails at 44100 Hz, 22050 Hz, and with 16 channels, and the game disables sound (0x438144 = 0). DirectSound itself works in the VM, as a 32-bit probe confirmed. Unverified hypothesis: FMOD 3 binds DirectSound to the foreground window at `Init` when `FSOUND_SetHWND` was not called, and a spawned process is not in the foreground.
+  - Fix to try: call `FSOUND_SetHWND` with the game's window from the capture script before `Init`, or launch normally and attach the capture after `Init`.
+  - The DSP tap records FMOD's internal mix, so VM playback dropouts do not appear in a capture.
 - **Native side.** The title music records at −29.3 dBFS RMS (peak 6743/32767) at the game's saved music volume of 56/256.
 - **What holds without a capture:**
   - Effects play at their files' own sample rates, so pitch and speed are the files'.
