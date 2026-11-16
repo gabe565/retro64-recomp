@@ -1,5 +1,8 @@
 //! Pixel-format parsing and conversions.
 
+// Links the generated guest code that defines recomp_lookup (MinGW's linker
+// does not drop the runtime's unused reference to it).
+use bugatron_runtime_tests as _;
 use bugatron_runtime::ddraw::caps;
 use bugatron_runtime::ddraw::pixel::{expand, pack, PixelFormat};
 

@@ -4,7 +4,7 @@
 - [initial-investigation.md](initial-investigation.md) is the original findings report. Its architecture and milestone sections are superseded.
 - [graphics/r3d-interface.md](graphics/r3d-interface.md) maps the original 3D wrapper and recommends the replacement boundary and graphics interface.
 - [testing/linux-validation.md](testing/linux-validation.md) covers Linux builds in OrbStack (Debian 13 arm64 and x86_64, Vulkan on Mesa lavapipe) and their results.
-- [testing/windows-validation.md](testing/windows-validation.md) is the procedure for the physical Windows PC: proof of concept and hardware oracle.
+- [testing/windows-validation.md](testing/windows-validation.md) covers Windows: the Direct3D 12 game kit and its VM results, plus the physical-PC procedures for the proof of concept and the hardware oracle.
 - [open-questions.md](open-questions.md) tracks unresolved questions, assumptions, and known deviations.
 - `versions/` has one analysis record per release. Addresses never cross between files.
   - [gold-1.20.md](versions/gold-1.20.md) is the primary target.

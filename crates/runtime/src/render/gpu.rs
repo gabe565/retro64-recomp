@@ -117,11 +117,21 @@ impl Gpu {
             if SDL_WasInit(SDL_INIT_VIDEO) == 0u32 && window.is_null() {
                 SDL_Init(SDL_INIT_VIDEO);
             }
-            let formats = SDL_GPU_SHADERFORMAT_MSL | SDL_GPU_SHADERFORMAT_SPIRV;
+            // DXIL is only built for Windows targets (build.rs); without it SDL
+            // cannot use its Direct3D 12 backend.
+            let mut formats = SDL_GPU_SHADERFORMAT_MSL | SDL_GPU_SHADERFORMAT_SPIRV;
+            if !super::shaders::FIXED_VS_MAIN_DXIL.is_empty() {
+                formats |= SDL_GPU_SHADERFORMAT_DXIL;
+            }
             let device = SDL_CreateGPUDevice(formats, false, std::ptr::null());
             if device.is_null() {
                 eprintln!("[render] SDL_CreateGPUDevice: {}", CStr::from_ptr(SDL_GetError()).to_string_lossy());
                 return None;
+            }
+            if crate::trace_enabled("gpu") {
+                let name = SDL_GetGPUDeviceDriver(device);
+                let name = if name.is_null() { "?".into() } else { CStr::from_ptr(name).to_string_lossy() };
+                eprintln!("[render] SDL GPU driver: {name}");
             }
             if !window.is_null() {
                 if !SDL_ClaimWindowForGPUDevice(device, window) {
@@ -156,6 +166,9 @@ impl Gpu {
             let vertex = stage == SDL_GPU_SHADERSTAGE_VERTEX;
             let (code, entry, format): (&[u8], &str, SDL_GPUShaderFormat) = if formats & SDL_GPU_SHADERFORMAT_MSL != 0 {
                 if vertex { (FIXED_VS_MAIN_MSL.as_bytes(), FIXED_VS_MAIN_MSL_ENTRY, SDL_GPU_SHADERFORMAT_MSL) } else { (FIXED_FS_MAIN_MSL.as_bytes(), FIXED_FS_MAIN_MSL_ENTRY, SDL_GPU_SHADERFORMAT_MSL) }
+            } else if formats & SDL_GPU_SHADERFORMAT_DXIL != 0 && !FIXED_VS_MAIN_DXIL.is_empty() {
+                // HLSL from SPIRV-Cross names every entry point `main`.
+                if vertex { (FIXED_VS_MAIN_DXIL, "main", SDL_GPU_SHADERFORMAT_DXIL) } else { (FIXED_FS_MAIN_DXIL, "main", SDL_GPU_SHADERFORMAT_DXIL) }
             } else {
                 if vertex { (FIXED_VS_MAIN_SPV, "vs_main", SDL_GPU_SHADERFORMAT_SPIRV) } else { (FIXED_FS_MAIN_SPV, "fs_main", SDL_GPU_SHADERFORMAT_SPIRV) }
             };

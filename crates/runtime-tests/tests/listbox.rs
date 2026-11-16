@@ -1,5 +1,8 @@
 //! Emulated list boxes used by the headless video dialog.
 
+// Links the generated guest code that defines recomp_lookup (MinGW's linker
+// does not drop the runtime's unused reference to it).
+use bugatron_runtime_tests as _;
 use bugatron_runtime::dialog::{ListBox, LB_ERR};
 
 fn lb(items: &[&str]) -> ListBox {

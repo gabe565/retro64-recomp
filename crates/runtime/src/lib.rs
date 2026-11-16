@@ -60,6 +60,20 @@ extern "C" {
     fn recomp_function_count() -> u32;
 }
 
+// The generated code defines these in real binaries. The runtime's own unit-test
+// binary has none; ELF and Mach-O linkers drop the unused references, MinGW's does not.
+#[cfg(test)]
+mod no_generated_code {
+    #[no_mangle]
+    extern "C" fn recomp_lookup(_addr: u32) -> Option<super::RecompFn> {
+        None
+    }
+    #[no_mangle]
+    extern "C" fn recomp_function_count() -> u32 {
+        0
+    }
+}
+
 pub type Override = Box<dyn FnMut(&mut Cpu)>;
 
 /// Virtual time sources. Proof-of-concept: replay queues for exact differential tests.

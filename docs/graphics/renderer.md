@@ -24,7 +24,12 @@ device state model (ddraw/d3d.rs) ── records Clear / Draw commands with full
 - **Execution.** Commands run at `EndScene`, before CPU access, and before presentation: one copy pass (geometry, changed textures, CPU-written targets), then render passes in command order.
 - **Timing is separate from presentation.** The simulation's clock advances only at guest waits (`clock.rs`), and pacing sleeps on host time. Presentation uses a non-blocking present mode (mailbox, else immediate) and never paces the game. A later high-refresh renderer can present more often without changing simulation speed.
 - **Presentation.** After each `Flip`, the front buffer is scaled into the window (aspect-preserving, letterboxed, linear filter). This is presentation only and is never visible to the guest.
-- **Shaders.** `shaders/fixed.wgsl` is translated at build time by naga into MSL (Metal) and SPIR-V (Vulkan), following SDL3 GPU's binding conventions.
+- **Shaders.** `shaders/fixed.wgsl` is the only shader source. At build time (`crates/runtime/build.rs`) it becomes, following SDL3 GPU's binding conventions:
+  - **MSL** (Metal) and **SPIR-V** (Vulkan), by naga;
+  - **DXIL** (Direct3D 12): the SPIR-V above → HLSL 6.0 by SPIRV-Cross (the `spirv-cross2` crate, built from source) → signed DXIL by DXC. This is SDL_shadercross's route.
+    - naga's own HLSL output was rejected: it reads samplers through a 2048-entry sampler heap plus an index buffer, which does not match the single `s0, space2` sampler in SDL's D3D12 root signature.
+    - The HLSL is generated on every platform and unit-tested for SDL's registers (fragment `t0`/`s0` in space2, `b0` in space3) and `TEXCOORD<n>` semantics.
+    - DXIL needs DXC, so it is only built for Windows targets or when `BUGATRON_DXC` is set. Other builds do not offer DXIL to SDL.
 
 ## Performance notes and optimisation targets
 
@@ -59,7 +64,8 @@ device state model (ddraw/d3d.rs) ── records Clear / Draw commands with full
 | A7 | GPU rasterisation (top-left fill rule, sub-pixel precision) matches Direct3D's rules, but not any one 2001 card's precision. | Edge pixels can differ | VM comparison |
 | A8 | Partial-rectangle `Clear2` stops with a diagnostic. | The game only clears the full target | — |
 | A9 | Destination alpha is always 1, because the guest targets have no alpha channel. | Matches XRGB/RGB565 semantics | — |
-| A10 | The SPIR-V (Vulkan) shader path shares one binding between the texture and its sampler (SDL's combined image sampler), and leaves out naga's Y flip because SDL's Vulkan backend already presents a Y-up clip space. Verified on Linux with Mesa lavapipe: the `gpu` tests pass and game frames match Metal to within 4/255 per channel (`testing/linux-validation.md`). Not yet run on a hardware Vulkan driver or on Windows | Vendor drivers could still differ | Run the `gpu` tests on hardware Vulkan and on Windows |
+| A10 | The SPIR-V (Vulkan) shader path shares one binding between the texture and its sampler (SDL's combined image sampler), and leaves out naga's Y flip because SDL's Vulkan backend already presents a Y-up clip space. Verified on Linux with Mesa lavapipe: the `gpu` tests pass and game frames match Metal to within 4/255 per channel (`testing/linux-validation.md`). Not yet run on a hardware Vulkan driver | Vendor drivers could still differ | Run the `gpu` tests on hardware Vulkan |
+| A14 | The DXIL (Direct3D 12) path is generated from the SPIR-V (above), not from WGSL directly. Verified on Windows 11 with WARP (Microsoft Basic Render Driver): the `gpu` tests pass, and frames match Metal within 2/255 at 32 bpp, and within one RGB565 step at 16 bpp (`testing/windows-validation.md`). Not yet run on a hardware D3D12 driver | Vendor drivers could still differ | Run the kit on a physical PC |
 | A11 | Presentation scales with linear filtering and letterboxing. | Presentation only; guest pixels are unaffected | — |
 | A12 | Lines and points are not emulated (they stop with a diagnostic). | Not used by the title or menus | — |
 | A13 | Fog is not emulated; a warning is printed if the game enables it. | r3d sets `FOGENABLE` to 0 at init and never changes it (r3d-interface.md G6) | — |

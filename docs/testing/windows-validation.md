@@ -1,4 +1,67 @@
-# Windows validation on a physical x86-64 PC
+# Windows validation
+
+## Kit 4: the game on Direct3D 12 (Windows x86-64)
+
+Kit 4 is the full game (`bugatron.exe` with SDL3.dll) plus every test binary. `tools/windows/build-kit.sh` cross-builds it with MinGW on x86-64 Linux (the OrbStack machine `bugatron-linux-x64`), with DXC compiling the Direct3D 12 shaders.
+
+The output is `_work/bugatron-windows-kit.zip`. It contains code translated from your `Bug3D.exe`, so keep it for your own use.
+
+### Running it (VM or physical PC)
+
+1. Unzip the kit anywhere, for example `C:\Users\Public\bugatron-kit`.
+2. In PowerShell, run:
+
+   ```powershell
+   powershell -NoProfile -ExecutionPolicy Bypass -File .\winkit\run-validation.ps1 -Game "C:\Program Files (x86)\Bugatron Gold"
+   ```
+
+   Run it as its own `powershell -File`: a nested `& .\run-validation.ps1` is blocked by the default execution policy.
+
+The script:
+- runs every test binary, with the `gpu` tests under `BUGATRON_REQUIRE_GPU=1`;
+- runs three scripted game runs: the title at 32 bpp with 12 s of recorded audio, 6000+ frames of gameplay from `score-input.txt`, and the title at 16 bpp;
+- writes `results\` and `results.zip`.
+
+Scripted runs ignore the host keyboard and mouse. Windows may open and close game windows during the run; leave them alone. `SDL_LOGGING=gpu=info` makes SDL print the driver and adapter, for example `D3D12 Adapter: …`. To force a backend, set `SDL_GPU_DRIVER=direct3d12` or `vulkan`.
+
+**On a physical PC**, also play a few minutes by hand: `bugatron.exe --exe "<game>\Bug3D.exe" --data "<game>"`. Check the menus with the mouse, keyboard steering, sound, and Alt-Tab. Then send back `results.zip`, the CPU and GPU names, and anything that looked or sounded wrong.
+
+### Results: Windows 11 VM (2026-11-16)
+
+The VM is UTM on Apple Silicon: Windows 11 Home 23H2 arm64. Its display adapter is VirtIO GPU DOD, a display-only driver with no 3D. The x86-64 kit runs under Windows' x64 emulation.
+
+- **Backend:** `SDL_GPU Driver: D3D12`, `D3D12 Adapter: Microsoft Basic Render Driver` (WARP, Microsoft's software D3D12 renderer), driver 10.0.22621.4541. SDL warns that `WinPixEventRuntime.dll` is missing. That only affects GPU debug labels, which we do not use.
+- **Tests:** all 94 pass. That includes all 7 `gpu` tests with `BUGATRON_REQUIRE_GPU=1` on D3D12/WARP, and the x86 semantics suite with the hardware-oracle fixtures.
+- **Game:** startup, timer calibration (399999 ticks, as on macOS), the title, the menus, and scripted gameplay through flip 6000 all run without errors.
+- **Frames vs Metal:**
+
+  | Run | Frame | Pixels that differ | Max channel diff |
+  |---|---|---|---|
+  | Title, 32 bpp | 139 | 94 (0.03 %) | 1 |
+  | Title, 32 bpp | 450 | 3 413 (1.11 %) | 2 |
+  | Gameplay | 2000 / 4000 / 6000 | 769 / 804 / 812 (0.26 %) | 1 |
+  | Title, 16 bpp | 139 / 450 | 28 / 713 (≤ 0.23 %) | 9 (one RGB565 step) |
+
+  These are rounding differences between rasterisers. Because the gameplay frames still agree after 6000 frames of scripted play, the game state is identical between Windows x86-64 (generated C compiled by MinGW GCC) and macOS arm64 (clang). Against the Vulkan/lavapipe frames the differences are at most 4/255.
+- **Audio:** the 12 s title recording is bit-identical to the macOS recording (1 058 400 samples, max difference 0). The owner heard the music playing in the VM. UTM's emulated sound card ignores the guest's volume and mute for every app, Windows' own sounds included, so that is not a bug in this build.
+- **Speed:** very slow, about 15 flips/s for gameplay (8000 vertical blanks took 544 s). WARP, x64 emulation and the per-frame back-buffer readback (renderer.md) add up. Simulation timing is virtual, so results do not depend on speed.
+- **Not covered by the VM:**
+  - a hardware D3D12 GPU;
+  - Vulkan on Windows;
+  - interactive keyboard and mouse: the input path is the same as for scripted input, but real Windows events, relative mouse mode and Alt-Tab are unchecked. The VM is too slow to play.
+
+  Use the physical PC steps above for these.
+
+### Windows build fixes found on the way
+
+- **MinGW's linker keeps unused references.** The runtime declares `recomp_lookup`, which the generated code defines, and ELF and Mach-O linkers drop the unused reference in test binaries but MinGW's does not.
+  - The runtime's unit tests now define stubs.
+  - The `pixel`, `tnl` and `listbox` tests now link the test-support crate, which carries generated guest code.
+- **The semantics test takes `BUGATRON_ROOT`,** so the hardware-oracle fixtures can travel with the kit.
+
+---
+
+# Windows validation on a physical x86-64 PC (kits 1–3)
 
 ## Kit 3 (oracle only): x87 FSIN/FCOS/FPTAN confirmation
 

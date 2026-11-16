@@ -1,5 +1,8 @@
 //! Direct3D 6 transform and lighting on the CPU.
 
+// Links the generated guest code that defines recomp_lookup (MinGW's linker
+// does not drop the runtime's unused reference to it).
+use bugatron_runtime_tests as _;
 use bugatron_runtime::ddraw::d3d::{Device, Draw, Light, Material, Viewport, IDENTITY, ls, rs};
 use bugatron_runtime::render::tnl::{process, quantize, triangles};
 

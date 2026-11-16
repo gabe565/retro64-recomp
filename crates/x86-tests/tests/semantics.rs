@@ -14,8 +14,10 @@ use bugatron_x86_tests::{install_runtime, run_model};
 use serde_json::{json, Value};
 use std::path::PathBuf;
 
+/// The repository root, or BUGATRON_ROOT (for test binaries run on another machine,
+/// with `tests/fixtures` copied alongside).
 fn root() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
+    std::env::var_os("BUGATRON_ROOT").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../.."))
 }
 
 fn hex(b: &[u8]) -> String {
