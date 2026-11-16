@@ -45,3 +45,14 @@ fn delivery_reaches_messages_and_async_key_state() {
     }
     assert_eq!(msgs, [0x100, 0x200, 0x201], "WM_KEYDOWN, WM_MOUSEMOVE, WM_LBUTTONDOWN");
 }
+
+#[test]
+fn quit_posts_the_close_command_like_the_host_close_button() {
+    let mut cpu = setup();
+    let ev = parse("7:QUIT").unwrap();
+    assert_eq!(ev, [(7, Input::Quit)]);
+    with_rt(|rt| apply(rt, &ev, 7));
+    let m = SCRATCH + 0x200;
+    assert_ne!(call_import(&mut cpu, "user32.dll", "PeekMessageA", &[m, 0, 0, 0, 1]), 0);
+    assert_eq!((r32(m + 4), r32(m + 8)), (0x112, 0xf060), "WM_SYSCOMMAND(SC_CLOSE)");
+}

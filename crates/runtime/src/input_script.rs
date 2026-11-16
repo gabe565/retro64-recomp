@@ -7,7 +7,8 @@
 //!   CTRL, SHIFT, ALT, PGUP, PGDN, HOME, END;
 //! - `move@XxY` moves the pointer, `click@XxY` clicks the left button (released
 //!   two flips later), in guest screen coordinates;
-//! - `rel@DXxDY` is host mouse motion of (DX, DY) points (may be negative).
+//! - `rel@DXxDY` is host mouse motion of (DX, DY) points (may be negative);
+//! - `QUIT` asks the window to close, as the host's close button or Cmd-Q does.
 //!
 //! The simulation is deterministic, so a script replays identically.
 
@@ -47,6 +48,8 @@ pub enum Input {
     Move((i32, i32)),
     Rel((i32, i32)),
     Button(bool, (i32, i32)),
+    /// The host asks the window to close (as SDL_EVENT_QUIT / the close button).
+    Quit,
 }
 
 /// Parse a script into (flip, event) pairs.
@@ -59,7 +62,9 @@ pub fn parse(spec: &str) -> Result<Vec<(u64, Input)>, String> {
     for item in spec.split(',').map(str::trim).filter(|s| !s.is_empty()) {
         let (frame, key) = item.split_once(':').ok_or_else(|| format!("expected FRAME:KEY, got {item}"))?;
         let f: u64 = frame.parse().map_err(|_| format!("bad frame in {item}"))?;
-        if let Some(p) = key.strip_prefix("rel@") {
+        if key == "QUIT" {
+            ev.push((f, Input::Quit));
+        } else if let Some(p) = key.strip_prefix("rel@") {
             ev.push((f, Input::Rel(point(p)?)));
         } else if let Some(p) = key.strip_prefix("move@") {
             ev.push((f, Input::Move(point(p)?)));
@@ -88,6 +93,7 @@ pub fn apply(rt: &mut Runtime, events: &[(u64, Input)], n: u64) {
             Input::Move(p) => user::mouse_move_rt(rt, p),
             Input::Rel((dx, dy)) => user::mouse_motion_rt(rt, dx as f32, dy as f32),
             Input::Button(down, p) => user::mouse_button_rt(rt, 1, down, p),
+            Input::Quit => user::close_requested_rt(rt),
         }
     }
 }

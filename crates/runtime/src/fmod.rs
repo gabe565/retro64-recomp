@@ -97,6 +97,13 @@ pub(crate) fn call(rt: &mut Runtime, name: &str, arg: &dyn Fn(u32) -> u32) -> Op
         }
         "_FSOUND_Close@0" => {
             rt.fmod.device = None;
+            // A recording still in progress is saved as it stands (the game is exiting).
+            if let Some(p) = rt.audio_record_path.take() {
+                match write_recording(rt, &p) {
+                    Ok(n) => eprintln!("[audio] recorded {n} frames to {}", p.display()),
+                    Err(e) => eprintln!("[audio] {}: {e}", p.display()),
+                }
+            }
             rt.fmod.mixer().stop_all();
             rt.fmod.initialised = false;
             (0, 0)

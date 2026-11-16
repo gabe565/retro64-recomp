@@ -2,7 +2,7 @@
 
 use bugatron_runtime::testing::call_import;
 use bugatron_runtime::user::{self, MAIN_HWND};
-use bugatron_runtime::Cpu;
+use bugatron_runtime::{with_rt, Cpu};
 use bugatron_runtime_tests::*;
 
 const WM_CREATE: u32 = 0x01;
@@ -71,6 +71,29 @@ fn show_window_activates_once() {
     clear_log();
     assert_eq!(call_import(&mut cpu, "user32.dll", "ShowWindow", &[MAIN_HWND, 1]), 1, "already visible");
     assert!(messages().is_empty());
+}
+
+#[test]
+fn host_focus_changes_send_what_windows_sends_inside_peek_message() {
+    let mut cpu = setup();
+    let hwnd = create(&mut cpu);
+    call_import(&mut cpu, "user32.dll", "ShowWindow", &[hwnd, 1]);
+    clear_log();
+    // Losing focus (Cmd-Tab): delivered by the next PeekMessage, before it returns.
+    with_rt(|rt| user::focus_changed_rt(rt, false));
+    assert_eq!(peek(&mut cpu), None);
+    assert_eq!(messages(), [(WM_ACTIVATE, 0, 0), (WM_ACTIVATEAPP, 0, 0), (WM_KILLFOCUS, 0, 0)]);
+    assert!(with_rt(|rt| !rt.user.focused && rt.fmod.mixer().output_muted), "output muted in the background");
+    // A repeated notification changes nothing.
+    clear_log();
+    with_rt(|rt| user::focus_changed_rt(rt, false));
+    peek(&mut cpu);
+    assert!(messages().is_empty());
+    // Regaining focus.
+    with_rt(|rt| user::focus_changed_rt(rt, true));
+    peek(&mut cpu);
+    assert_eq!(messages(), [(WM_ACTIVATEAPP, 1, 0), (WM_ACTIVATE, 1, 0), (WM_SETFOCUS, 0, 0)]);
+    assert!(with_rt(|rt| rt.user.focused && !rt.fmod.mixer().output_muted));
 }
 
 #[test]

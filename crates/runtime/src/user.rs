@@ -93,9 +93,13 @@ pub struct User {
     sdl_ready: bool,
     /// No host window or SDL (tests, CI): messages and state only.
     pub headless: bool,
-    /// Scripted replay: host keyboard and mouse events are dropped and the mouse
-    /// is not captured, so touching the host cannot change a deterministic run.
+    /// Scripted replay: host keyboard, mouse and focus events are dropped and the
+    /// mouse is not captured, so touching the host cannot change a deterministic run.
     pub ignore_host_input: bool,
+    /// Whether the window has keyboard focus, as the guest was last told.
+    pub focused: bool,
+    /// A host focus change not yet delivered to the guest (by the next PeekMessage).
+    focus_pending: Option<bool>,
 }
 
 impl User {
@@ -137,6 +141,51 @@ pub fn send(cpu: &mut Cpu, hwnd: u32, msg: u32, wp: u32, lp: u32) -> u32 {
         eprintln!("[msg] {hwnd:#x} {msg:#06x} wp={wp:#x} lp={lp:#x}");
     }
     call_guest_stdcall(cpu, proc_, &[hwnd, msg, wp, lp])
+}
+
+/// The host window gained or lost keyboard focus (Alt-Tab, Cmd-Tab, a click elsewhere).
+/// Delivered to the guest by the next `PeekMessageA`, which sends what Windows sends.
+pub fn focus_changed_rt(rt: &mut crate::Runtime, focused: bool) {
+    rt.user.focus_pending = Some(focused);
+}
+
+/// Deliver a pending focus change, as Windows sends it to a top-level window inside
+/// PeekMessage: on deactivation WM_ACTIVATE(WA_INACTIVE), WM_ACTIVATEAPP(FALSE),
+/// WM_KILLFOCUS; on activation WM_ACTIVATEAPP(TRUE), WM_ACTIVATE(WA_ACTIVE),
+/// WM_SETFOCUS (as for a newly shown window). Non-client messages are omitted (RD6).
+///
+/// The game's window procedure (0x407d10) pauses the music and stops updating on
+/// WM_KILLFOCUS and resumes on WM_SETFOCUS. Its FMOD has no global focus
+/// (`FSOUND_Init` flags 0), so DirectSound silenced all its output while the window
+/// was in the background; the output is muted here likewise (the mix continues).
+fn deliver_focus(cpu: &mut Cpu) {
+    let change = with_rt(|rt| {
+        let f = rt.user.focus_pending.take()?;
+        let shown = rt.user.window.as_ref().is_some_and(|w| w.visible);
+        (shown && f != rt.user.focused).then(|| {
+            rt.user.focused = f;
+            rt.fmod.mixer().output_muted = !f;
+            f
+        })
+    });
+    match change {
+        Some(false) => {
+            send(cpu, MAIN_HWND, WM_ACTIVATE, 0, 0);
+            send(cpu, MAIN_HWND, WM_ACTIVATEAPP, 0, 0);
+            send(cpu, MAIN_HWND, WM_KILLFOCUS, 0, 0);
+        }
+        Some(true) => {
+            send(cpu, MAIN_HWND, WM_ACTIVATEAPP, 1, 0);
+            send(cpu, MAIN_HWND, WM_ACTIVATE, 1, 0);
+            send(cpu, MAIN_HWND, WM_SETFOCUS, 0, 0);
+        }
+        None => {}
+    }
+}
+
+/// The host asked to close the window: Windows posts `WM_SYSCOMMAND(SC_CLOSE)`.
+pub fn close_requested_rt(rt: &mut crate::Runtime) {
+    rt.user.queue.push_back(Msg { hwnd: MAIN_HWND, message: WM_SYSCOMMAND, wparam: SC_CLOSE, lparam: 0 });
 }
 
 /// Queue a message as if it had been posted (also used by tests to inject input).
@@ -203,9 +252,11 @@ pub fn pump() {
             eprintln!("[sdl] event {ty:#x}");
         }
         if ty == SDL_EVENT_QUIT.0 || ty == SDL_EVENT_WINDOW_CLOSE_REQUESTED.0 {
-            post(Msg { hwnd: MAIN_HWND, message: WM_SYSCOMMAND, wparam: SC_CLOSE, lparam: 0 });
+            with_rt(close_requested_rt);
         } else if with_rt(|rt| rt.user.ignore_host_input) {
             continue;
+        } else if ty == SDL_EVENT_WINDOW_FOCUS_LOST.0 || ty == SDL_EVENT_WINDOW_FOCUS_GAINED.0 {
+            with_rt(|rt| focus_changed_rt(rt, ty == SDL_EVENT_WINDOW_FOCUS_GAINED.0));
         } else if ty == SDL_EVENT_KEY_DOWN.0 || ty == SDL_EVENT_KEY_UP.0 {
             let k = unsafe { ev.key };
             key_input(k.scancode.0, k.down, k.repeat, (k.r#mod.0 & SDL_KMOD_ALT.0) != 0);
@@ -339,6 +390,7 @@ pub(crate) fn import(cpu: &mut Cpu, name: &str) -> bool {
                 });
                 // The activation sequence Windows sends to a newly shown top-level window.
                 let (w, h, x, y) = with_rt(|rt| { let w = rt.user.window.as_ref().unwrap(); (w.w, w.h, w.x, w.y) });
+                with_rt(|rt| rt.user.focused = true);
                 send(cpu, hwnd, WM_SHOWWINDOW, 1, 0);
                 send(cpu, hwnd, WM_ACTIVATEAPP, 1, 0);
                 send(cpu, hwnd, WM_ACTIVATE, 1, 0);
@@ -380,6 +432,7 @@ pub(crate) fn import(cpu: &mut Cpu, name: &str) -> bool {
             let (pmsg, hwnd, lo, hi, remove) = (arg(cpu, 0), arg(cpu, 1), arg(cpu, 2), arg(cpu, 3), arg(cpu, 4));
             if hwnd != 0 || lo != 0 || hi != 0 { fatal("PeekMessageA with a filter is not emulated"); }
             pump();
+            deliver_focus(cpu);
             let m = with_rt(|rt| {
                 let m = rt.user.queue.front().copied().or_else(|| rt.user.quit.map(|c| Msg { hwnd: 0, message: WM_QUIT, wparam: c, lparam: 0 }));
                 if m.is_some() && remove & 1 != 0 {
@@ -398,7 +451,16 @@ pub(crate) fn import(cpu: &mut Cpu, name: &str) -> bool {
                     });
                     ret(cpu, 1, 5);
                 }
-                None => ret(cpu, 0, 5),
+                None => {
+                    // While in the background the game spins on PeekMessage without
+                    // updating (0x407c51). Wait briefly for host events instead of
+                    // burning a core; no guest time passes either way.
+                    if with_rt(|rt| !rt.user.focused && rt.user.sdl_ready && !rt.user.headless) {
+                        // SAFETY: plain SDL call on the main thread; the event stays queued.
+                        unsafe { sdl3_sys::events::SDL_WaitEventTimeout(std::ptr::null_mut(), 10) };
+                    }
+                    ret(cpu, 0, 5)
+                }
             }
         }
         "TranslateMessage" => ret(cpu, 0, 1), // WM_CHAR is not used by the window procedure

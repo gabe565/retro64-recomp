@@ -72,6 +72,9 @@ pub(crate) fn dispatch_named(cpu: &mut Cpu, dll: &str, name: &str) {
 }
 
 fn dispatch_inner(cpu: &mut Cpu, dll: &str, name: &str) {
+    if crate::trace_enabled("imports") {
+        eprintln!("[import] {:.4} {dll}!{name}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs_f64());
+    }
     // DDRAW imports may call back into guest code, so they run unborrowed.
     if dll.eq_ignore_ascii_case("ddraw.dll") && crate::ddraw::import(cpu, name) {
         return;

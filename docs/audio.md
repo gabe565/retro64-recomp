@@ -28,9 +28,12 @@ The game uses 13 FMOD 3.61 functions. The runtime implements them on its own sof
 - **Music:** songs loop. `PlaySong` restarts from the start and unpauses. Freeing a song stops it.
 - **Lifecycle:** freeing a sample stops its channels. `FSOUND_Close` stops everything and allows a new `Init`.
 - **Timing:** mixing runs on SDL's audio thread, pulled at FMOD's mix rate (44100 Hz). The game thread only takes a short lock to issue commands, so audio never blocks the simulation, and the simulation clock never depends on the audio device.
+- **Background (focus):** the game calls `FSOUND_Init(44100, 32, 0)`, so it does not ask for global focus, and DirectSound silenced all of its output (music and effects) while another application had focus. The owner observed this in the VM. FMOD kept mixing meanwhile.
+  - The runtime matches this: while the window is unfocused, the device outputs silence, but mixing and `--record-audio` continue.
+  - Separately, the game itself pauses its music and stops updating on `WM_KILLFOCUS` (window procedure 0x407d10, see runtime-status.md).
 - **No device:** FMOD-visible behaviour is unchanged, but nothing is output. This applies in tests, and if `FSOUND_Init` cannot open a device it fails as FMOD would, so the game disables sound itself.
 
-Verified by scripted play. Title, menu, gameplay, game over, title, and a new game load, play, fade, and free the right songs and effects. `BUGATRON_TRACE=fmod` logs every call except the per-frame `SetPaused`.
+Verified by scripted play. Title, menu, gameplay, game over, title, and a new game load, play, fade, and free the right songs and effects. `BUGATRON_TRACE=fmod` logs every call except the per-frame `SetPaused`. `BUGATRON_TRACE=audio` reports audio callbacks that arrive late or wait for the mixer lock.
 
 ## Approximations and open checks
 
@@ -84,3 +87,11 @@ The current capture script ran once without harming the game or the VM. It deliv
   - Candidate causes: libxmp's internal mixing scale (`XMP_PLAYER_AMP`/`MIX` defaults), and how FMOD 3.61's XM player applies `FMUSIC_SetMasterVolume`. Next step: read FMOD's music mixer in the unpacked DLL, or capture a second volume setting.
   - Unchanged for now: correcting the gain blindly could make other volumes worse.
 - **Stereo (AU2).** The title music is almost mono in both recordings: the side signal is about 2 % of the mid. The original is slightly wider and slightly right-weighted. That fits XM panning that libxmp renders with less separation (libxmp's default stereo mix is 70 %), but the signal is too small to settle the pan law, and the effects are not in this capture.
+
+### Exit stutter on macOS (2026-11-16): not ours
+
+The owner heard about 2 s of stuttering when the game exits. We checked the game's own output in two ways:
+- the mixer output, recorded up to `FSOUND_Close`;
+- the device output, captured with SDL's disk driver.
+
+Both are clean up to the close; closing the CoreAudio device then takes about 150 ms. The same stutter then happened when the owner paused a YouTube video, so it comes from the host's audio system. Two experimental workarounds (pausing the device before closing, and flushing it with silence) were reverted.

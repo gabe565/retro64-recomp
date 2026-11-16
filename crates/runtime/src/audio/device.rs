@@ -21,11 +21,36 @@ unsafe extern "C" fn pull(userdata: *mut c_void, stream: *mut SDL_AudioStream, a
     let mixer = unsafe { &*(userdata as *const Mutex<Mixer>) };
     let floats = (additional as usize / 4) & !1;
     let mut buf = vec![0f32; floats];
+    let t0 = std::time::Instant::now();
     if let Ok(mut m) = mixer.lock() {
+        let waited = t0.elapsed();
         m.render(&mut buf);
+        if m.output_muted {
+            buf.fill(0.0);
+        }
+        if crate::trace_enabled("audio") {
+            trace_callback(floats / 2, m.rate, waited, t0.elapsed());
+        }
     }
     // SAFETY: buf holds `floats` f32 values.
     unsafe { SDL_PutAudioStreamData(stream, buf.as_ptr() as *const c_void, (floats * 4) as i32) };
+}
+
+/// `BUGATRON_TRACE=audio`: callbacks that came late (a gap longer than the audio
+/// the previous one supplied) or waited for the mixer lock.
+fn trace_callback(frames: usize, rate: u32, waited: std::time::Duration, total: std::time::Duration) {
+    use std::sync::Mutex as M;
+    static LAST: M<Option<(std::time::Instant, f64)>> = M::new(None);
+    let now = std::time::Instant::now();
+    let mut last = LAST.lock().unwrap();
+    if let Some((t, supplied)) = *last {
+        let gap = now.duration_since(t).as_secs_f64();
+        if gap > supplied * 1.5 + 0.005 || waited.as_micros() > 1000 {
+            eprintln!("[audio] late callback: gap {:.1} ms after {:.1} ms of audio; lock wait {:.2} ms, mix {:.2} ms",
+                gap * 1e3, supplied * 1e3, waited.as_secs_f64() * 1e3, total.as_secs_f64() * 1e3);
+        }
+    }
+    *last = Some((now, frames as f64 / rate as f64));
 }
 
 impl Device {
