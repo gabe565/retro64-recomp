@@ -3,6 +3,8 @@
 //! The GPU renderer (SDL3 GPU) plugs in here. Until a render target has been
 //! drawn by the GPU, guest memory is authoritative and these are no-ops.
 
+pub mod tnl;
+
 use crate::Runtime;
 
 /// Bring `obj`'s guest pixels up to date before CPU access (GPU → guest readback).
