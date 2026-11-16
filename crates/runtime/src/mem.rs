@@ -21,7 +21,12 @@ static BASE: AtomicPtr<u8> = AtomicPtr::new(std::ptr::null_mut());
 
 pub struct GuestMemory {
     base: *mut u8,
+    /// Committed guest pages (4 KiB, as on Windows), one bit each, for
+    /// IsBadReadPtr and friends. The OS may commit more (16 KiB host pages).
+    committed: std::sync::Mutex<Vec<u64>>,
 }
+
+const PAGE: usize = 0x1000;
 
 unsafe impl Send for GuestMemory {}
 
@@ -34,7 +39,9 @@ impl GuestMemory {
         unsafe { recomp_mem = base };
         os::commit(base, GUEST_SPACE - 0x1000, 0x1000 + GUARD)?;
         install_fault_handler();
-        Ok(GuestMemory { base })
+        let mem = GuestMemory { base, committed: std::sync::Mutex::new(vec![0; GUEST_SPACE / PAGE / 64]) };
+        mem.mark(0xffff_f000, 0x1000);
+        Ok(mem)
     }
 
     pub fn base(&self) -> *mut u8 {
@@ -43,7 +50,29 @@ impl GuestMemory {
 
     /// Make [addr, addr+len) readable and writable (no-op where the OS commits lazily).
     pub fn commit(&self, addr: u32, len: usize) -> std::io::Result<()> {
-        os::commit(self.base, addr as usize, len)
+        os::commit(self.base, addr as usize, len)?;
+        self.mark(addr, len);
+        Ok(())
+    }
+
+    fn mark(&self, addr: u32, len: usize) {
+        let mut bits = self.committed.lock().unwrap();
+        for p in addr as usize / PAGE..(addr as usize + len).div_ceil(PAGE).min(GUEST_SPACE / PAGE) {
+            bits[p / 64] |= 1 << (p % 64);
+        }
+    }
+
+    /// Whether every byte of [addr, addr+len) is committed (len 0: true, as on Windows).
+    pub fn is_committed(&self, addr: u32, len: usize) -> bool {
+        if len == 0 {
+            return true;
+        }
+        let end = addr as usize + len;
+        if end > GUEST_SPACE {
+            return false;
+        }
+        let bits = self.committed.lock().unwrap();
+        (addr as usize / PAGE..end.div_ceil(PAGE)).all(|p| bits[p / 64] & (1 << (p % 64)) != 0)
     }
 
     /// Host pointer for a guest address. Valid for the life of the reservation.

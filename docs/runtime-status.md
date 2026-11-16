@@ -56,6 +56,15 @@ How far the recompiled game runs on the portable runtime, which imports and COM 
 - **KERNEL32 files and scheduling:** `SetCurrentDirectoryA`/`GetCurrentDirectoryA` (the guest current directory, confined to the game directory), `FindFirstFileA`/`FindNextFileA`/`FindClose` (wildcards; game and save directories merged, in NTFS case-insensitive order), and `SetPriorityClass`/`SetThreadPriority` (no-ops).
 - **FMOD 3.61** (`fmod.rs`): all 13 imports, with sound effects and XM music on the software mixer, libxmp, and SDL3 audio. See `audio.md`.
 - **DDRAW:** `DirectDrawEnumerateA`, `DirectDrawCreate` (primary driver only).
+- **Rare paths (2026-11-16 audit):** all 120 imports of `Bug3D.exe` are now implemented. The last ten are reached only on rare paths:
+  - **C runtime errors and teardown:**
+    - `TerminateProcess` exits like `ExitProcess`.
+    - `LoadLibraryA` fails, so the "Runtime Error!" box is skipped, as with `GetProcAddress`.
+    - `IsBadReadPtr`, `IsBadWritePtr` and `IsBadCodePtr` check committed guest pages and translated functions.
+    - `FlushFileBuffers` and `SetEndOfFile` work on files.
+    - `SetStdHandle` and `SetEnvironmentVariableA` (`_chdir`'s `=C:`) are accepted.
+  - **`ShellExecuteA`**, used by the menu-link action `LINK_BUY` (0x4103a0): it reads `website3.url` and passes its second token, `URL=http://www.bugatron.com/purchase.html`, which is neither a file nor a URL. So it fails with `SE_ERR_FNF` and nothing opens, as on Windows. Gold 1.20's shipped scripts define no `LINK=` items at all; only standard 1.51d's Reflexive scripts do. So this is unreachable with the game's own data and is implemented for completeness. Only a genuine `http(s)` URL would be opened with the host's browser.
+  - Every COM method in the static census (r3d-interface.md §5.1) is implemented.
 
 `GetModuleHandleA("DDRAW.DLL")` returns a module handle. `GetProcAddress` returns NULL for everything, so the game uses its `DirectDrawEnumerateA` fallback rather than `DirectDrawEnumerateExA`.
 

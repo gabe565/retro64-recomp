@@ -348,6 +348,22 @@ impl Files {
         }
     }
 
+    /// FlushFileBuffers.
+    pub fn flush(&mut self, h: u32) -> bool {
+        match self.open.get_mut(&h).map(|o| &mut o.0) {
+            Some(Handle::Disk(f)) => f.sync_all().is_ok(),
+            _ => false,
+        }
+    }
+
+    /// SetEndOfFile: truncate (or extend) the file at its current position.
+    pub fn set_end(&mut self, h: u32) -> bool {
+        match self.open.get_mut(&h).map(|o| &mut o.0) {
+            Some(Handle::Disk(f)) => f.stream_position().and_then(|p| f.set_len(p)).is_ok(),
+            _ => false,
+        }
+    }
+
     pub fn size(&mut self, h: u32) -> Option<u64> {
         match &self.open.get(&h)?.0 {
             Handle::Disk(f) => Some(f.metadata().ok()?.len()),

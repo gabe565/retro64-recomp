@@ -444,6 +444,63 @@ fn call(rt: &mut Runtime, cpu: &mut Cpu, dll: &str, name: &str) {
             eprintln!("[debug] {}", rt.mem.cstr(a!(0)).trim_end());
             ret(cpu, 0, 1);
         }
+        // ---- reachable only on C runtime error and teardown paths ----------------
+        // (an audit of every import, 2026-11-16; see docs/runtime-status.md)
+        ("kernel32.dll", "TerminateProcess") => {
+            let (h, code) = (a!(0), a!(1));
+            if h != 0xffff_ffff {
+                rt.last_error = 6; // ERROR_INVALID_HANDLE: only the current process exists
+                ret(cpu, 0, 2);
+                return;
+            }
+            let status = match rt.exit_hook.as_mut() { Some(h) => h(code), None => code as i32 };
+            std::process::exit(status);
+        }
+        // The C runtime loads USER32 for its "Runtime Error!" box (0x433b2a); as with
+        // GetProcAddress, no further modules are provided, so it skips the box.
+        ("kernel32.dll", "LoadLibraryA") => { rt.last_error = 126; ret(cpu, 0, 1) } // ERROR_MOD_NOT_FOUND
+        // 0 = valid. Code: a translated function. Data: committed guest memory.
+        ("kernel32.dll", "IsBadCodePtr") => {
+            // SAFETY: lookup in the generated dispatch table.
+            let ok = unsafe { crate::recomp_lookup(a!(0)) }.is_some();
+            ret(cpu, !ok as u32, 1)
+        }
+        ("kernel32.dll", "IsBadReadPtr") | ("kernel32.dll", "IsBadWritePtr") => {
+            let ok = rt.mem.is_committed(a!(0), a!(1) as usize);
+            ret(cpu, !ok as u32, 2)
+        }
+        ("kernel32.dll", "FlushFileBuffers") => {
+            let ok = rt.files.flush(a!(0));
+            if !ok { rt.last_error = 6; }
+            ret(cpu, ok as u32, 1)
+        }
+        ("kernel32.dll", "SetEndOfFile") => {
+            let ok = rt.files.set_end(a!(0));
+            if !ok { rt.last_error = 6; }
+            ret(cpu, ok as u32, 1)
+        }
+        // Console standard handles: the game is a GUI program and has none to replace.
+        ("kernel32.dll", "SetStdHandle") => ret(cpu, 1, 2),
+        // `_chdir` records the drive's current directory ("=C:"); nothing reads it back.
+        ("kernel32.dll", "SetEnvironmentVariableA") => ret(cpu, 1, 2),
+        // The menu-link action LINK_BUY (0x4103a0) passes the second token of
+        // website3.url, "URL=http://www.bugatron.com/purchase.html", which is neither a
+        // file nor a URL, so Windows fails it with SE_ERR_FNF and nothing opens. Gold
+        // 1.20's scripts define no LINK= items, so this is unreachable with the shipped
+        // data. Only a real http(s) URL would be handed to the host's browser.
+        ("shell32.dll", "ShellExecuteA") => {
+            let file = rt.mem.cstr(a!(2));
+            let lower = file.to_ascii_lowercase();
+            if lower.starts_with("http://") || lower.starts_with("https://") {
+                let url = std::ffi::CString::new(file.clone()).unwrap_or_default();
+                // SAFETY: NUL-terminated URL.
+                let ok = unsafe { sdl3_sys::misc::SDL_OpenURL(url.as_ptr()) };
+                ret(cpu, if ok { 42 } else { 31 }, 6) // > 32 success; SE_ERR_NOASSOC
+            } else {
+                eprintln!("[shell] ShellExecuteA({file:?}): not a file or URL; fails with SE_ERR_FNF as on Windows");
+                ret(cpu, 2, 6) // SE_ERR_FNF
+            }
+        }
         ("kernel32.dll", "RaiseException") | ("kernel32.dll", "RtlUnwind") | ("kernel32.dll", "UnhandledExceptionFilter") => {
             fatal(&format!("exception dispatch is not supported: {name} called (C++ throw, SEH raise, or unhandled exception); see docs/recompilation-feasibility.md D8"))
         }

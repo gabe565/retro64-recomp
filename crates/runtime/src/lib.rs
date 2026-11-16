@@ -56,7 +56,7 @@ pub const HOST_RETURN: u32 = 0xF0FF_FFF0;
 
 type RecompFn = unsafe extern "C" fn(*mut Cpu);
 extern "C" {
-    fn recomp_lookup(addr: u32) -> Option<RecompFn>;
+    pub(crate) fn recomp_lookup(addr: u32) -> Option<RecompFn>;
     fn recomp_function_count() -> u32;
 }
 
