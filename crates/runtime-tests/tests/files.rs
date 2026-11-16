@@ -198,8 +198,34 @@ fn embedded_pack_serves_as_the_game_folder() {
     assert_eq!(f.write(h, b"\x09"), Some(1));
     f.close(h);
     assert_eq!(std::fs::read(save.join("prefs")).unwrap(), b"\x09\x02");
+    assert_eq!(names(&save), ["prefs"], "the copy keeps the original's spelling, as on Windows");
+    // A new file in an existing folder goes into that folder's spelling.
+    let h = f.create("AUDIO\\new.wav", 0xC000_0000, 1).unwrap();
+    f.close(h);
+    assert_eq!(names(&save.join("Audio")), ["new.wav"]);
     let h = f.create("prefs", 0x8000_0000, 3).unwrap();
     assert_eq!(f.read(h, &mut buf), Some(2));
     assert_eq!(&buf[..2], b"\x09\x02", "the save folder wins over the pack");
     let _ = std::fs::remove_dir_all(&save);
+}
+
+/// File names in `dir` exactly as stored (case-sensitive), sorted.
+fn names(dir: &std::path::Path) -> Vec<String> {
+    let mut v: Vec<String> = std::fs::read_dir(dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).collect();
+    v.sort();
+    v
+}
+
+/// The same for an on-disk game folder: writing `GRAPHICS\TITLE.bmp` copies
+/// `Graphics/Title.BMP` under its own name.
+#[test]
+fn copy_on_write_keeps_the_original_spelling() {
+    let mut cpu = setup();
+    let (_data, save) = dirs("spelling");
+    let name = put_str(0, "GRAPHICS\\title.bmp");
+    let h = call_import(&mut cpu, "kernel32.dll", "CreateFileA", &[name, GENERIC_READ | GENERIC_WRITE, 0, 0, OPEN_EXISTING, 0x80, 0]);
+    assert_ne!(h, INVALID);
+    assert_eq!(call_import(&mut cpu, "kernel32.dll", "CloseHandle", &[h]), 1);
+    assert_eq!(names(&save), ["Graphics"]);
+    assert_eq!(names(&save.join("Graphics")), ["Title.BMP"]);
 }

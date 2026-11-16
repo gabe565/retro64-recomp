@@ -143,6 +143,36 @@ impl Files {
         }
     }
 
+    /// `rel` as spelled in the original game files (`/`-separated), for every leading
+    /// component that exists there. Windows keeps an existing file's or folder's name
+    /// when it is opened under another case; the save copy does the same.
+    fn data_spelling(&self, rel: &str) -> String {
+        let parts: Vec<&str> = rel.split(['\\', '/']).filter(|c| !c.is_empty() && *c != ".").collect();
+        let mut out: Vec<String> = Vec::new();
+        for (i, part) in parts.iter().enumerate() {
+            let prefix = parts[..=i].join("/");
+            let found = match self.pack {
+                Some(pack) => {
+                    let key = prefix.to_ascii_lowercase();
+                    pack.iter().find_map(|(p, _)| {
+                        let p_lower = p.to_ascii_lowercase();
+                        (p_lower == key || p_lower.starts_with(&(key.clone() + "/"))).then(|| p.split('/').nth(i).unwrap_or(part).to_string())
+                    })
+                }
+                // Read the directory: on a case-insensitive file system a lookup
+                // would echo the requested spelling instead of the stored one.
+                None => {
+                    let dir = self.data_dir.join(out.join("/"));
+                    std::fs::read_dir(dir).ok().and_then(|it| {
+                        it.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).find(|n| n.eq_ignore_ascii_case(part))
+                    })
+                }
+            };
+            out.push(found.unwrap_or_else(|| part.to_string()));
+        }
+        out.join("/")
+    }
+
     /// Whether `rel` is a folder of the original game files.
     fn data_dir_exists(&self, rel: &str) -> bool {
         match self.pack {
@@ -217,7 +247,7 @@ impl Files {
                 (None, None) => return Err(ERROR_FILE_NOT_FOUND),
             }
         } else {
-            let target = in_save.unwrap_or_else(|| self.save_dir.join(rel.replace('\\', "/")));
+            let target = in_save.unwrap_or_else(|| self.save_dir.join(self.data_spelling(&rel)));
             if let Some(parent) = target.parent() {
                 std::fs::create_dir_all(parent).map_err(|_| ERROR_ACCESS_DENIED)?;
             }
