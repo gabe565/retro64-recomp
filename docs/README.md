@@ -21,7 +21,7 @@
 
 | Tool | Purpose |
 |---|---|
-| `extract_reference.sh [--ghidra]` | Rebuild `_work/` (gitignored) from `reference/`: extract installers, decode `.lev` files, and optionally run the Ghidra export |
+| `extract_reference.sh [--ghidra]` | Rebuild the analysis workspace `_work/` (gitignored) from `reference/`: extract installers, decode `.lev` files, and optionally run the Ghidra export, which regenerates `hints/gold-1.20a.json`. The build itself needs neither this nor Ghidra |
 | `lev_decode.py` | Decode `.lev` files (NOT + JC decompression) |
 | `r3d_dump.py` | Parse and summarize `.r3d` models |
 | `ghidra/RecompSurvey.java` | Headless Ghidra post-script that counts instruction classes, indirect branches, x87 use, and code outside functions |

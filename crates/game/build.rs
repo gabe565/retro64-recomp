@@ -3,7 +3,7 @@
 //!
 //! Inputs (never committed):
 //!   BUGATRON_EXE    path to Bug3D.exe (Gold v1.20a, verified by SHA-256)
-//!   BUGATRON_HINTS  path to recomp_hints.json (tools/ghidra/ExportRecompHints.java)
+//!   BUGATRON_HINTS  path to the recompiler hints [default: hints/gold-1.20a.json]
 
 use bugatron_recomp::{recompile, Hints, Options, BUG3D_GOLD_120A_SHA256};
 use std::collections::BTreeSet;
@@ -20,7 +20,7 @@ fn main() {
     println!("cargo:rerun-if-env-changed=BUGATRON_HINTS");
     let root = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("../..");
     let exe_path = std::env::var("BUGATRON_EXE").map(PathBuf::from).unwrap_or_else(|_| root.join("_work/ext/gold120/app/Bug3D.exe"));
-    let hints_path = std::env::var("BUGATRON_HINTS").map(PathBuf::from).unwrap_or_else(|_| root.join("_work/ghidra/out/recomp_hints.json"));
+    let hints_path = std::env::var("BUGATRON_HINTS").map(PathBuf::from).unwrap_or_else(|_| root.join("hints/gold-1.20a.json"));
     println!("cargo:rerun-if-changed={}", exe_path.display());
     println!("cargo:rerun-if-changed={}", hints_path.display());
     let rt_c = root.join("crates/runtime/c");
@@ -37,7 +37,7 @@ fn main() {
     let built_from = exe_path.canonicalize().unwrap_or_else(|_| exe_path.clone());
     println!("cargo:rustc-env=BUGATRON_BUILT_FROM={}", built_from.display());
     let hints: Hints = serde_json::from_slice(&std::fs::read(&hints_path).unwrap_or_else(|e| panic!(
-        "cannot read hints at {} ({e}). Run tools/extract_reference.sh --ghidra.", hints_path.display()))).expect("parse hints");
+        "cannot read hints at {} ({e}).", hints_path.display()))).expect("parse hints");
 
     let opts = Options {
         roots: ROOTS.to_vec(),

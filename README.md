@@ -18,13 +18,13 @@ Prerequisites:
 - **SDL3**, found through pkg-config:
   - macOS: `brew install sdl3`
   - Debian 13: `apt install libsdl3-dev`
-- To prepare the build inputs: `unzip`, **innoextract** (1.9 or later), **python3**, and **Ghidra 12.x** (with a JDK). Ghidra's analysis supplies the function entry points and jump tables the recompiler starts from.
+- To prepare the build inputs: `unzip`, **innoextract** (1.9 or later) and **python3**. The recompiler starts from a committed list of function and jump-table addresses ([`hints/`](hints/README.md)), produced once by Ghidra and tied to the exe's hash; Ghidra 12.x is only needed to regenerate it.
 
 Steps:
 
 ```sh
 mkdir -p reference && cp /path/to/Bugatron_Win_EN_Gold_120.zip reference/
-tools/extract_reference.sh --ghidra   # unpacks into _work/ and runs the Ghidra export
+tools/extract_reference.sh             # unpacks the installer into _work/
 cargo build --release -p bugatron
 ```
 
@@ -99,6 +99,7 @@ Comparisons against the original game use Frida in a Windows VM; see `tools/frid
 | `crates/game` | The `bugatron` program: translates `Bug3D.exe` at build time and runs it |
 | `crates/runtime-tests`, `crates/x86-*` | Runtime tests and the x86 semantics suite, with its hardware oracle |
 | `crates/xmp-sys`, `third_party/libxmp-lite` | XM music playback (vendored libxmp-lite, MIT) |
+| `hints/` | Recompiler hints (addresses only) for Gold v1.20a's `Bug3D.exe` |
 | `tools/` | Extraction, Ghidra scripts, Frida probes, comparison and Windows kit scripts |
 | `docs/` | Findings, formats, function map, runtime status, validation results ([index](docs/README.md)) |
 
