@@ -28,6 +28,27 @@ Frame N is then the same scene in both. Native determinism is verified: two runs
 
 Repeat at other resolutions (`--video-mode`, and the dialog choice in the VM) and at 16-bit depth for approximation A6.
 
-## Results
+## Results (2026-11-15, 640×480×32, VM with dgVoodoo2)
 
-Pending: the VM was offline when the script was written. Native captures: `_work/compare/native/` (not committed).
+**The harness works.** Spawned with the script, the original:
+- calibrated its timer to 399999 ticks, the same as native;
+- reached flips 139, 450, and 700 at the same virtual times as the native build (3300 ms, 8483 ms, …);
+- had the same game tick (28621) at flip 1620.
+
+| Flip | Pixels differing | Mean channel difference |
+|---|---|---|
+| 139 | 0.67% | 0.49 |
+| 450 | 12.85% | 2.87 |
+| 700 | (similar to 450) | |
+
+**Same scene.** The settled title screen matches in layout and content. The boing ball has **the same oval shape in the original**, confirming the analysis in `../graphics/renderer.md` (perspective of an off-axis sphere).
+
+**Rendering on identical geometry.** 281 of 368 world matrices in a frame are bit-identical between the two. Where geometry matches:
+- 2D text: 97–99.8% of pixels identical; the rest differ by exactly 1 level.
+- 3D power-up icons: 92–98% identical, about 3.5% within ±10 levels (lighting and filtering rounding, A1/A2/A5), and 1–2% large differences, mostly on polygon edges (rasterisation, A7).
+
+**Small divergence in animation.** The 1/1024 s game timer (0x424440: `ftol((QPC − base) × 1024 / freq)`) lands exactly on a tick boundary every 15 frames at 24 MHz. In one such frame the original computed a delta of 17 where native computed 18 (ticks 28672 vs 28673 after flip 1623). Animated objects (ball rotation, about 0.25° by flip 1623; marquee scroll) then drift slightly apart, while static ones stay bit-identical.
+- Most likely cause: the two runs perform a different number of QPC reads between the timer's base sample and the frame starts. The script skips the video dialog (`DialogBoxParamA` returns at once), but the native build runs the dialog proc.
+- This is a harness alignment issue, not a runtime deviation. Next step: count QPC calls on both sides and align them, so that animated frames match too and the remaining differences can be attributed exactly.
+
+The VM runs the original under Windows-on-Arm x86 emulation (Prism). Its x87 arithmetic has not been validated against hardware; the native model matches an AMD Ryzen bit for bit. Any remaining numeric divergence should be checked against that before it is attributed to the runtime.

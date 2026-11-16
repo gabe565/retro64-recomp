@@ -43,7 +43,7 @@ fn main() {
             "--data" => data = v,
             "--save" => save = v,
             "--frames" => frames = Some(v.to_string_lossy().parse::<u64>().expect("--frames N")),
-            "--dump-frames" => dumps = v.to_string_lossy().split(',').map(|x| x.parse::<u64>().expect("--dump-frames A,B")).collect(),
+            "--dump-frames" => dumps = v.to_string_lossy().split(',').map(str::trim).filter(|x| !x.is_empty()).map(|x| x.parse::<u64>().expect("--dump-frames A,B")).collect(),
             "--dump-dir" => dump_dir = v,
             "--video-mode" => video_mode = Some(v.to_string_lossy().into_owned()),
             "--input" => input = input_script::parse(&v.to_string_lossy()).unwrap_or_else(|e| panic!("--input: {e}")),
@@ -65,7 +65,8 @@ fn main() {
         rt.frame_hook = Some(Box::new(move |rt, n| {
             if trace_delta {
                 // The game's frame delta (1/1024 s ticks), written by its frame-timing function.
-                eprintln!("[delta] flip {n}: {}", rt.mem.r32(0x8429e0));
+                let vt_ms = rt.clock.cadence.as_ref().map(|c| c.now_ns() / 1_000_000).unwrap_or(0);
+                eprintln!("[delta] flip {n}: {} (tick_now {}, virtual {vt_ms} ms)", rt.mem.r32(0x8429e0), rt.mem.r32(0x8429dc));
             }
             input_script::apply(rt, &input, n);
         }));

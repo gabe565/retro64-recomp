@@ -139,8 +139,8 @@ The runtime keeps this behaviour. QPC and `Sleep` take a fast import path, and c
 
 | Item | Status |
 |---|---|
-| Side-by-side captures against the original (deterministic Frida harness; `testing/visual-comparison.md`) | Harness ready. Waiting for the VM |
-| Interactive play: menus, input, starting a game, waves | Scripted play reaches gameplay. Level progression and game over are in progress |
+| Side-by-side captures against the original (deterministic Frida harness; `testing/visual-comparison.md`) | First comparison done: same scene and oval ball; static content near-identical. Next: align QPC read counts for exact animated frames, then other resolutions and 16-bit |
+| Interactive play: menus, input, starting a game, waves | Scripted play covers the menus, level 1, waves, mouse steering, lives, and the GAME OVER screen. Level clearing, high-score entry, and the return to the menu need a human player or a smarter bot |
 | Windows (Vulkan or D3D12) and Linux (Vulkan) graphics validation | Not started. Only Metal is tested; the SPIR-V shader path is untested (renderer.md A10) |
 | 16-bit display mode comparison | Pending (A6) |
 | Visible video dialog (RD1) | Not started |

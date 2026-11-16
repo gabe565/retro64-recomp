@@ -25,6 +25,9 @@
 'use strict';
 
 const CAPTURE_FLIPS = [139, 450, 700];
+// The game opens its files relative to the current directory; Frida's spawn
+// does not set it, so set it to the game directory before the game runs.
+const GAME_DIR = 'C:\\Program Files (x86)\\Bugatron Gold';
 const QPC_FREQ = 24000000n;
 const NS = 1000000000n;
 const UNITS = 60n;                 // virtual time unit: 1/60 ns; one refresh = NS units
@@ -72,6 +75,11 @@ replaceForGame(u32, 'GetCursorPos', 'int', ['pointer'], (p) => { p.writeS32(curs
 replaceForGame(u32, 'SetCursorPos', 'int', ['int', 'int'], (x, y) => { cursor = [x, y]; return 1; });
 replaceForGame(winmm, 'joyGetPos', 'uint32', ['uint32', 'pointer'], () => 167);
 replaceForGame(u32, 'DialogBoxParamA', 'int', ['pointer', 'pointer', 'pointer', 'pointer', 'pointer'], () => 1);
+
+{
+  const set = new NativeFunction(exp(k32, 'SetCurrentDirectoryA'), 'int', ['pointer'], 'stdcall');
+  if (!set(Memory.allocAnsiString(GAME_DIR))) send({ type: 'error', what: 'SetCurrentDirectoryA', dir: GAME_DIR });
+}
 
 const vblank = () => { t = (t / REFRESH + 1n) * REFRESH; };
 
