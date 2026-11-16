@@ -24,6 +24,7 @@ sdl3-sys = { version = "0.7", features = ["use-pkg-config"] }
 naga = { version = "30", features = ["wgsl-in", "msl-out", "spv-out"] }
 spirv-cross2 = { version = "0.7.2", default-features = false, features = ["hlsl"] }
 libc = "0.2"
+clap = { version = "4", features = ["derive", "env"] }
 num-bigint = "0.4"
 num-traits = "0.2"
 num-integer = "0.1"

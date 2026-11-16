@@ -30,6 +30,8 @@ fn main() {
         "cannot read Bug3D.exe at {} ({e}). Set BUGATRON_EXE to your copy of Bugatron Gold v1.20a.", exe_path.display()));
     let sha = bugatron_recomp::sha256_hex(&exe);
     assert_eq!(sha, BUG3D_GOLD_120A_SHA256, "BUGATRON_EXE is not Bugatron Gold v1.20a");
+    // The binary checks the Bug3D.exe it is given at run time against the one it was built from.
+    println!("cargo:rustc-env=BUGATRON_EXE_SHA256={BUG3D_GOLD_120A_SHA256}");
     let hints: Hints = serde_json::from_slice(&std::fs::read(&hints_path).unwrap_or_else(|e| panic!(
         "cannot read hints at {} ({e}). Run tools/extract_reference.sh --ghidra.", hints_path.display()))).expect("parse hints");
 

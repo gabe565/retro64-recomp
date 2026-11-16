@@ -4,79 +4,101 @@
 //! portable runtime. The runtime implements the imports the game uses; anything
 //! not yet implemented stops the run with its name (see docs/runtime-status.md).
 //!
-//! Usage: bugatron [--exe Bug3D.exe] [--data GAME_DIR] [--save SAVE_DIR] [--windowed] [--frames N]
-//!
-//! `--frames N` stops after N vertical blanks and prints import/COM call counts.
-//! `--video-mode WxHxBPP` (or "W x H x BPP") picks that mode in the game's video
-//! dialog (saved to prefs by the game, as when a user picks it). Without it, the
-//! largest 4:3 mode that fits the display at 32 bits is chosen (display.rs).
-//! `--input "600:F1,700:LEFT+,760:LEFT-"` injects keys at flip numbers: `KEY`
-//! taps (released two flips later), `KEY+` holds, `KEY-` releases. Keys:
-//! A–Z, 0–9, F1–F12, ESC, ENTER, SPACE, TAB, LEFT, RIGHT, UP, DOWN, CTRL,
-//! SHIFT, ALT, PGUP, PGDN, HOME, END. Mouse: `move@XxY`, `click@XxY` (left
-//! button, released two flips later), in guest screen coordinates.
-//! The game runs fullscreen (borderless on the current display, letterboxed), as the
-//! original took exclusive fullscreen; `--windowed` starts in a window. Alt+Enter
-//! (or Ctrl+Cmd+F on macOS) toggles. Scripted runs stay windowed.
-//! A scripted run ignores the host keyboard and mouse (and does not capture the
-//! mouse), so it replays identically even if someone touches the machine.
-//! `--record-audio FILE.wav SECONDS` records the FMOD output from the first song
-//! on (written when `--frames` stops the run).
-//! `--dump-frames A,B,...` saves the front buffer after those flips as PNG in
-//! `--dump-dir` (default `.`).
+//! Options: `bugatron --help` (generated from [`Args`]).
 //!
 //! Files the game writes (prefs, high scores) go to SAVE_DIR (default `./save`);
 //! the game directory is only read.
 
 use bugatron_runtime::{call_guest, display, input_script, with_rt, Runtime};
+use clap::{CommandFactory, Parser};
+use sha2::Digest;
 use std::path::PathBuf;
 
 const ENTRY: u32 = 0x42ba98;
 
+/// A parsed `--input` script (one value, not a list of them).
+#[derive(Clone)]
+struct Script(Vec<(u64, input_script::Input)>);
+
+/// Bugatron Gold v1.20a, statically recompiled.
+#[derive(Parser)]
+#[command(version, about, after_help = "Environment: BUGATRON_TRACE=fmod,audio,imports,messages,sdl,gpu,draws,delta (or all) prints diagnostics.")]
+struct Args {
+    /// Your Bug3D.exe (Gold v1.20a; checked by SHA-256)
+    #[arg(long, value_name = "FILE", env = "BUGATRON_EXE")]
+    exe: Option<PathBuf>,
+    /// Game folder (Audio, Graphics, levels) [default: Bug3D.exe's folder]
+    #[arg(long, value_name = "DIR")]
+    data: Option<PathBuf>,
+    /// Where prefs and high scores are written (game files are never modified)
+    #[arg(long, value_name = "DIR", default_value = "save")]
+    save: PathBuf,
+
+    /// Start in a window instead of fullscreen (Alt+Enter or Ctrl+Cmd+F toggles)
+    #[arg(long, help_heading = "Display")]
+    windowed: bool,
+    /// Guest display mode, e.g. 1600x1200x32 or 640x480x16 [default: the largest 4:3 mode that fits the display, 32 bpp]
+    #[arg(long, value_name = "WxHxBPP", value_parser = display::parse_mode, help_heading = "Display")]
+    video_mode: Option<(u32, u32, u32)>,
+
+    /// Stop after N vertical blanks and print import/COM call counts
+    #[arg(long, value_name = "N", help_heading = "Testing")]
+    frames: Option<u64>,
+    /// Scripted input at flip numbers, e.g. "600:F1,700:LEFT+,760:LEFT-": KEY tap, KEY+ hold,
+    /// KEY- release, move@XxY, click@XxY, rel@DXxDY, QUIT. Scripted runs stay windowed and
+    /// ignore the host keyboard and mouse
+    #[arg(long, value_name = "SCRIPT", value_parser = |s: &str| input_script::parse(s).map(Script), help_heading = "Testing")]
+    input: Option<Script>,
+    /// Save the screen after these flips as PNG
+    #[arg(long, value_name = "A,B,...", value_delimiter = ',', help_heading = "Testing")]
+    dump_frames: Vec<u64>,
+    /// Where --dump-frames writes
+    #[arg(long, value_name = "DIR", default_value = ".", help_heading = "Testing")]
+    dump_dir: PathBuf,
+    /// Record the FMOD mix (WAV) from the first song on, for SECONDS
+    #[arg(long, num_args = 2, value_names = ["FILE", "SECONDS"], help_heading = "Testing")]
+    record_audio: Option<Vec<String>>,
+}
+
 fn main() {
+    let args = Args::parse();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let mut exe = std::env::var("BUGATRON_EXE").map(PathBuf::from).unwrap_or_else(|_| root.join("_work/ext/gold120/app/Bug3D.exe"));
-    let mut data = exe.parent().map(PathBuf::from).unwrap_or_default();
-    let mut save = PathBuf::from("save");
-    let mut frames = None;
-    let mut dumps = Vec::new();
-    let mut dump_dir = PathBuf::from(".");
-    let mut video_mode = None;
-    let mut record: Option<(PathBuf, f64)> = None;
-    let mut input: Vec<(u64, input_script::Input)> = Vec::new();
-    let mut scripted = false;
-    let mut windowed = false;
-    let mut it = std::env::args().skip(1);
-    while let Some(k) = it.next() {
-        if k == "--windowed" {
-            windowed = true;
-            continue;
-        }
-        let v = PathBuf::from(it.next().unwrap_or_else(|| panic!("{k} needs a value")));
-        match k.as_str() {
-            "--exe" => exe = v,
-            "--data" => data = v,
-            "--save" => save = v,
-            "--frames" => frames = Some(v.to_string_lossy().parse::<u64>().expect("--frames N")),
-            "--dump-frames" => dumps = v.to_string_lossy().split(',').map(str::trim).filter(|x| !x.is_empty()).map(|x| x.parse::<u64>().expect("--dump-frames A,B")).collect(),
-            "--dump-dir" => dump_dir = v,
-            "--video-mode" => video_mode = Some(display::parse_mode(&v.to_string_lossy()).unwrap_or_else(|e| panic!("--video-mode: {e}"))),
-            "--record-audio" => {
-                let secs = it.next().and_then(|s| s.parse::<f64>().ok()).expect("--record-audio FILE SECONDS");
-                record = Some((v, secs));
-            }
-            "--input" => {
-                input = input_script::parse(&v.to_string_lossy()).unwrap_or_else(|e| panic!("--input: {e}"));
-                scripted = true;
-            }
-            _ => panic!("unknown argument {k}"),
-        }
+    let exe = args.exe.unwrap_or_else(|| root.join("_work/ext/gold120/app/Bug3D.exe"));
+    let data = args.data;
+    let save = args.save;
+    let frames = args.frames;
+    let dumps = args.dump_frames;
+    let dump_dir = args.dump_dir;
+    let video_mode = args.video_mode;
+    let scripted = args.input.is_some();
+    let input = args.input.map(|s| s.0).unwrap_or_default();
+    let windowed = args.windowed;
+    if !dumps.is_empty() {
+        let _ = std::fs::create_dir_all(&dump_dir);
     }
-    let image = std::fs::read(&exe).unwrap_or_else(|e| panic!("cannot read {}: {e}", exe.display()));
+    let record = args.record_audio.map(|v| {
+        let secs = v[1].parse::<f64>().unwrap_or_else(|_| {
+            Args::command().error(clap::error::ErrorKind::ValueValidation, format!("--record-audio: bad SECONDS {:?}", v[1])).exit()
+        });
+        let path = PathBuf::from(&v[0]);
+        if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        (path, secs)
+    });
+    let image = std::fs::read(&exe).unwrap_or_else(|e| {
+        eprintln!("error: cannot read {}: {e}\nPoint --exe (or BUGATRON_EXE) at your copy of Bugatron Gold v1.20a's Bug3D.exe.", exe.display());
+        std::process::exit(2)
+    });
+    let sha: String = sha2::Sha256::digest(&image).iter().map(|b| format!("{b:02x}")).collect();
+    if sha != env!("BUGATRON_EXE_SHA256") {
+        eprintln!("error: {} is not Bugatron Gold v1.20a's Bug3D.exe (SHA-256 {sha});\nthis build was translated from {}.", exe.display(), env!("BUGATRON_EXE_SHA256"));
+        std::process::exit(2);
+    }
     let mut rt = Runtime::load(&image).expect("load Bug3D.exe");
     rt.user.ignore_host_input = scripted;
     rt.user.host_fullscreen = !windowed && !scripted;
-    rt.files.data_dir = data;
+    rt.files.data_dir = data.unwrap_or_else(|| exe.parent().map(PathBuf::from).unwrap_or_default());
     rt.files.save_dir = save;
     rt.clock.cadence = Some(bugatron_runtime::clock::Cadence::new());
     rt.clock.pace = true;
