@@ -98,6 +98,10 @@ The tests cover:
 
 Comparisons against the original game use Frida in a Windows VM; see `tools/frida/` and [docs/testing/](docs/testing/).
 
+**CI** ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs on Linux (Debian 13, Vulkan on Mesa lavapipe), macOS and Windows (Direct3D 12 on WARP). Each job runs one of two sets:
+- **Game-free tests** run on every push and pull request.
+- **The full suite plus a short scripted play session** runs when the repository secret `BUGATRON_GAME_URL` points to a private copy of `Bugatron_Win_EN_Gold_120.zip`. Set `BUGATRON_GAME_TOKEN` too if that URL needs a Bearer token. The download is checked against the hash above. Between runs it's kept in the Actions cache encrypted with those secrets, because pull requests from forks can restore a public repository's caches (but get no secrets to decrypt them). The game is never published as an artifact.
+
 ## Repository layout
 
 | Path | |

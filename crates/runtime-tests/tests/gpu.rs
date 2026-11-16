@@ -26,7 +26,8 @@ struct Scene {
 fn scene(cpu: &mut Cpu, bpp: u32) -> Option<Scene> {
     with_rt(|rt| rt.offscreen_gpu = true);
     if !with_rt(bugatron_runtime::render::gpu_available) {
-        assert!(std::env::var_os("BUGATRON_REQUIRE_GPU").is_none(), "no SDL3 GPU device, but BUGATRON_REQUIRE_GPU is set");
+        let required = std::env::var("BUGATRON_REQUIRE_GPU").is_ok_and(|v| !v.is_empty() && v != "0");
+        assert!(!required, "no SDL3 GPU device, but BUGATRON_REQUIRE_GPU is set");
         SKIPPED.store(true, Ordering::Relaxed);
         return None;
     }

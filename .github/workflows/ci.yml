@@ -1,0 +1,136 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # SHA-256 of Bugatron_Win_EN_Gold_120.zip (README.md).
+  GAME_SHA256: f3ee37e54c998eb8167c997f95b9dd4c81c482633c454bb2d4d5ba2f52e894f9
+
+jobs:
+  test:
+    name: test (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    container: ${{ matrix.container }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Debian 13 packages SDL3; Vulkan comes from Mesa's lavapipe under Xvfb.
+          - name: linux
+            os: ubuntu-latest
+            container: debian:trixie
+            run: xvfb-run -a
+            require_gpu: "1"
+          # Hosted macOS runners may not expose Metal; GPU tests report "ignored" then.
+          - name: macos
+            os: macos-latest
+            require_gpu: ""
+          # SDL3 is built from source (no pkg-config with MSVC); D3D12 runs on WARP.
+          - name: windows
+            os: windows-latest
+            features: --features bugatron-runtime/sdl3-from-source
+            require_gpu: "1"
+    env:
+      # The game is provided only to this repository's own runs: secrets are not
+      # passed to pull requests from forks, which then run the game-free tests.
+      GAME_URL: ${{ secrets.BUGATRON_GAME_URL }}
+      GAME_TOKEN: ${{ secrets.BUGATRON_GAME_TOKEN }}
+      BUGATRON_REQUIRE_GPU: ${{ matrix.require_gpu }}
+      SDL_AUDIO_DRIVER: dummy
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Install packages (Debian)
+        if: matrix.name == 'linux'
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends build-essential pkg-config curl ca-certificates git \
+            openssl libsdl3-dev mesa-vulkan-drivers xvfb xauth
+
+      - uses: actions/checkout@v7
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install SDL3 (macOS)
+        if: matrix.name == 'macos'
+        run: brew install sdl3
+
+      - name: Put DXC on PATH (Windows)
+        if: matrix.name == 'windows'
+        shell: pwsh
+        run: |
+          $dxc = Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\x64\dxc.exe" |
+            Sort-Object FullName -Descending | Select-Object -First 1
+          if (-not $dxc) { throw "dxc.exe not found in the Windows SDK" }
+          $dxc.DirectoryName | Out-File -FilePath $env:GITHUB_PATH -Append
+
+      - uses: Swatinem/rust-cache@v2
+
+      # The game is cached encrypted with the secrets as the passphrase: pull requests
+      # from forks can restore this repository's caches, but cannot decrypt them.
+      - name: Restore the game (encrypted cache)
+        id: game-cache
+        if: env.GAME_URL != ''
+        uses: actions/cache/restore@v6
+        with:
+          path: game.zip.enc
+          key: game-${{ env.GAME_SHA256 }}-v1
+          enableCrossOsArchive: true
+
+      - name: Fetch the game
+        if: env.GAME_URL != ''
+        env:
+          GAME_KEY: ${{ secrets.BUGATRON_GAME_URL }}${{ secrets.BUGATRON_GAME_TOKEN }}
+        run: |
+          mkdir -p reference
+          zip=reference/Bugatron_Win_EN_Gold_120.zip
+          # macOS's /usr/bin/openssl is LibreSSL; use the runner's OpenSSL 3.
+          openssl=openssl
+          if [ "$RUNNER_OS" = macOS ]; then openssl="$(brew --prefix openssl@3)/bin/openssl"; fi
+          crypt() { "$openssl" enc "$@" -aes-256-cbc -pbkdf2 -iter 200000 -md sha256 -pass env:GAME_KEY; }
+          if command -v sha256sum >/dev/null; then sum=(sha256sum); else sum=(shasum -a 256); fi
+          verify() { echo "$GAME_SHA256  $zip" | "${sum[@]}" -c - >/dev/null 2>&1; }
+          if [ -f game.zip.enc ] && crypt -d -in game.zip.enc -out "$zip" 2>/dev/null && verify; then
+            echo "restored from the encrypted cache"
+          else
+            auth=()
+            if [ -n "$GAME_TOKEN" ]; then auth=(-H "Authorization: Bearer $GAME_TOKEN"); fi
+            curl -fsSL "${auth[@]}" -o "$zip" "$GAME_URL"
+            verify || { echo "downloaded file does not match SHA-256 $GAME_SHA256"; exit 1; }
+            crypt -salt -in "$zip" -out game.zip.enc
+            echo "downloaded"
+          fi
+
+      - name: Save the game (encrypted cache)
+        if: env.GAME_URL != '' && steps.game-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v6
+        with:
+          path: game.zip.enc
+          key: game-${{ env.GAME_SHA256 }}-v1
+          enableCrossOsArchive: true
+        continue-on-error: true  # the three jobs race to save the same entry
+
+      - name: Test (game-free)
+        if: env.GAME_URL == ''
+        run: ${{ matrix.run }} cargo test --release --workspace --exclude bugatron --exclude bugatron-poc ${{ matrix.features }}
+
+      - name: Test (full)
+        if: env.GAME_URL != ''
+        run: ${{ matrix.run }} cargo test --release --workspace ${{ matrix.features }}
+
+      # A short scripted session: start a game (F1), steer, fire. Fails on any
+      # unimplemented import or method, guest fault, or panic.
+      - name: Play a scripted session
+        if: env.GAME_URL != ''
+        run: >
+          ${{ matrix.run }} cargo run --release -p bugatron ${{ matrix.features }} --
+          --video-mode 640x480x32 --save target/ci-save --frames 1500
+          --input "600:F1,800:click@70x120,1000:CTRL+,1000:LEFT+,1100:LEFT-,1150:RIGHT+,1250:RIGHT-"
