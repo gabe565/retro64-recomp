@@ -8,20 +8,28 @@
 //!   waits for the vertical blank.
 //!
 //! On the 60 Hz reference that gives one frame per refresh. The runtime
-//! reproduces it with virtual time that advances only when the guest waits:
+//! reproduces it with virtual time that advances only when the guest waits or
+//! observes the clock:
 //! - `Flip(WAIT)` and `WaitForVerticalBlank` → the next 1/60 s refresh boundary;
-//! - `Sleep(n)` → +n ms; `Sleep(0)` (a yield) → +1 µs, so busy-waits end;
+//! - `Sleep(n)` → +n ms; `Sleep(0)` is a scheduling yield and takes no time;
+//! - each QueryPerformanceCounter read takes one QPC tick (reading the clock
+//!   takes time on real hardware too), so busy-waits always terminate;
 //! - QPC, `timeGetTime` and message times all read this one exact counter.
 //!
-//! Calibration therefore measures exactly 1/60 s, every frame starts on a
-//! refresh boundary, and the limiter's overshoot drops one frame every
-//! 16,667 frames, deterministically, much as accumulated overshoot does on
-//! real hardware. [`pace`] waits for host time to catch up after each wait;
-//! presentation never drives the cadence.
+//! Consequences (docs/runtime-status.md, simulation clock):
+//! - the calibration loop measures one refresh minus one tick, as real hardware
+//!   measures slightly under the refresh (loop overhead between the QPC after
+//!   one wait and the QPC before the next);
+//! - the limiter's exit phase therefore settles at a fixed offset after each
+//!   vertical blank instead of drifting: every frame spans exactly one refresh,
+//!   with no periodic dropped frame (one appeared only when `Sleep(0)` was
+//!   charged 1 µs and calibration measured the period exactly);
+//! - [`pace`] waits for host time to catch up after each wait; presentation
+//!   never drives the cadence.
 //!
-//! If the game polls the clock many times without waiting (a busy-wait without
-//! `Sleep`), virtual time follows host time until its next wait, with a
-//! diagnostic printed once.
+//! If the game polls `timeGetTime` many times without waiting (a busy-wait
+//! that does not advance time), virtual time follows host time until its next
+//! wait, with a diagnostic printed once.
 
 use std::time::{Duration, Instant};
 
@@ -31,8 +39,6 @@ const NS: u128 = 1_000_000_000;
 /// Virtual time is kept in units of 1/REFRESH_HZ ns, so one refresh is exactly `NS` units.
 const UNITS_PER_NS: u128 = REFRESH_HZ as u128;
 const REFRESH: u128 = NS;
-/// Guest time consumed by `Sleep(0)`.
-pub const YIELD_NS: u128 = 1_000;
 /// Clock reads without a wait before the stall fallback engages.
 pub const STALL_READS: u32 = 1_000_000;
 
@@ -63,10 +69,19 @@ impl Cadence {
         (self.t * freq as u128 / (NS * UNITS_PER_NS)) as u64
     }
 
-    /// A guest read of the clock in ticks of `freq` (QPC: its frequency; timeGetTime: 1000).
+    /// A guest read of the clock in ticks of `freq` (timeGetTime: 1000; message times).
     pub fn read_ticks(&mut self, freq: u64) -> u64 {
         self.note_read();
         self.ticks(freq)
+    }
+
+    /// A QueryPerformanceCounter read at `freq`: returns now, then one QPC tick passes.
+    pub fn read_qpc(&mut self, freq: u64) -> u64 {
+        let v = self.ticks(freq);
+        // One tick of `freq` in 1/REFRESH_HZ ns units, rounded up so the counter always advances.
+        self.t += (NS * UNITS_PER_NS).div_ceil(freq.max(1) as u128);
+        self.reads_since_wait = 0;
+        v
     }
 
     fn note_read(&mut self) {
@@ -99,10 +114,9 @@ impl Cadence {
         self.waited();
     }
 
-    /// `Sleep(ms)`.
+    /// `Sleep(ms)`. `Sleep(0)` only yields: no guest time passes.
     pub fn sleep(&mut self, ms: u32) {
-        let ns = if ms == 0 { YIELD_NS } else { ms as u128 * 1_000_000 };
-        self.t += ns * UNITS_PER_NS;
+        self.t += ms as u128 * 1_000_000 * UNITS_PER_NS;
         self.waited();
     }
 

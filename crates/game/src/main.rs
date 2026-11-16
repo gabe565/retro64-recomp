@@ -47,6 +47,10 @@ fn main() {
     rt.clock.pace = true;
     rt.clock.stop_after_vblanks = frames;
     rt.capture_frames = dumps;
+    if std::env::var("BUGATRON_TRACE").is_ok_and(|t| t.contains("delta")) {
+        // The game's frame delta (1/1024 s ticks), written by its frame-timing function.
+        rt.frame_hook = Some(Box::new(|rt, n| eprintln!("[delta] flip {n}: {}", rt.mem.r32(0x8429e0))));
+    }
     rt.capture_dir = dump_dir;
     eprintln!("translated functions: {}", Runtime::function_count());
     rt.install();

@@ -97,6 +97,8 @@ pub struct Runtime {
     /// Flip numbers after which the front buffer is saved as PNG (diagnostics).
     pub capture_frames: Vec<u64>,
     pub capture_dir: std::path::PathBuf,
+    /// Called after every Flip with the flip count (diagnostics, scripted input).
+    pub frame_hook: Option<Box<dyn FnMut(&mut Runtime, u64)>>,
     pub mem: GuestMemory,
     pub pe: Pe,
     pub(crate) import_names: Vec<(String, String)>,
@@ -182,6 +184,7 @@ impl Runtime {
             offscreen_gpu: false,
             capture_frames: Vec::new(),
             capture_dir: std::path::PathBuf::from("."),
+            frame_hook: None,
         };
         rt.command_line = rt.alloc_cstr("\"C:\\Bugatron\\Bug3D.exe\"");
         rt.env_block = rt.heap_alloc(16, true);
@@ -222,6 +225,7 @@ impl Runtime {
             offscreen_gpu: false,
             capture_frames: Vec::new(),
             capture_dir: std::path::PathBuf::from("."),
+            frame_hook: None,
         })
     }
 

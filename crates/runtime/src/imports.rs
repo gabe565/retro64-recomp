@@ -394,7 +394,7 @@ fn call(rt: &mut Runtime, cpu: &mut Cpu, dll: &str, name: &str) {
             let freq = rt.clock.qpc_frequency;
             let v = match (rt.clock.qpc_queue.pop_front(), rt.clock.cadence.as_mut()) {
                 (Some(v), _) => v,
-                (None, Some(c)) => c.read_ticks(freq),
+                (None, Some(c)) => c.read_qpc(freq),
                 (None, None) => { rt.clock.qpc_underflow = true; 0 }
             };
             rt.mem.w32(p, v as u32);

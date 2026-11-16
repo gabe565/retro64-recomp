@@ -66,6 +66,11 @@ pub(crate) fn after_flip(rt: &mut Runtime, front: u32) {
         gpu::present(rt, front);
     }
     capture::maybe_capture(rt, front);
+    if let Some(mut hook) = rt.frame_hook.take() {
+        let n = rt.com.flips;
+        hook(rt, n);
+        rt.frame_hook.get_or_insert(hook);
+    }
 }
 
 /// A surface's pixel storage is going away.

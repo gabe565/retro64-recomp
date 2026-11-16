@@ -70,18 +70,25 @@ The device starts with the documented Direct3D 6 defaults. Z is enabled when the
 
 The original paces itself against vertical blanks:
 - At start-up it calibrates a refresh period from 60 `WaitForVerticalBlank` intervals timed with QPC (median; 0x41c180).
-- Every frame it busy-waits (QPC + `Sleep(0)`) for one period since its previous exit, then calls `Flip(DDFLIP_WAIT)`.
+- Every frame it busy-waits (QPC + `Sleep(0)`) until one calibrated period has passed since its previous exit, then calls `Flip(DDFLIP_WAIT)`.
 
-Guest time is one exact counter that advances only when the guest waits:
+Guest time is one exact counter (no drift) that advances only when the guest waits or reads the clock:
 - `Flip(WAIT)` and `WaitForVerticalBlank` advance it to the next 1/60 s refresh boundary.
-- `Sleep(n)` adds n ms; `Sleep(0)` (a yield) adds 1 µs.
-- QPC, `timeGetTime`, and message times all read it.
+- `Sleep(n)` adds n ms. `Sleep(0)` is a scheduling yield and adds nothing.
+- Each QPC read takes one QPC tick (1/24,000,000 s), so busy-waits always terminate deterministically.
+- QPC, `timeGetTime`, and message times all derive from this counter.
 
-Consequences:
-- Calibration measures exactly 1/60 s, and every frame starts on a refresh boundary.
-- The limiter's 1 µs overshoot drops one frame every 16,667 frames, deterministically. Accumulated overshoot does the same on real hardware.
-- After each wait, the host sleeps until real time catches up. Presentation never drives the cadence. If the host falls more than 250 ms behind, the backlog is forgiven.
-- A busy-wait without `Sleep` (1,000,000 clock reads) follows host time until the next wait, with a one-time diagnostic.
+**Frame drops: an investigation.** An earlier version charged 1 µs per `Sleep(0)` and dropped one frame every 16,667. The cause was the virtual clock, not the original:
+- The limiter's exit phase drifts by (overshoot − calibration shortfall) per frame. The overshoot is how far past the target the poll loop exits. The shortfall is how much the calibration under-measures the refresh, because time passes between the QPC after one wait and the QPC before the next.
+- With an ideal calibration (no shortfall) and a 1 µs overshoot, the phase crept forward until a frame was missed.
+- On real hardware both quantities are microsecond-scale overheads, and whether a machine ever drops frames depends on which is larger. The VM recording (600 frames, deltas of 7–75 ticks under x86 emulation) is too noisy to say what reference hardware did.
+- Now each QPC read costs one tick. The calibration measures one refresh minus one tick, as real hardware measures slightly under. The limiter's exit settles at a fixed offset after each vblank.
+
+Measured in the game over 1,236 frames, its frame delta (global 0x8429e0, in 1/1024 s) is 17 or 18 ticks: exactly the 1024/60 pattern, with no doubled frames. The regression test `limiter_and_flip_keep_one_frame_per_refresh` runs the original's calibration and limiter loops for 20,000 frames.
+
+**Pacing.** After each wait, the host sleeps until real time catches up. Presentation never drives the cadence. If the host falls more than 250 ms behind, the backlog is forgiven.
+
+**Busy-wait fallback.** A busy-wait on `timeGetTime` (1,000,000 reads without advancing time) follows host time until the next wait, with a one-time diagnostic.
 
 ## Tests
 
@@ -110,5 +117,5 @@ Consequences:
 | RD6 | The exact message sequence of `CreateWindowExA`/`ShowWindow` is modelled on Windows documentation, not traced from the VM. Non-client and paint messages are omitted. | The window procedure handles none of the omitted messages | Confirm against a VM message trace |
 | RD7 | `TranslateMessage` generates no `WM_CHAR`, and `SetCursorPos` does not warp the host pointer. | The window procedure does not use `WM_CHAR` | — |
 | RD8 | FMOD is silent: samples and songs are loaded but not played. | No audio | Audio milestone (SDL3 audio + libxmp) |
-| RD9 | `Sleep(0)` takes exactly 1 µs of guest time. | Sets how often the limiter's overshoot drops a frame (1 in 16,667) | By design (deterministic) |
+| RD9 | Intentional: guest time is idealised. Every frame spans exactly one 1/60 s refresh, `Sleep(0)` takes no time, and a QPC read takes one tick. Real machines add jitter and, depending on their overheads, an occasional dropped frame. | Stable, drift-free 60 Hz; identical simulation on every host | By design (owner decision, 2026-11-15) |
 | RD10 | Rendering approximations A1–A13 | See `graphics/renderer.md` | VM capture comparison |

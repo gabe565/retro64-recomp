@@ -53,12 +53,16 @@ fn vblanks_land_exactly_on_refresh_boundaries() {
 }
 
 #[test]
-fn sleep_zero_is_a_short_yield() {
+fn sleep_zero_is_a_pure_yield_and_qpc_reads_take_one_tick() {
     let mut c = Cadence::new();
     c.sleep(0);
-    assert_eq!(c.now_ns(), 1_000);
+    assert_eq!(c.now_ns(), 0);
     c.sleep(10);
-    assert_eq!(c.now_ns(), 10_001_000);
+    assert_eq!(c.now_ns(), 10_000_000);
+    let a = c.read_qpc(FREQ);
+    let b = c.read_qpc(FREQ);
+    assert_eq!(b, a + 1, "successive QPC reads differ by exactly one tick");
+    assert_eq!(c.ticks(FREQ), b + 1);
 }
 
 /// The original's timer calibration (0x41c180): QPC around each of 60
@@ -75,11 +79,14 @@ fn timer_calibration_measures_one_refresh() {
         intervals.push(qpc(&mut cpu) - a);
     }
     intervals.sort();
-    assert_eq!(intervals[30], FREQ / 60, "the game sets its timer to exactly one 60 Hz refresh");
+    // The QPC read before each wait takes a tick, as real loop overhead does.
+    assert_eq!(intervals[30], FREQ / 60 - 1, "the game measures one 60 Hz refresh, minus the read");
 }
 
-/// The original's per-frame limiter (0x41c180): busy-wait with QPC + Sleep(0)
-/// until one period after its previous exit, then Flip(DDFLIP_WAIT).
+/// The original's per-frame limiter (0x41c180): calibrate, then each frame
+/// busy-wait with QPC + Sleep(0) until one measured period after the previous
+/// exit, then Flip(DDFLIP_WAIT). Over 20,000 frames (over 5 minutes) every
+/// frame must span exactly one refresh: no drift, no dropped frames.
 #[test]
 fn limiter_and_flip_keep_one_frame_per_refresh() {
     let mut cpu = setup();
@@ -92,14 +99,27 @@ fn limiter_and_flip_keep_one_frame_per_refresh() {
     w32(d + 0x14, 1);
     w32(d + 0x68, 0x2218);
     let (_, front) = create_surface(&mut cpu, dd4, d);
-    let period = FREQ / 60;
+    // Calibration as the game does it (median of 60 vblank intervals).
+    let mut iv = Vec::new();
+    for _ in 0..60 {
+        let a = qpc(&mut cpu);
+        call_com(&mut cpu, dd4, 22, &[1, 0]);
+        iv.push(qpc(&mut cpu) - a);
+    }
+    iv.sort();
+    let period = iv[30];
     let mut prev_exit = qpc(&mut cpu);
     let mut frame_starts = Vec::new();
-    for _ in 0..120 {
+    let mut spins = 0;
+    for frame in 0..20_000 {
         frame_starts.push(qpc(&mut cpu));
         loop {
             let now = qpc(&mut cpu);
             call_import(&mut cpu, "kernel32.dll", "Sleep", &[0]);
+            // The first frame has no preceding Flip and waits a whole period.
+            if frame > 0 {
+                spins += 1;
+            }
             if now > prev_exit + period {
                 prev_exit = now;
                 break;
@@ -108,11 +128,12 @@ fn limiter_and_flip_keep_one_frame_per_refresh() {
         assert_eq!(call_com(&mut cpu, front, 11, &[0, 1]), 0);
     }
     for w in frame_starts.windows(2).skip(1) {
-        assert_eq!(w[1] - w[0], period, "each frame spans exactly one refresh");
+        assert_eq!(w[1] - w[0], FREQ / 60, "each frame spans exactly one refresh");
     }
+    assert!(spins < 20_000 * 4, "the busy-wait ends after a few polls ({spins})");
     // Message times and timeGetTime read the same clock.
-    let ms = call_import(&mut cpu, "winmm.dll", "timeGetTime", &[]);
-    assert_eq!(ms as u64, qpc(&mut cpu) * 1000 / FREQ);
+    let ms = call_import(&mut cpu, "winmm.dll", "timeGetTime", &[]) as u64;
+    assert_eq!(ms, qpc(&mut cpu) * 1000 / FREQ);
 }
 
 #[test]
