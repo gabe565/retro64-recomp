@@ -56,6 +56,13 @@ See `graphics/r3d-interface.md` §7 (G1–G7) and §8: runtime boundary validati
 | P2 | **Resolved 2026-11-15.** REA's Ghidra provider works (Ghidra 12.2, 796 procedures listed for Gold 1.20). Ghidra checkpoint mode is off, so names and comments set through REA are discarded on close. Setting `REA_GHIDRA_CHECKPOINT_DIR` would keep them. |
 | P3 | No behavioral equivalence has been claimed for anything except the `.lev` decoder and `.r3d` parser. Both are verified by exact reconstruction of every shipped file. |
 
+## Observed issues (unconfirmed)
+
+| # | Report | Notes |
+|---|---|---|
+| O1 | 2026-11-16, macOS fullscreen: P (pause) → three-finger swipe to another Space → swipe back → P did not unpause. Not reproduced on retry. | Possibly a missed focus-gained event across a Spaces switch, which would leave the game inactive: a frozen screen looks paused. Or the build predated 22ebd92 (restore on refocus). If it recurs, try `BUGATRON_TRACE=messages,sdl` and check for `WM_SETFOCUS`/`WM_SIZE` on the way back. Possible fix: reconcile with the window's actual focus on each `PeekMessage` (not done; event-driven focus is the norm) |
+| O2 | 2026-11-16: atoms "very fast, nearly vertical". | Explained by the original code (function map: 0x415bb0, step index × 1.5° per frame, about 4 orbits/s at any frame rate). Not yet compared against the original at runtime |
+
 ## Known deviations
 
 None yet, because no game code exists. Record deviations here as they are introduced.

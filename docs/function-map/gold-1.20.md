@@ -56,8 +56,10 @@ Rust names are proposed and not yet implemented.
 | 0x408e70 | Colour schemes (RAINBOW, EARTH_TONES, RANDOM_GRADIENT) | S |
 | 0x406b40 | Star field (`star_model`) | S |
 | 0x406c90 | Bullets | S |
-| 0x402a30 / 0x415380 / 0x407240 / 0x4138a0 / 0x415bb0 | Boing-ball power-up and its objects | S |
-| 0x4156e0 | Atoms power-up (atomr/g/b) | S |
+| 0x402a30 / 0x415380 / 0x407240 / 0x4138a0 | Boing-ball power-up and its objects | S |
+| 0x4156e0 | Power-up handler. Case 0xF (0x41599c) creates the three atoms (atomr/g/b) in the ship's list at +0x530. Each gets: +0x64 = (rand()%100 − 50)·0.02; +0x68 = 1 − √(+0x64²); +0x6c = (rand()%100 − 50)·0.02; +0x70 = index | V |
+| 0x415bb0 | Atom orbit, run on the last simulation step of a frame. Angle +0x4c += step·1.5° (wrapped once at 360°). Position = ship + (sin + cos table at 0x82e988 / 0x82e38c, indexed by `_ftol`(angle)) × the per-atom factors. It uses the step *index* (frame ticks − 1), so atoms move about 24° per frame, about 1,440°/s at 60 fps and about the same at any rate. This looks like the original's own quirk: the owner noticed very fast atoms (2026-11-16) | V |
+| 0x41295a–0x4129b1 | Simulation loop: one step per 1/1024 s tick of the frame delta (0x8429e0); the step index is at 0x832030 | V |
 | 0x4103a0 | Menu: difficulty (EASY/NORMAL/HARD), link handling, website | S |
 | 0x411020 | High-score screen | S |
 | 0x418730 | High-score name entry | S |
