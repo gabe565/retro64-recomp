@@ -11,6 +11,7 @@
   - [gold-1.15.md](versions/gold-1.15.md)
   - [standard-1.51d.md](versions/standard-1.51d.md)
   - [standard-1.20.md](versions/standard-1.20.md) (not extracted)
+  - [standard-1.04.md](versions/standard-1.04.md) (2001 shareware; BASS audio)
 - `formats/` documents the data formats.
   - [lev.md](formats/lev.md) covers encoded config and level scripts and their XML-like grammar.
   - [r3d.md](formats/r3d.md) covers the model format.

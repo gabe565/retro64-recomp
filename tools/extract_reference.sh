@@ -2,7 +2,8 @@
 # Rebuild the local analysis workspace (_work/, gitignored) from reference/.
 #
 # Only reference/Bugatron_Win_EN_Gold_120.zip is required; the other releases
-# (Bugatron_Win_EN_Gold.zip, Bugatron_Win_EN_v151d.exe) are extracted if present.
+# (Bugatron_Win_EN_Gold.zip, Bugatron104Setup.exe, Bugatron_Win_EN_v151d.exe) are
+# extracted if present.
 # Never modifies anything under reference/. Requires: unzip, innoextract (>=1.9),
 # python3. Optional: Ghidra 12.x (set GHIDRA_HOME or install via Homebrew) for
 # the headless decompile export.
@@ -28,6 +29,12 @@ if [[ -f "$REF/Bugatron_Win_EN_Gold.zip" ]]; then
   unzip -o -q "$REF/Bugatron_Win_EN_Gold.zip" -d "$W/zips"
   innoextract -s -d "$W/ext/gold115" "$W/zips/Setup.exe"
   versions+=(gold115)
+fi
+
+if [[ -f "$REF/Bugatron104Setup.exe" ]]; then
+  echo "== Standard 1.04 (Inno Setup 1.3.25)"
+  innoextract -s -d "$W/ext/v104" "$REF/Bugatron104Setup.exe"
+  versions+=(v104)
 fi
 
 if [[ -f "$REF/Bugatron_Win_EN_v151d.exe" ]]; then
