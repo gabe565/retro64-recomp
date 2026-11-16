@@ -15,6 +15,8 @@
 //! A–Z, 0–9, F1–F12, ESC, ENTER, SPACE, TAB, LEFT, RIGHT, UP, DOWN, CTRL,
 //! SHIFT, ALT, PGUP, PGDN, HOME, END. Mouse: `move@XxY`, `click@XxY` (left
 //! button, released two flips later), in guest screen coordinates.
+//! A scripted run ignores the host keyboard and mouse (and does not capture the
+//! mouse), so it replays identically even if someone touches the machine.
 //! `--record-audio FILE.wav SECONDS` records the FMOD output from the first song
 //! on (written when `--frames` stops the run).
 //! `--dump-frames A,B,...` saves the front buffer after those flips as PNG in
@@ -39,6 +41,7 @@ fn main() {
     let mut video_mode = None;
     let mut record: Option<(PathBuf, f64)> = None;
     let mut input: Vec<(u64, input_script::Input)> = Vec::new();
+    let mut scripted = false;
     let mut it = std::env::args().skip(1);
     while let Some(k) = it.next() {
         let v = PathBuf::from(it.next().unwrap_or_else(|| panic!("{k} needs a value")));
@@ -54,12 +57,16 @@ fn main() {
                 let secs = it.next().and_then(|s| s.parse::<f64>().ok()).expect("--record-audio FILE SECONDS");
                 record = Some((v, secs));
             }
-            "--input" => input = input_script::parse(&v.to_string_lossy()).unwrap_or_else(|e| panic!("--input: {e}")),
+            "--input" => {
+                input = input_script::parse(&v.to_string_lossy()).unwrap_or_else(|e| panic!("--input: {e}"));
+                scripted = true;
+            }
             _ => panic!("unknown argument {k}"),
         }
     }
     let image = std::fs::read(&exe).unwrap_or_else(|e| panic!("cannot read {}: {e}", exe.display()));
     let mut rt = Runtime::load(&image).expect("load Bug3D.exe");
+    rt.user.ignore_host_input = scripted;
     rt.files.data_dir = data;
     rt.files.save_dir = save;
     rt.clock.cadence = Some(bugatron_runtime::clock::Cadence::new());

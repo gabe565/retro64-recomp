@@ -93,6 +93,9 @@ pub struct User {
     sdl_ready: bool,
     /// No host window or SDL (tests, CI): messages and state only.
     pub headless: bool,
+    /// Scripted replay: host keyboard and mouse events are dropped and the mouse
+    /// is not captured, so touching the host cannot change a deterministic run.
+    pub ignore_host_input: bool,
 }
 
 impl User {
@@ -201,6 +204,8 @@ pub fn pump() {
         }
         if ty == SDL_EVENT_QUIT.0 || ty == SDL_EVENT_WINDOW_CLOSE_REQUESTED.0 {
             post(Msg { hwnd: MAIN_HWND, message: WM_SYSCOMMAND, wparam: SC_CLOSE, lparam: 0 });
+        } else if with_rt(|rt| rt.user.ignore_host_input) {
+            continue;
         } else if ty == SDL_EVENT_KEY_DOWN.0 || ty == SDL_EVENT_KEY_UP.0 {
             let k = unsafe { ev.key };
             key_input(k.scancode.0, k.down, k.repeat, (k.r#mod.0 & SDL_KMOD_ALT.0) != 0);
@@ -326,7 +331,9 @@ pub(crate) fn import(cpu: &mut Cpu, name: &str) -> bool {
                         // SAFETY: valid window. Capture the mouse for relative motion.
                         unsafe {
                             SDL_ShowWindow(w.sdl);
-                            sdl3_sys::mouse::SDL_SetWindowRelativeMouseMode(w.sdl, true);
+                            if !rt.user.ignore_host_input {
+                                sdl3_sys::mouse::SDL_SetWindowRelativeMouseMode(w.sdl, true);
+                            }
                         }
                     }
                 });
