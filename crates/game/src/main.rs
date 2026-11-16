@@ -9,6 +9,8 @@
 //! Files the game writes (prefs, high scores) go to SAVE_DIR (default `./save`);
 //! the game directory is only read.
 
+mod source;
+
 use bugatron_runtime::{call_guest, display, input_script, with_rt, Runtime};
 use clap::{CommandFactory, Parser};
 use sha2::Digest;
@@ -24,11 +26,12 @@ struct Script(Vec<(u64, input_script::Input)>);
 #[derive(Parser)]
 #[command(version, about, after_help = "Environment: BUGATRON_TRACE=fmod,audio,imports,messages,sdl,gpu,draws,delta (or all) prints diagnostics.")]
 struct Args {
-    /// Your Bug3D.exe (Gold v1.20a; checked by SHA-256) [default: found in the current directory,
-    /// next to this program, the Windows install folder, or the copy this program was built from]
+    /// Your Bugatron Gold v1.20a: Bug3D.exe, the installer (buggold_120.exe), or the downloaded
+    /// zip [default: found in the current directory, next to this program, the Windows install
+    /// folder, or the copy this program was built from]
     #[arg(long, value_name = "FILE", env = "BUGATRON_EXE")]
     exe: Option<PathBuf>,
-    /// Game folder (Audio, Graphics, levels) [default: Bug3D.exe's folder]
+    /// Game folder (Audio, Graphics, levels) [default: Bug3D.exe's folder, or the files in the installer]
     #[arg(long, value_name = "DIR")]
     data: Option<PathBuf>,
     /// Where prefs and high scores are written (game files are never modified)
@@ -94,24 +97,21 @@ fn search_dirs() -> Vec<PathBuf> {
     out
 }
 
-/// The first search folder holding Bug3D.exe, or (when the exe is embedded and only
-/// the assets are needed) the game's Audio and Graphics folders. Exits with the
-/// list of folders tried if none does.
-fn find_game(need_exe: bool) -> (Option<PathBuf>, PathBuf) {
+/// The first game source (Bug3D.exe, the installer, or the download zip, in that
+/// order) in the search folders. Exits with the folders tried if there is none.
+fn find_game() -> PathBuf {
     let dirs = search_dirs();
     for d in &dirs {
-        if let Some(exe) = find_in(d, "Bug3D.exe") {
-            return (Some(exe), d.clone());
-        }
-        let has_dir = |n: &str| std::fs::read_dir(d).ok().into_iter().flatten().flatten()
-            .any(|e| e.path().is_dir() && e.file_name().to_string_lossy().eq_ignore_ascii_case(n));
-        if !need_exe && has_dir("Audio") && has_dir("Graphics") {
-            return (None, d.clone());
+        if let Some(p) = source::NAMES.iter().find_map(|n| find_in(d, n)) {
+            return p;
         }
     }
     let list: Vec<String> = dirs.iter().map(|d| format!("  {}", d.display())).collect();
-    let what = if need_exe { "Bug3D.exe (Bugatron Gold v1.20a)" } else { "the Bugatron Gold game folder (Audio, Graphics)" };
-    eprintln!("error: {what} not found. Looked in:\n{}\nRun from the game folder, or pass --exe/--data (or set BUGATRON_EXE).", list.join("\n"));
+    eprintln!(
+        "error: Bugatron Gold v1.20a not found ({}). Looked in:\n{}\nRun from the game folder, or pass --exe (or set BUGATRON_EXE).",
+        source::NAMES.join(", "),
+        list.join("\n")
+    );
     std::process::exit(2);
 }
 
@@ -120,31 +120,25 @@ mod embedded {
     include!(concat!(env!("OUT_DIR"), "/pack.rs"));
 }
 
-/// The embedded game folder and its Bug3D.exe, if the program was built with them.
-fn embedded() -> Option<(bugatron_runtime::files::Pack, &'static [u8])> {
-    let exe = embedded::PACK.iter().find(|(p, _)| p.eq_ignore_ascii_case("Bug3D.exe"))?.1;
-    Some((embedded::PACK, exe))
-}
-
 fn main() {
     let args = Args::parse();
-    // Bug3D.exe: --exe (or BUGATRON_EXE), else the embedded copy, else found on disk.
-    // Game files: --data, else the embedded folder (with the embedded exe), else the
-    // folder of the Bug3D.exe used, else (embedded exe only) a game folder found on disk.
-    let embedded = embedded();
-    let (exe, game_dir) = match (args.exe, embedded) {
-        (Some(p), _) => {
-            let dir = p.parent().map(PathBuf::from).unwrap_or_default();
-            (Some(p), Some(dir))
-        }
-        (None, Some(_)) => (None, None),
-        (None, None) => {
-            let (exe, dir) = find_game(true);
-            (exe, Some(dir))
-        }
+    // The game: --exe (or BUGATRON_EXE), else the embedded copy, else found on disk.
+    let game = match args.exe {
+        Some(p) => source::open(&p),
+        None => match source::embedded(embedded::PACK) {
+            Some(g) => Ok(g),
+            None => source::open(&find_game()),
+        },
+    }
+    .unwrap_or_else(|e| {
+        eprintln!("error: {e}");
+        std::process::exit(2)
+    });
+    // Game files: --data, else those that came with the game.
+    let (data, pack) = match args.data {
+        Some(d) => (Some(d), None),
+        None => (game.dir.clone(), game.pack),
     };
-    let pack = if exe.is_none() && args.data.is_none() { embedded.map(|e| e.0) } else { None };
-    let data = args.data.or(game_dir).or_else(|| pack.is_none().then(|| find_game(false).1));
     let save = args.save;
     let frames = args.frames;
     let dumps = args.dump_frames;
@@ -166,16 +160,7 @@ fn main() {
         }
         (path, secs)
     });
-    let (image, exe_label) = match &exe {
-        Some(p) => {
-            let image = std::fs::read(p).unwrap_or_else(|e| {
-                eprintln!("error: cannot read {}: {e}\nPoint --exe (or BUGATRON_EXE) at your copy of Bugatron Gold v1.20a's Bug3D.exe.", p.display());
-                std::process::exit(2)
-            });
-            (image, p.display().to_string())
-        }
-        None => (embedded.expect("embedded Bug3D.exe").1.to_vec(), "embedded".to_string()),
-    };
+    let (image, exe_label) = (game.exe, game.label);
     eprintln!("Bug3D.exe: {exe_label}");
     let sha: String = sha2::Sha256::digest(&image).iter().map(|b| format!("{b:02x}")).collect();
     if sha != env!("BUGATRON_EXE_SHA256") {
@@ -188,7 +173,7 @@ fn main() {
     rt.user.run_in_background = args.run_in_background;
     match (&data, pack) {
         (Some(d), _) => eprintln!("game folder: {}", d.display()),
-        (None, Some(p)) => eprintln!("game folder: embedded ({} files)", p.len()),
+        (None, Some(p)) => eprintln!("game folder: in memory ({} files)", p.len()),
         (None, None) => {}
     }
     rt.files.data_dir = data.unwrap_or_default();
