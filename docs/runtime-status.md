@@ -134,3 +134,15 @@ The runtime keeps this behaviour. QPC and `Sleep` take a fast import path, and c
 | RD8 | FMOD is silent: samples and songs are loaded but not played. | No audio | Audio milestone (SDL3 audio + libxmp) |
 | RD9 | Intentional: guest time is idealised. Every frame spans exactly one 1/60 s refresh, `Sleep(0)` takes no time, and a QPC read takes one tick. Real machines add jitter and, depending on their overheads, an occasional dropped frame. | Stable, drift-free 60 Hz; identical simulation on every host | By design (owner decision, 2026-11-15) |
 | RD10 | Rendering approximations A1–A13 | See `graphics/renderer.md` | VM capture comparison |
+
+## Roadmap to the vanilla baseline
+
+| Item | Status |
+|---|---|
+| Side-by-side captures against the original (deterministic Frida harness; `testing/visual-comparison.md`) | Harness ready. Waiting for the VM |
+| Interactive play: menus, input, starting a game, waves | Scripted play reaches gameplay. Level progression and game over are in progress |
+| Windows (Vulkan or D3D12) and Linux (Vulkan) graphics validation | Not started. Only Metal is tested; the SPIR-V shader path is untested (renderer.md A10) |
+| 16-bit display mode comparison | Pending (A6) |
+| Visible video dialog (RD1) | Not started |
+| Audio: FMOD 3.61 on SDL3 audio + libxmp (RD8) | Not started |
+| Performance: per-frame back-buffer readback at high resolution | Documented optimisation target; deferred (renderer.md) |
