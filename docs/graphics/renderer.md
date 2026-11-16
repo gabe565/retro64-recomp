@@ -74,4 +74,14 @@ device state model (ddraw/d3d.rs) ── records Clear / Draw commands with full
 
 ## Visual validation
 
-The title screen renders through the original code. Frames 139 (logo zoom), 400, and 700 (settled title) were inspected. A side-by-side comparison with captures from the original in the VM is still to do; it is the acceptance check for A1–A7. The boing ball's oval shape needs particular attention.
+The title screen renders through the original code. Frames 139 (logo zoom), 400, and 700 (settled title) were inspected. A side-by-side comparison with captures from the original in the VM is still to do (`../testing/visual-comparison.md`); it is the acceptance check for A1–A7.
+
+**Oval boing ball (investigated).** The title ball's shape follows from the original projection, not from a rendering error:
+- The ball is `m/chex.r3d`: one 523-vertex component, and every vertex lies exactly at radius 1.237. It is a true sphere.
+- Its world matrix in frame 450 is a pure rotation (orthonormal rows, no scale), translated to (4.50, −1.30, 10.09).
+- The projection is exactly the original's at 640×480: x = cot 37.5° = 1.3032, y = x / 0.75 = 1.7376, with standard viewport and clip volume.
+- Under the 75° vertical FOV, a sphere that far off-axis (about 25°) projects to an ellipse stretched away from the screen centre. Its predicted bounding box is 113×104 px, centred at (509, 295).
+- The ball's unlit lower side is near black, which makes it look more oval than the silhouette is.
+- Same appearance at every resolution. The VM capture will confirm it directly.
+
+`BUGATRON_TRACE=draws,worlds` prints the world matrix and vertex count of each draw.

@@ -120,6 +120,16 @@ fn trace_frame(rt: &Runtime) {
         *kinds.entry(k).or_default() += 1;
     }
     eprintln!("=== frame {} ===", rt.com.flips);
+    if crate::trace_enabled("worlds") {
+        for c in &rt.com.d3d.commands {
+            if let Command::Draw(d) = c {
+                let n = d.vertices.len() / crate::ddraw::d3d::fvf_size(d.fvf).unwrap_or(32) as usize;
+                if n >= 1 {
+                    eprintln!("world n={n} {:?}", d.world);
+                }
+            }
+        }
+    }
     if let Some(Command::Draw(d)) = rt.com.d3d.commands.iter().find(|c| matches!(c, Command::Draw(_))) {
         eprintln!("viewport {:?}\nprojection {:?}\nview {:?}", d.viewport, d.projection, d.view);
     }
