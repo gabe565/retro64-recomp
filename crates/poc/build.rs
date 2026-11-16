@@ -1,10 +1,16 @@
 //! Translates the user's Bug3D.exe at build time and compiles the generated C.
 //!
 //! Inputs (never committed):
-//!   BUGATRON_EXE    path to Bug3D.exe (Gold v1.20a, verified by SHA-256)
+//!   BUGATRON_EXE    Bug3D.exe, the installer, or the download zip (Gold v1.20a, verified
+//!                   by SHA-256) [default: as crates/game/build.rs]
 //!   BUGATRON_HINTS  path to the recompiler hints [default: hints/gold-1.20a.json]
 
+#[path = "../game/src/unpack.rs"]
+#[allow(dead_code)]
+mod unpack;
+
 use bugatron_recomp::{recompile, Hints, Options, BUG3D_GOLD_120A_SHA256};
+use unpack::{unpack, Unpacked};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
@@ -18,15 +24,22 @@ fn main() {
     println!("cargo:rerun-if-env-changed=BUGATRON_EXE");
     println!("cargo:rerun-if-env-changed=BUGATRON_HINTS");
     let root = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("../..");
-    let exe_path = std::env::var("BUGATRON_EXE").map(PathBuf::from).unwrap_or_else(|_| root.join("_work/ext/gold120/app/Bug3D.exe"));
+    let exe_path = std::env::var("BUGATRON_EXE").map(PathBuf::from).unwrap_or_else(|_| {
+        let extracted = root.join("_work/ext/gold120/app/Bug3D.exe");
+        if extracted.exists() { extracted } else { root.join("reference/Bugatron_Win_EN_Gold_120.zip") }
+    });
     let hints_path = std::env::var("BUGATRON_HINTS").map(PathBuf::from).unwrap_or_else(|_| root.join("hints/gold-1.20a.json"));
     println!("cargo:rerun-if-changed={}", exe_path.display());
     println!("cargo:rerun-if-changed={}", hints_path.display());
     let rt_c = root.join("crates/runtime/c");
     println!("cargo:rerun-if-changed={}", rt_c.join("recomp.h").display());
 
-    let exe = std::fs::read(&exe_path).unwrap_or_else(|e| panic!(
-        "cannot read Bug3D.exe at {} ({e}). Set BUGATRON_EXE to your copy of Bugatron Gold v1.20a.", exe_path.display()));
+    let bytes = std::fs::read(&exe_path).unwrap_or_else(|e| panic!(
+        "cannot read {} ({e}). Put Bugatron_Win_EN_Gold_120.zip in reference/, or set BUGATRON_EXE.", exe_path.display()));
+    let exe = match unpack(bytes, &exe_path.display().to_string()).unwrap_or_else(|e| panic!("{e}")) {
+        Unpacked::Exe(b) => b,
+        Unpacked::Folder(files) => unpack::exe_of(&files).expect("Bug3D.exe in the installer").to_vec(),
+    };
     let sha = bugatron_recomp::sha256_hex(&exe);
     assert_eq!(sha, BUG3D_GOLD_120A_SHA256, "BUGATRON_EXE is not Bugatron Gold v1.20a");
     let hints: Hints = serde_json::from_slice(&std::fs::read(&hints_path).unwrap_or_else(|e| panic!(

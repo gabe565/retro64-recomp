@@ -18,17 +18,17 @@ Prerequisites:
 - **SDL3**, found through pkg-config:
   - macOS: `brew install sdl3`
   - Debian 13: `apt install libsdl3-dev`
-- To prepare the build inputs: `unzip`, **innoextract** (1.9 or later) and **python3**. The recompiler starts from a committed list of function and jump-table addresses ([`hints/`](hints/README.md)), produced once by Ghidra and tied to the exe's hash; Ghidra 12.x is only needed to regenerate it.
 
 Steps:
 
 ```sh
 mkdir -p reference && cp /path/to/Bugatron_Win_EN_Gold_120.zip reference/
-tools/extract_reference.sh             # unpacks the installer into _work/
 cargo build --release -p bugatron
 ```
 
-`reference/`, `_work/` and `target/` are gitignored. They hold the original files, analysis output and generated code, none of which may be committed.
+The build reads the game straight from the download: it unpacks the installer in memory and translates `Bug3D.exe` to C. `BUGATRON_EXE` can point at the zip, the installer or an installed `Bug3D.exe` instead. `reference/`, `_work/` and `target/` are gitignored, and the game's files and the generated code are never committed.
+
+The recompiler starts from a committed list of function and jump-table addresses ([`hints/`](hints/README.md)), produced once by Ghidra and tied to the exe's hash. Ghidra is only needed to regenerate it. `tools/extract_reference.sh [--ghidra]` (innoextract, Ghidra 12.x) sets up the analysis workspace in `_work/`.
 
 Windows builds are currently cross-compiled from x86-64 Linux with MinGW: `tools/windows/build-kit.sh` (see [docs/testing/windows-validation.md](docs/testing/windows-validation.md)). Direct3D 12 shaders are compiled with DXC.
 
@@ -100,7 +100,7 @@ Comparisons against the original game use Frida in a Windows VM; see `tools/frid
 | `crates/runtime-tests`, `crates/x86-*` | Runtime tests and the x86 semantics suite, with its hardware oracle |
 | `crates/xmp-sys`, `third_party/libxmp-lite` | XM music playback (vendored libxmp-lite, MIT) |
 | `hints/` | Recompiler hints (addresses only) for Gold v1.20a's `Bug3D.exe` |
-| `tools/` | Extraction, Ghidra scripts, Frida probes, comparison and Windows kit scripts |
+| `tools/` | Analysis workspace setup, Ghidra scripts, Frida probes, comparison and Windows kit scripts |
 | `docs/` | Findings, formats, function map, runtime status, validation results ([index](docs/README.md)) |
 
 ## License

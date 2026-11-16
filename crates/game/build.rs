@@ -1,13 +1,20 @@
 //! Translates the whole of the user's Bug3D.exe at build time and compiles the generated C.
 //! (Same pipeline as crates/poc/build.rs, with every function translated.)
 //!
-//! Inputs (never committed):
-//!   BUGATRON_EXE    path to Bug3D.exe (Gold v1.20a, verified by SHA-256)
+//! Inputs:
+//!   BUGATRON_EXE    the user's Bugatron Gold v1.20a (never committed): Bug3D.exe, the
+//!                   installer, or the download zip (verified by SHA-256) [default:
+//!                   _work/ext/gold120/app/Bug3D.exe, else reference/Bugatron_Win_EN_Gold_120.zip]
 //!   BUGATRON_HINTS  path to the recompiler hints [default: hints/gold-1.20a.json]
+
+#[path = "src/unpack.rs"]
+#[allow(dead_code)]
+mod unpack;
 
 use bugatron_recomp::{recompile, Hints, Options, BUG3D_GOLD_120A_SHA256};
 use std::collections::BTreeSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use unpack::{unpack, Unpacked};
 
 /// The whole program, from the CRT entry point.
 const ROOTS: &[u32] = &[0x42ba98];
@@ -19,20 +26,29 @@ fn main() {
     println!("cargo:rerun-if-env-changed=BUGATRON_EXE");
     println!("cargo:rerun-if-env-changed=BUGATRON_HINTS");
     let root = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("../..");
-    let exe_path = std::env::var("BUGATRON_EXE").map(PathBuf::from).unwrap_or_else(|_| root.join("_work/ext/gold120/app/Bug3D.exe"));
+    let exe_path = std::env::var("BUGATRON_EXE").map(PathBuf::from).unwrap_or_else(|_| {
+        let extracted = root.join("_work/ext/gold120/app/Bug3D.exe");
+        if extracted.exists() { extracted } else { root.join("reference/Bugatron_Win_EN_Gold_120.zip") }
+    });
     let hints_path = std::env::var("BUGATRON_HINTS").map(PathBuf::from).unwrap_or_else(|_| root.join("hints/gold-1.20a.json"));
     println!("cargo:rerun-if-changed={}", exe_path.display());
     println!("cargo:rerun-if-changed={}", hints_path.display());
     let rt_c = root.join("crates/runtime/c");
     println!("cargo:rerun-if-changed={}", rt_c.join("recomp.h").display());
 
-    let exe = std::fs::read(&exe_path).unwrap_or_else(|e| panic!(
-        "cannot read Bug3D.exe at {} ({e}). Set BUGATRON_EXE to your copy of Bugatron Gold v1.20a.", exe_path.display()));
+    let bytes = std::fs::read(&exe_path).unwrap_or_else(|e| panic!(
+        "cannot read {} ({e}). Put Bugatron_Win_EN_Gold_120.zip in reference/, or set BUGATRON_EXE to your \
+         Bugatron Gold v1.20a (Bug3D.exe, the installer, or the download zip).", exe_path.display()));
+    let unpacked = unpack(bytes, &exe_path.display().to_string()).unwrap_or_else(|e| panic!("{e}"));
+    let exe = match &unpacked {
+        Unpacked::Exe(b) => b.clone(),
+        Unpacked::Folder(files) => unpack::exe_of(files).unwrap_or_else(|| panic!("{} does not contain Bug3D.exe", exe_path.display())).to_vec(),
+    };
     let sha = bugatron_recomp::sha256_hex(&exe);
     assert_eq!(sha, BUG3D_GOLD_120A_SHA256, "BUGATRON_EXE is not Bugatron Gold v1.20a");
     // The binary checks the Bug3D.exe it is given at run time against the one it was built from.
     println!("cargo:rustc-env=BUGATRON_EXE_SHA256={BUG3D_GOLD_120A_SHA256}");
-    write_pack(&exe_path);
+    write_pack(&exe_path, &unpacked);
     // Last-resort default for finding Bug3D.exe at run time (keeps `cargo run` working in the repo).
     let built_from = exe_path.canonicalize().unwrap_or_else(|_| exe_path.clone());
     println!("cargo:rustc-env=BUGATRON_BUILT_FROM={}", built_from.display());
@@ -81,11 +97,25 @@ fn main() {
 
 /// `embed-game`: a table of every file in the game folder, each included with
 /// `include_bytes!` (OUT_DIR/pack.rs). Without the feature the table is empty.
-fn write_pack(exe_path: &std::path::Path) {
-    let out = PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("pack.rs");
+fn write_pack(exe_path: &Path, unpacked: &Unpacked) {
+    let out_dir = PathBuf::from(std::env::var("OUT_DIR").unwrap());
+    let out = out_dir.join("pack.rs");
     let mut rs = String::from("pub static PACK: &[(&str, &[u8])] = &[\n");
     if std::env::var_os("CARGO_FEATURE_EMBED_GAME").is_some() {
-        let dir = exe_path.parent().expect("game folder").canonicalize().expect("game folder");
+        // An installer or zip is unpacked into OUT_DIR/game first.
+        let dir = match unpacked {
+            Unpacked::Exe(_) => exe_path.parent().expect("game folder").canonicalize().expect("game folder"),
+            Unpacked::Folder(files) => {
+                let dir = out_dir.join("game");
+                let _ = std::fs::remove_dir_all(&dir);
+                for (rel, data) in files {
+                    let p = dir.join(rel);
+                    std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+                    std::fs::write(p, data).unwrap();
+                }
+                dir.canonicalize().unwrap()
+            }
+        };
         println!("cargo:rerun-if-changed={}", dir.display());
         let mut files = Vec::new();
         let mut stack = vec![dir.clone()];

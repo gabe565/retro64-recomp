@@ -136,8 +136,10 @@ dependencies = [
  "bugatron-runtime",
  "cc",
  "crc32fast",
+ "inno",
  "serde",
  "serde_json",
+ "zip",
 ]
 
 [[package]]

@@ -5,8 +5,8 @@
 //! nothing is written to disk. In every case Bug3D.exe's SHA-256 is checked by the
 //! caller.
 
+use crate::unpack::{unpack, Unpacked};
 use bugatron_runtime::files::Pack;
-use std::io::{Cursor, Read};
 use std::path::{Path, PathBuf};
 
 /// The game's executable and files.
@@ -28,77 +28,16 @@ pub const NAMES: &[&str] = &["Bug3D.exe", "buggold_120.exe", "Bugatron_Win_EN_Go
 pub fn open(path: &Path) -> Result<Game, String> {
     let bytes = std::fs::read(path).map_err(|e| format!("cannot read {}: {e}", path.display()))?;
     let label = path.display().to_string();
-    let dir = path.parent().map(Path::to_path_buf);
-    from_bytes(bytes, label, dir)
-}
-
-fn from_bytes(bytes: Vec<u8>, label: String, dir: Option<PathBuf>) -> Result<Game, String> {
-    if bytes.starts_with(b"PK\x03\x04") {
-        return from_zip(&bytes, &label);
-    }
-    if !bytes.starts_with(b"MZ") {
-        return Err(format!("{label} is neither Bug3D.exe, the Bugatron Gold installer, nor a zip"));
-    }
-    match from_installer(&bytes, &label) {
-        Some(game) => game,
-        // Not an installer: Bug3D.exe itself, with its folder.
-        None => Ok(Game { exe: bytes, label, dir, pack: None }),
-    }
-}
-
-/// The Inno Setup installer, or None if `bytes` is not one.
-fn from_installer(bytes: &[u8], label: &str) -> Option<Result<Game, String>> {
-    let mut inno = inno::Inno::new(Cursor::new(bytes)).ok()?;
-    let mut files: Vec<(&'static str, &'static [u8])> = Vec::new();
-    for r in inno.files() {
-        let (entry, data) = match r {
-            Ok(x) => x,
-            Err(e) => return Some(Err(format!("{label}: cannot unpack the installer: {e}"))),
-        };
-        // Only what installs into the game folder ({app}); other entries are setup's own.
-        let Some(rel) = entry.file().destination().and_then(|d| d.strip_prefix("{app}\\")) else { continue };
-        let rel: &'static str = Box::leak(rel.replace('\\', "/").into_boxed_str());
-        files.push((rel, Box::leak(data.into_boxed_slice())));
-    }
-    Some(from_pack(files, format!("{label} (installer)")))
-}
-
-/// A zip holding the installer, or a game folder with Bug3D.exe.
-fn from_zip(bytes: &[u8], label: &str) -> Result<Game, String> {
-    let bad = |e: zip::result::ZipError| format!("{label}: {e}");
-    let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).map_err(bad)?;
-    let mut files: Vec<(String, Vec<u8>)> = Vec::new();
-    for i in 0..zip.len() {
-        let mut f = zip.by_index(i).map_err(bad)?;
-        if f.is_dir() {
-            continue;
-        }
-        let mut data = Vec::with_capacity(f.size() as usize);
-        f.read_to_end(&mut data).map_err(|e| format!("{label}: {e}"))?;
-        let name = f.name().map_err(bad)?.replace('\\', "/");
-        files.push((name, data));
-    }
-    // The download holds only the installer.
-    for (name, data) in &files {
-        if name.to_ascii_lowercase().ends_with(".exe") && !name.to_ascii_lowercase().ends_with("bug3d.exe") {
-            if let Some(game) = from_installer(data, &format!("{label}: {name}")) {
-                return game;
-            }
+    match unpack(bytes, &label)? {
+        Unpacked::Exe(exe) => Ok(Game { exe, label, dir: path.parent().map(Path::to_path_buf), pack: None }),
+        Unpacked::Folder(files) => {
+            let files = files
+                .into_iter()
+                .map(|(p, d)| (&*Box::leak(p.into_boxed_str()), &*Box::leak(d.into_boxed_slice())))
+                .collect();
+            from_pack(files, label)
         }
     }
-    // Otherwise a zipped game folder: its files relative to the folder holding Bug3D.exe.
-    let root = files
-        .iter()
-        .find_map(|(n, _)| (n.rsplit('/').next().is_some_and(|b| b.eq_ignore_ascii_case("Bug3D.exe"))).then(|| n[..n.len() - "Bug3D.exe".len()].to_string()))
-        .ok_or_else(|| format!("{label} holds neither the Bugatron Gold installer nor Bug3D.exe"))?;
-    let files = files
-        .into_iter()
-        .filter_map(|(n, d)| {
-            let rel = n.strip_prefix(&root)?;
-            Some((&*Box::leak(rel.to_string().into_boxed_str()), &*Box::leak(d.into_boxed_slice())))
-        })
-        .collect();
-    from_pack(files, format!("{label} (zip)"))
 }
 
 fn from_pack(files: Vec<(&'static str, &'static [u8])>, label: String) -> Result<Game, String> {

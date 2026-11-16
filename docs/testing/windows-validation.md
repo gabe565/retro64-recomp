@@ -166,4 +166,4 @@ docker run --rm --platform linux/arm64 -v "$PWD":/src -w /src -e CARGO_TARGET_DI
   cargo build --release -p bugatron-poc --target x86_64-pc-windows-gnu'
 ```
 
-`bugatron-poc` needs `_work/ext/gold120/app/Bug3D.exe` and `_work/ghidra/out/recomp_hints.json` (`tools/extract_reference.sh --ghidra`).
+`bugatron-poc` needs the game: `reference/Bugatron_Win_EN_Gold_120.zip`, or `BUGATRON_EXE`. Its recompiler hints are committed in `hints/`.

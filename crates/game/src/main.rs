@@ -10,6 +10,7 @@
 //! the game directory is only read.
 
 mod source;
+mod unpack;
 
 use bugatron_runtime::{call_guest, display, input_script, with_rt, Runtime};
 use clap::{CommandFactory, Parser};
