@@ -4,7 +4,7 @@
 //! portable runtime. The runtime implements the imports the game uses; anything
 //! not yet implemented stops the run with its name (see docs/runtime-status.md).
 //!
-//! Usage: bugatron [--exe Bug3D.exe] [--data GAME_DIR] [--save SAVE_DIR] [--frames N]
+//! Usage: bugatron [--exe Bug3D.exe] [--data GAME_DIR] [--save SAVE_DIR] [--windowed] [--frames N]
 //!
 //! `--frames N` stops after N vertical blanks and prints import/COM call counts.
 //! `--video-mode WxHxBPP` (or "W x H x BPP") picks that mode in the game's video
@@ -15,6 +15,9 @@
 //! A–Z, 0–9, F1–F12, ESC, ENTER, SPACE, TAB, LEFT, RIGHT, UP, DOWN, CTRL,
 //! SHIFT, ALT, PGUP, PGDN, HOME, END. Mouse: `move@XxY`, `click@XxY` (left
 //! button, released two flips later), in guest screen coordinates.
+//! The game runs fullscreen (borderless on the current display, letterboxed), as the
+//! original took exclusive fullscreen; `--windowed` starts in a window. Alt+Enter
+//! (or Ctrl+Cmd+F on macOS) toggles. Scripted runs stay windowed.
 //! A scripted run ignores the host keyboard and mouse (and does not capture the
 //! mouse), so it replays identically even if someone touches the machine.
 //! `--record-audio FILE.wav SECONDS` records the FMOD output from the first song
@@ -42,8 +45,13 @@ fn main() {
     let mut record: Option<(PathBuf, f64)> = None;
     let mut input: Vec<(u64, input_script::Input)> = Vec::new();
     let mut scripted = false;
+    let mut windowed = false;
     let mut it = std::env::args().skip(1);
     while let Some(k) = it.next() {
+        if k == "--windowed" {
+            windowed = true;
+            continue;
+        }
         let v = PathBuf::from(it.next().unwrap_or_else(|| panic!("{k} needs a value")));
         match k.as_str() {
             "--exe" => exe = v,
@@ -67,6 +75,7 @@ fn main() {
     let image = std::fs::read(&exe).unwrap_or_else(|e| panic!("cannot read {}: {e}", exe.display()));
     let mut rt = Runtime::load(&image).expect("load Bug3D.exe");
     rt.user.ignore_host_input = scripted;
+    rt.user.host_fullscreen = !windowed && !scripted;
     rt.files.data_dir = data;
     rt.files.save_dir = save;
     rt.clock.cadence = Some(bugatron_runtime::clock::Cadence::new());

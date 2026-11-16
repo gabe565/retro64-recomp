@@ -106,7 +106,13 @@ pub(super) fn call(cpu: &mut Cpu, iface: u32, _this: u32, slot: u32) -> bool {
         // IDirectDraw4::SetCooperativeLevel(this, hwnd, flags)
         (iface::DIRECTDRAW4, 20) => {
             let flags = arg(cpu, 2);
-            with_rt(|rt| rt.com.coop = flags);
+            with_rt(|rt| {
+                rt.com.coop = flags;
+                if flags & 0x11 == 0x11 {
+                    // DDSCL_FULLSCREEN | DDSCL_EXCLUSIVE
+                    crate::user::exclusive_fullscreen_rt(rt);
+                }
+            });
             ret(cpu, DD_OK, 3);
         }
         // IDirectDraw4::SetDisplayMode(this, w, h, bpp, refresh, flags)

@@ -98,6 +98,11 @@ pub struct User {
     pub ignore_host_input: bool,
     /// Whether the window has keyboard focus, as the guest was last told.
     pub focused: bool,
+    /// Present fullscreen on the host when the game takes exclusive fullscreen
+    /// (as the original did). Off for `--windowed` and scripted runs.
+    pub host_fullscreen: bool,
+    /// Host key swallowed by a runtime shortcut (its key-up is swallowed too).
+    swallowed: Option<i32>,
     /// A host focus change not yet delivered to the guest (by the next PeekMessage).
     focus_pending: Option<bool>,
 }
@@ -141,6 +146,46 @@ pub fn send(cpu: &mut Cpu, hwnd: u32, msg: u32, wp: u32, lp: u32) -> u32 {
         eprintln!("[msg] {hwnd:#x} {msg:#06x} wp={wp:#x} lp={lp:#x}");
     }
     call_guest_stdcall(cpu, proc_, &[hwnd, msg, wp, lp])
+}
+
+/// Host-only shortcuts, never seen by the game: Alt+Enter, and Ctrl+Cmd+F on macOS,
+/// toggle fullscreen presentation. Returns true if the key was consumed.
+fn runtime_shortcut(sc: i32, down: bool, repeat: bool, md: u16) -> bool {
+    const ENTER: i32 = 40;
+    const F: i32 = 9;
+    let alt = md & SDL_KMOD_ALT.0 != 0;
+    let ctrl_cmd = md & SDL_KMOD_CTRL.0 != 0 && md & SDL_KMOD_GUI.0 != 0;
+    with_rt(|rt| {
+        if !down {
+            return rt.user.swallowed.take_if(|s| *s == sc).is_some();
+        }
+        if !((sc == ENTER && alt) || (sc == F && ctrl_cmd)) {
+            return false;
+        }
+        rt.user.swallowed = Some(sc);
+        if !repeat {
+            if let Some(w) = rt.user.window.as_ref().filter(|w| !w.sdl.is_null()) {
+                // SAFETY: valid window.
+                unsafe {
+                    let on = SDL_GetWindowFlags(w.sdl) & SDL_WINDOW_FULLSCREEN == 0;
+                    SDL_SetWindowFullscreen(w.sdl, on);
+                }
+            }
+        }
+        true
+    })
+}
+
+/// The game took exclusive fullscreen (`SetCooperativeLevel`): present fullscreen
+/// on the host's current display (borderless, letterboxed), unless windowed.
+pub fn exclusive_fullscreen_rt(rt: &mut crate::Runtime) {
+    if !rt.user.host_fullscreen || rt.user.ignore_host_input {
+        return;
+    }
+    if let Some(w) = rt.user.window.as_ref().filter(|w| !w.sdl.is_null()) {
+        // SAFETY: valid window.
+        unsafe { SDL_SetWindowFullscreen(w.sdl, true) };
+    }
 }
 
 /// The host window gained or lost keyboard focus (Alt-Tab, Cmd-Tab, a click elsewhere).
@@ -281,6 +326,9 @@ pub fn pump() {
             with_rt(|rt| focus_changed_rt(rt, ty == SDL_EVENT_WINDOW_FOCUS_GAINED.0));
         } else if ty == SDL_EVENT_KEY_DOWN.0 || ty == SDL_EVENT_KEY_UP.0 {
             let k = unsafe { ev.key };
+            if runtime_shortcut(k.scancode.0, k.down, k.repeat, k.r#mod.0) {
+                continue;
+            }
             key_input(k.scancode.0, k.down, k.repeat, (k.r#mod.0 & SDL_KMOD_ALT.0) != 0);
         } else if ty == SDL_EVENT_MOUSE_MOTION.0 {
             let m = unsafe { ev.motion };

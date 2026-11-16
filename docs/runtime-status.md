@@ -47,6 +47,9 @@ How far the recompiled game runs on the portable runtime, which imports and COM 
     - While unfocused, `PeekMessageA` waits up to 10 ms for host events instead of spinning. No guest time passes either way.
     - Scripted runs (`--input`) ignore host focus.
   - `--input` also takes `QUIT`, the host's close request (`WM_SYSCOMMAND(SC_CLOSE)`).
+  - **Presentation:** when the game takes exclusive fullscreen (`SetCooperativeLevel(DDSCL_FULLSCREEN | DDSCL_EXCLUSIVE)`), the host window goes fullscreen on its current display: borderless, letterboxed, without changing the host's display mode. This is how the original presented itself.
+    - `--windowed` starts in a window, and scripted runs stay windowed.
+    - Alt+Enter, or Ctrl+Cmd+F on macOS, toggles fullscreen. These shortcuts are handled by the runtime and never reach the game.
   - SDL events become `WM_KEYDOWN`/`UP` (or `WM_SYSKEYDOWN`/`UP`) with Win32 virtual keys and scan codes, `WM_MOUSEMOVE`, and `WM_[LR]BUTTONDOWN`/`UP`. Window close becomes `WM_SYSCOMMAND(SC_CLOSE)`, then `WM_CLOSE`, then `WM_DESTROY`.
 - **WINMM:** `timeGetTime`, `joyGetPos` (returns `JOYERR_UNPLUGGED`: no joystick).
 - **KERNEL32 files and scheduling:** `SetCurrentDirectoryA`/`GetCurrentDirectoryA` (the guest current directory, confined to the game directory), `FindFirstFileA`/`FindNextFileA`/`FindClose` (wildcards; game and save directories merged, in NTFS case-insensitive order), and `SetPriorityClass`/`SetThreadPriority` (no-ops).
