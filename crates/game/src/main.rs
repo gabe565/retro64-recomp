@@ -37,6 +37,9 @@ struct Args {
     /// Start in a window instead of fullscreen (Alt+Enter or Ctrl+Cmd+F toggles)
     #[arg(long, help_heading = "Display")]
     windowed: bool,
+    /// Keep running while another application has focus
+    #[arg(long, help_heading = "Display")]
+    run_in_background: bool,
     /// Guest display mode, e.g. 1600x1200x32 or 640x480x16 [default: the largest 4:3 mode that fits the display, 32 bpp]
     #[arg(long, value_name = "WxHxBPP", value_parser = display::parse_mode, help_heading = "Display")]
     video_mode: Option<(u32, u32, u32)>,
@@ -98,6 +101,7 @@ fn main() {
     let mut rt = Runtime::load(&image).expect("load Bug3D.exe");
     rt.user.ignore_host_input = scripted;
     rt.user.host_fullscreen = !windowed && !scripted;
+    rt.user.run_in_background = args.run_in_background;
     rt.files.data_dir = data.unwrap_or_else(|| exe.parent().map(PathBuf::from).unwrap_or_default());
     rt.files.save_dir = save;
     rt.clock.cadence = Some(bugatron_runtime::clock::Cadence::new());

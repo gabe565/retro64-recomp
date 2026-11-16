@@ -98,6 +98,10 @@ pub struct User {
     pub ignore_host_input: bool,
     /// Whether the window has keyboard focus, as the guest was last told.
     pub focused: bool,
+    /// Never tell the game it lost focus (`--run-in-background`): it keeps running
+    /// and its sound keeps playing while another application is active. The original
+    /// paused; this is an option, off by default.
+    pub run_in_background: bool,
     /// Present fullscreen on the host when the game takes exclusive fullscreen
     /// (as the original did). Off for `--windowed` and scripted runs.
     pub host_fullscreen: bool,
@@ -323,7 +327,11 @@ pub fn pump() {
         } else if with_rt(|rt| rt.user.ignore_host_input) {
             continue;
         } else if ty == SDL_EVENT_WINDOW_FOCUS_LOST.0 || ty == SDL_EVENT_WINDOW_FOCUS_GAINED.0 {
-            with_rt(|rt| focus_changed_rt(rt, ty == SDL_EVENT_WINDOW_FOCUS_GAINED.0));
+            with_rt(|rt| {
+                if !rt.user.run_in_background {
+                    focus_changed_rt(rt, ty == SDL_EVENT_WINDOW_FOCUS_GAINED.0);
+                }
+            });
         } else if ty == SDL_EVENT_KEY_DOWN.0 || ty == SDL_EVENT_KEY_UP.0 {
             let k = unsafe { ev.key };
             if runtime_shortcut(k.scancode.0, k.down, k.repeat, k.r#mod.0) {

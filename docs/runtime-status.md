@@ -46,6 +46,7 @@ How far the recompiled game runs on the portable runtime, which imports and COM 
     - The audio output is muted while the window is unfocused (`audio.md`).
     - While unfocused, `PeekMessageA` waits up to 10 ms for host events instead of spinning. No guest time passes either way.
     - Scripted runs (`--input`) ignore host focus.
+    - `--run-in-background` (off by default) also ignores host focus, so the game keeps running and playing sound while another application is active. The original paused, so this is an option and not the default. It is implemented in the runtime only.
   - `--input` also takes `QUIT`, the host's close request (`WM_SYSCOMMAND(SC_CLOSE)`).
   - **Presentation:** when the game takes exclusive fullscreen (`SetCooperativeLevel(DDSCL_FULLSCREEN | DDSCL_EXCLUSIVE)`), the host window goes fullscreen on its current display: borderless, letterboxed, without changing the host's display mode. This is how the original presented itself.
     - `--windowed` starts in a window, and scripted runs stay windowed.
