@@ -52,6 +52,9 @@ fn main() {
         sopts.binding_map.insert(rb(2, 0), spv::BindingInfo { descriptor_set: 2, binding: 0, binding_array_size: None });
         sopts.binding_map.insert(rb(2, 1), spv::BindingInfo { descriptor_set: 2, binding: 0, binding_array_size: None });
         sopts.flags.remove(spv::WriterFlags::DEBUG);
+        // SDL's Vulkan backend already flips the viewport so clip space is Y-up on
+        // every backend (as on Metal); naga's own Y flip would turn images upside down.
+        sopts.flags.remove(spv::WriterFlags::ADJUST_COORDINATE_SPACE);
         for (stage, entry) in [(ShaderStage::Vertex, vs), (ShaderStage::Fragment, fs)] {
             let popts = spv::PipelineOptions { shader_stage: stage, entry_point: entry.to_string() };
             let words = spv::write_vec(&module, &info, &sopts, Some(&popts)).unwrap_or_else(|e| panic!("{path} {entry} SPIR-V: {e:?}"));

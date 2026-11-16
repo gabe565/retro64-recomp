@@ -1,12 +1,18 @@
 //! The SDL3 GPU backend end to end: recorded Direct3D commands are rendered
 //! offscreen and read back through IDirectDrawSurface4::Lock, exactly as game
-//! code observes them. Skipped (with a message) on machines without a GPU.
+//! code observes them. Without a GPU device the tests are reported as ignored,
+//! not passed; set BUGATRON_REQUIRE_GPU=1 to make that a failure (e.g. on Linux
+//! under Xvfb with Mesa's lavapipe, which exercises the Vulkan/SPIR-V path).
 //!
 //! Runs on the main thread (harness = false): SDL's video subsystem requires it on macOS.
 
 use bugatron_runtime::testing::call_com;
 use bugatron_runtime::{with_rt, Cpu};
 use bugatron_runtime_tests::*;
+use std::sync::atomic::{AtomicBool, Ordering};
+
+/// Set when a test found no GPU device and returned early.
+static SKIPPED: AtomicBool = AtomicBool::new(false);
 
 const IID_HAL: [u8; 16] = [0xe0, 0x3d, 0xe6, 0x84, 0xaa, 0x46, 0xcf, 0x11, 0x81, 0x6f, 0x00, 0x00, 0xc0, 0x20, 0x15, 0x6e];
 
@@ -20,7 +26,8 @@ struct Scene {
 fn scene(cpu: &mut Cpu, bpp: u32) -> Option<Scene> {
     with_rt(|rt| rt.offscreen_gpu = true);
     if !with_rt(bugatron_runtime::render::gpu_available) {
-        eprintln!("no SDL3 GPU device: skipping");
+        assert!(std::env::var_os("BUGATRON_REQUIRE_GPU").is_none(), "no SDL3 GPU device, but BUGATRON_REQUIRE_GPU is set");
+        SKIPPED.store(true, Ordering::Relaxed);
         return None;
     }
     let (dd4, _front, back, _z) = display(cpu, bpp);
@@ -225,12 +232,19 @@ fn main() {
     let filter = std::env::args().skip(1).find(|a| !a.starts_with('-'));
     let mut failed = Vec::new();
     let mut ran = 0;
+    let mut ignored = 0;
     for (name, f) in tests {
         if filter.as_deref().is_some_and(|f| !name.contains(f)) {
             continue;
         }
         ran += 1;
+        SKIPPED.store(false, Ordering::Relaxed);
         match std::panic::catch_unwind(f) {
+            Ok(()) if SKIPPED.load(Ordering::Relaxed) => {
+                println!("test {name} ... ignored (no SDL3 GPU device)");
+                ignored += 1;
+                continue;
+            }
             Ok(()) => println!("test {name} ... ok"),
             Err(_) => {
                 println!("test {name} ... FAILED");
@@ -238,7 +252,7 @@ fn main() {
             }
         }
     }
-    println!("\ntest result: {}. {} passed; {} failed", if failed.is_empty() { "ok" } else { "FAILED" }, ran - failed.len(), failed.len());
+    println!("\ntest result: {}. {} passed; {} failed; {ignored} ignored", if failed.is_empty() { "ok" } else { "FAILED" }, ran - ignored - failed.len(), failed.len());
     if !failed.is_empty() {
         std::process::exit(101);
     }
