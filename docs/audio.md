@@ -56,6 +56,11 @@ Verified by scripted play. Title, menu, gameplay, game over, title, and a new ga
 - **Instrumented launches.** When the original is *spawned under Frida*, its `FSOUND_Init` fails at 44100 Hz, 22050 Hz, and with 16 channels, and the game disables sound (0x438144 = 0). DirectSound itself works in the VM, as a 32-bit probe confirmed. Unverified hypothesis: FMOD 3 binds DirectSound to the foreground window at `Init` when `FSOUND_SetHWND` was not called, and a spawned process is not in the foreground.
   - Fix to try: call `FSOUND_SetHWND` with the game's window from the capture script before `Init`, or launch normally and attach the capture after `Init`.
   - The DSP tap records FMOD's internal mix, so VM playback dropouts do not appear in a capture.
+- **Correction (2026-11-15, later):** a spawn with only a dialog auto-OK hook initialised FMOD fine without being in the foreground. The `Init` failures came from the clock/timeline script (`capture_deterministic_frames.js`), not from focus; which hook is responsible is not yet known.
+- **Capture attempts that hurt the VM.**
+  - The first tap used a stdcall callback. FMOD 3.61 calls DSP units with cdecl (verified in the unpacked fmod.dll: its own units end in a plain `ret`), so the game crashed.
+  - The second tap copied buffers through JS arrays and base64-encoded 2 MB inside FMOD's mixer thread. Mixing stalled, DirectSound looped its last buffer, and the game could not exit; the VM was rebooted.
+  - The script now does only a native copy in the callback and sends chunks from a timer. It has not been run yet.
 - **Native side.** The title music records at −29.3 dBFS RMS (peak 6743/32767) at the game's saved music volume of 56/256.
 - **What holds without a capture:**
   - Effects play at their files' own sample rates, so pitch and speed are the files'.
