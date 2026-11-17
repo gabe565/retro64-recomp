@@ -496,7 +496,7 @@ pub extern "C" fn rt_note_indirect(target: u32, site: u32) {
 
 /// x87 behaviour the binary64 machine model cannot reproduce exactly
 /// (precision control other than 53 bits, non-nearest rounding in arithmetic,
-/// stack overflow, FPATAN via libm, 80-bit memory operands, and FSIN/FCOS/FPTAN
+/// stack overflow, 80-bit memory operands, and FSIN/FCOS/FPTAN/FPATAN
 /// results whose 64-bit significand is not representable in binary64).
 /// Recorded in `Cpu::x87_notes`; with `BUGATRON_X87_STRICT=1` the first
 /// occurrence of each kind stops execution with a diagnostic.
@@ -577,15 +577,45 @@ pub extern "C" fn rt_x87_fptan(c: *mut Cpu) {
     x87_trig_insn(c, x87trig::TrigOp::Tan)
 }
 
+/// FPATAN: ST(1) = atan2(ST(1), ST(0)), then pop (x87trig::x87_fpatan).
+#[no_mangle]
+pub extern "C" fn rt_x87_fpatan(c: *mut Cpu) {
+    use x87trig::TrigOutcome;
+    let cpu = unsafe { &mut *c };
+    let top = (cpu.ftop & 7) as usize;
+    let below = (top + 1) & 7;
+    if (cpu.ftag >> (2 * top)) & 3 == 3 || (cpu.ftag >> (2 * below)) & 3 == 3 {
+        rt_x87_note(c, 8); // stack underflow: an operand register is empty
+    }
+    let (y, x) = (cpu.st[below], cpu.st[top]);
+    let mut fsw = cpu.fsw & !(FSW_C1 | FSW_C2);
+    cpu.st[below] = match x87trig::x87_fpatan(y, x) {
+        TrigOutcome::Value { value, c1, ext_inexact, inexact } => {
+            fsw |= if c1 { FSW_C1 } else { 0 } | if inexact { FSW_PE } else { 0 };
+            if ext_inexact {
+                rt_x87_note(c, 64);
+            }
+            value
+        }
+        TrigOutcome::Nan(v) => v,
+        TrigOutcome::OutOfRange | TrigOutcome::Invalid => unreachable!("FPATAN has no range limit or invalid inputs"),
+    };
+    let cpu = unsafe { &mut *c };
+    cpu.fsw = fsw;
+    // Pop: ST(0) becomes empty, TOP moves to the result.
+    cpu.ftag |= 3 << (2 * top);
+    cpu.ftop = (cpu.ftop + 1) & 7;
+}
+
 pub fn x87_note_name(kind: u32) -> &'static str {
     match kind {
         1 => "24-bit precision control",
         2 => "64-bit precision control (needs 80-bit arithmetic)",
         4 => "non-nearest rounding control in arithmetic",
         8 => "x87 register stack overflow",
-        16 => "FPATAN (host libm result)",
+        16 => "FPATAN (host libm result; no longer emitted)",
         32 => "80-bit memory operand",
-        64 => "FSIN/FCOS/FPTAN result held as binary64 instead of a 64-bit significand",
+        64 => "FSIN/FCOS/FPTAN/FPATAN result held as binary64 instead of a 64-bit significand",
         _ => "unknown",
     }
 }

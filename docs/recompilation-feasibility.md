@@ -244,7 +244,7 @@ Conclusions:
 | D4 | Ghidra missed C++ static initializers, and some function addresses appear only as immediates | **Fixed**: the recompiler roots code pointers found in data sections and immediate operands |
 | D5 | Windows x86-64 build | **Resolved.** Kit 1 exited silently: the M1 check read reserved-but-uncommitted guest memory. Guest memory is now commit-explicit on every OS, with fault diagnostics. Kit 2 on a physical AMD Ryzen 7 9800X3D (Windows, x86-64): **all tests PASS**, including 600/600 timing frames, 30/30 `.lev` files, CRT start-up with control word 0x027F, and random numbers. MSVC toolchain still untested (built with MinGW). |
 | D6 | The timing spin path (below 4 ticks) never occurred in the VM, which runs too slowly. It is covered only by the synthetic edge test derived from static analysis. | Open: capture on the physical machine |
-| D7 | x87 transcendentals versus host `libm` | **Resolved** (§7.10): FSIN/FCOS/FPTAN use x87 argument reduction with the 66-bit π. Confirmed on an AMD Ryzen 7 9800X3D (oracle kit 3): all values **and status words** in the trig regression cases match. FPATAN still uses host `libm` (`X87_NOTE_TRANSCENDENTAL`). |
+| D7 | x87 transcendentals versus host `libm` | **Resolved** (§7.10): FSIN/FCOS/FPTAN use x87 argument reduction with the 66-bit π. Confirmed on an AMD Ryzen 7 9800X3D (oracle kit 3): all values **and status words** in the trig regression cases match. FPATAN is modelled the same way (§7.11); hardware confirmation of its new oracle case is pending. |
 | D8 | Exceptions: SEH frames are maintained, but the runtime does not dispatch exceptions | **Explicit**: the 4 C++ EH dispatcher jumps are `rt_trap` sites with reasons (`bugatron_recomp::targets`); `RaiseException`, `RtlUnwind`, and `UnhandledExceptionFilter` stop with a diagnostic |
 | D9 | Guest heap addresses differ from the original's Windows heap. Logic that depends on pointer values would diverge. | Open: differential tests must compare logical state, not raw pointers |
 | D10 | 8 instruction sites were unimplemented in the emitter: `RCR` ×4, `BTS` ×2, `PUSHAD`, `POPAD` | **Fixed**: `RCL`/`RCR` at all sizes, the `BT`/`BTS`/`BTR`/`BTC` family with bit-string addressing, and `PUSHAD`/`POPAD`. The whole program now has 0 unimplemented sites; regression cases in §7.7. |
@@ -324,6 +324,21 @@ The first comparison of kit 3 found two status-flag gaps, both now fixed:
 - C1 was wrong for sin(1e-20). The `r³/6` correction that decides the rounding direction fell below the 192-bit working precision. The implementation now widens precision losslessly when the reduced argument is small.
 
 The PE flag is modelled for FSIN/FCOS/FPTAN only. Arithmetic instructions don't set PE yet; see open-questions R9.
+
+
+### 7.11 x87-compatible FPATAN
+
+`FPATAN` (ST(1) = atan2(ST(1), ST(0)), then pop) was the last transcendental still computed by the host `libm`. It now uses the model in `runtime/src/x87trig.rs` (`x87_fpatan`):
+- **Computing the angle:** the ratio min(|y|,|x|)/max(|y|,|x|) is formed exactly in wide fixed point (widened for tiny ratios). atan is evaluated by halving the angle (`atan t = 2·atan(t/(1+√(1+t²)))`) until t ≤ 1/8, then by the Taylor series. The quadrant terms π/2 and π are then applied.
+- **Rounding:** the result is rounded to the 64-bit significand (C1 = rounded up), then to binary64, flagging `X87_NOTE_EXT64` when that second rounding is inexact. PE is set for inexact results.
+- **Special values:** signed zeros and infinities follow the x87 table (the same as C99 `atan2`). NaNs propagate quieted, the larger significand winning when both operands are NaN. FPATAN has no invalid-operand or range cases. C0, C2 and C3 are undefined after FPATAN, so the oracle case compares C1 only.
+
+Assumption to confirm: the hardware's quadrant terms use the true π. It might instead use the 66-bit approximation FSIN uses for reduction, which could change the 64-bit rounding of results next to ±π. The oracle case `x87_fpatan_quadrants_and_table` covers each quadrant, results next to ±π and π/2, and the table entries. Its expected values are the model's; an oracle run on hardware (kit 4, testing/windows-validation.md) settles them.
+
+Checks so far:
+- The hardware case `x87_transcendentals` (atan2(1, 0.5), measured on the Ryzen) matches.
+- 3,000 random operands agree with macOS `libm` exactly or within one ULP, where rounding first to 64 bits changes the binary64 result.
+- Scripted gameplay frames are unchanged.
 
 ### 7.8 Recommended next steps
 

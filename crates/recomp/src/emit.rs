@@ -586,7 +586,7 @@ impl<'a> Ctx<'a> {
             Mnemonic::Fsin => "rt_x87_fsin(c);".into(),
             Mnemonic::Fcos => "rt_x87_fcos(c);".into(),
             Mnemonic::Fptan => "rt_x87_fptan(c);".into(),
-            Mnemonic::Fpatan => "rt_x87_note(c, X87_NOTE_TRANSCENDENTAL); ST(1) = atan2(ST(1), ST(0)); fpop(c);".into(),
+            Mnemonic::Fpatan => "rt_x87_fpatan(c);".into(),
             Mnemonic::Frndint => "ST(0) = frnd_rc(c, ST(0));".into(),
             Mnemonic::Fnstsw | Mnemonic::Fstsw => {
                 if has_mem { "wr16(ea, (uint16_t)fnstsw(c));".into() } else { "c->eax = set16(c->eax, fnstsw(c));".into() }

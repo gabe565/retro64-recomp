@@ -1,4 +1,4 @@
-//! x87-compatible FSIN / FCOS / FPTAN.
+//! x87-compatible FSIN / FCOS / FPTAN, and FPATAN.
 //!
 //! The x87 reduces the argument modulo π/2 using an internal **66-bit
 //! approximation of π** (Intel SDM: "uses a 66-bit approximation of π"), not
@@ -113,6 +113,130 @@ pub fn x87_trig(op: TrigOp, x: f64) -> TrigOutcome {
     let (value, c1, ext_inexact) = round_fixed_to_x87(&v, frac);
     // sin/cos/tan of a nonzero binary64 is irrational: always inexact (PE).
     TrigOutcome::Value { value, c1, ext_inexact, inexact: true }
+}
+
+/// x87 FPATAN: `atan2(y, x)` for ST(1) = y, ST(0) = x, with the result's sign and
+/// quadrant per the x87/C99 table. The angle is computed exactly in wide fixed
+/// point, rounded to the 64-bit significand (C1), then to binary64 like the
+/// other functions here. Unlike FSIN, FPATAN takes no argument reduction, so
+/// the hardware's internal π only enters through the quadrant terms (π/2, π);
+/// the model uses the true π. Oracle cases near ±π check that assumption.
+pub fn x87_fpatan(y: f64, x: f64) -> TrigOutcome {
+    if y.is_nan() || x.is_nan() {
+        // Two NaNs: the larger significand wins; one: that one, quieted.
+        let pick = match (y.is_nan(), x.is_nan()) {
+            (true, true) => if (y.to_bits() & 0x000F_FFFF_FFFF_FFFF) >= (x.to_bits() & 0x000F_FFFF_FFFF_FFFF) { y } else { x },
+            (true, false) => y,
+            _ => x,
+        };
+        return TrigOutcome::Nan(f64::from_bits(pick.to_bits() | 0x0008_0000_0000_0000));
+    }
+    let neg = y.is_sign_negative();
+    let x_neg = x.is_sign_negative();
+    // Table entries, as multiples of π/4 (0: an exact signed zero).
+    let special = if y == 0.0 {
+        Some(if x_neg { 4 } else { 0 })
+    } else if y.is_infinite() {
+        Some(if x == f64::INFINITY { 1 } else if x == f64::NEG_INFINITY { 3 } else { 2 })
+    } else if x == 0.0 {
+        Some(2)
+    } else if x.is_infinite() {
+        Some(if x_neg { 4 } else { 0 })
+    } else {
+        None
+    };
+    let (v, frac) = match special {
+        Some(0) => return TrigOutcome::Value { value: if neg { -0.0 } else { 0.0 }, c1: false, ext_inexact: false, inexact: false },
+        Some(n) => {
+            let frac = FRAC_NORMAL;
+            (pi_fixed(frac) * BigInt::from(n) / BigInt::from(4), frac)
+        }
+        None => {
+            let (ay, ax) = (y.abs(), x.abs());
+            let (small, big) = if ay <= ax { (ay, ax) } else { (ax, ay) };
+            let (ms, es) = f64_parts(small);
+            let (mb, eb) = f64_parts(big);
+            // log2(small/big) ≈ (es + bits(ms)) − (eb + bits(mb)); widen the fixed
+            // point for small ratios so the result keeps its relative precision.
+            let l2 = (es + ms.bits() as i64) - (eb + mb.bits() as i64);
+            let frac = FRAC_NORMAL + if l2 < -16 { (-3 * l2) as u32 } else { 0 };
+            let sh = frac as i64 + es - eb;
+            let t = if sh >= 0 { (ms << sh as u32) / &mb } else { ms / (mb << (-sh) as u32) };
+            let mut a = atan_fixed(&t, frac);
+            let pi = pi_fixed(frac);
+            if ay > ax {
+                a = (&pi >> 1u32) - a;
+            }
+            if x_neg {
+                a = pi - a;
+            }
+            (a, frac)
+        }
+    };
+    let v = if neg { -v } else { v };
+    let (value, c1, ext_inexact) = round_fixed_to_x87(&v, frac);
+    TrigOutcome::Value { value, c1, ext_inexact, inexact: true }
+}
+
+/// A finite nonzero binary64 as `m · 2^e` (m a positive integer).
+fn f64_parts(v: f64) -> (BigInt, i64) {
+    let b = v.to_bits();
+    let exp = ((b >> 52) & 0x7ff) as i64;
+    let frac = b & 0x000F_FFFF_FFFF_FFFF;
+    if exp == 0 {
+        (BigInt::from(frac), -1074)
+    } else {
+        (BigInt::from(frac | (1 << 52)), exp - 1075)
+    }
+}
+
+/// atan(t) for 0 ≤ t ≤ 1 in fixed point: halve the angle with
+/// atan(t) = 2·atan(t / (1 + √(1 + t²))) until t ≤ 1/8, then the Taylor series.
+fn atan_fixed(t: &BigInt, frac: u32) -> BigInt {
+    let one = BigInt::one() << frac;
+    let mut t = t.clone();
+    let mut doublings = 0u32;
+    while t > (&one >> 3u32) {
+        let t2 = mul_fixed(&t, &t, frac);
+        let root = ((&one + t2) << frac).sqrt();
+        t = div_fixed(&t, &(&one + root), frac);
+        doublings += 1;
+    }
+    atan_series(&t, frac) << doublings
+}
+
+/// t − t³/3 + t⁵/5 − … in fixed point (|t| ≤ 1/8, or 1/5 for π).
+fn atan_series(t: &BigInt, frac: u32) -> BigInt {
+    let t2 = mul_fixed(t, t, frac);
+    let mut power = t.clone();
+    let mut sum = BigInt::zero();
+    let mut n = 1u32;
+    while !power.is_zero() {
+        let term = &power / BigInt::from(n);
+        if (n / 2) % 2 == 0 { sum += term } else { sum -= term }
+        power = mul_fixed(&power, &t2, frac);
+        n += 2;
+    }
+    sum
+}
+
+/// π in fixed point (Machin: 16·atan(1/5) − 4·atan(1/239)), cached per width.
+fn pi_fixed(frac: u32) -> BigInt {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+    static CACHE: Mutex<Option<HashMap<u32, BigInt>>> = Mutex::new(None);
+    let mut cache = CACHE.lock().unwrap();
+    let map = cache.get_or_insert_with(HashMap::new);
+    map.entry(frac)
+        .or_insert_with(|| {
+            // 16 guard bits absorb the series' truncation errors.
+            let f = frac + 16;
+            let one = BigInt::one() << f;
+            let a = atan_series(&(&one / BigInt::from(5)), f);
+            let b = atan_series(&(&one / BigInt::from(239)), f);
+            (a * BigInt::from(16) - b * BigInt::from(4)) >> 16u32
+        })
+        .clone()
 }
 
 /// Exact conversion of a finite binary64 to fixed point with `frac` fraction
@@ -283,6 +407,58 @@ mod tests {
         for &(op, x, want) in cases {
             assert_eq!(val(op, x).to_bits(), want.to_bits(), "{op:?}({x})");
         }
+    }
+
+    fn fpatan_value(y: f64, x: f64) -> f64 {
+        match x87_fpatan(y, x) {
+            TrigOutcome::Value { value, .. } => value,
+            TrigOutcome::Nan(v) => v,
+            o => panic!("{o:?}"),
+        }
+    }
+
+    #[test]
+    fn fpatan_follows_the_x87_table_for_zeros_and_infinities() {
+        use std::f64::consts::{FRAC_PI_2, FRAC_PI_4, PI};
+        let inf = f64::INFINITY;
+        for (y, x, want) in [
+            (0.0, 1.0, 0.0), (-0.0, 1.0, -0.0), (0.0, 0.0, 0.0), (-0.0, 0.0, -0.0),
+            (0.0, -1.0, PI), (-0.0, -1.0, -PI), (0.0, -0.0, PI), (-0.0, -0.0, -PI),
+            (1.0, 0.0, FRAC_PI_2), (-1.0, -0.0, -FRAC_PI_2),
+            (inf, 1.0, FRAC_PI_2), (inf, inf, FRAC_PI_4), (inf, -inf, 3.0 * FRAC_PI_4), (-inf, -inf, -3.0 * FRAC_PI_4),
+            (1.0, inf, 0.0), (-1.0, inf, -0.0), (1.0, -inf, PI), (-1.0, -inf, -PI),
+        ] {
+            let got = fpatan_value(y, x);
+            assert_eq!(got.to_bits(), want.to_bits(), "atan2({y}, {x}) = {got}, want {want}");
+        }
+        assert!(fpatan_value(f64::NAN, 1.0).is_nan());
+        assert!(matches!(x87_fpatan(1.0, 2.0), TrigOutcome::Value { inexact: true, .. }));
+    }
+
+    /// Against the host's atan2 over a spread of magnitudes and quadrants: equal,
+    /// or (rarely, where rounding first to 64 bits changes the binary64 result)
+    /// one ULP apart.
+    #[test]
+    fn fpatan_agrees_with_libm_within_double_rounding() {
+        let mut seed = 0x1234_5678_9abc_def0u64;
+        let mut next = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        let (mut equal, mut one_ulp) = (0, 0);
+        for _ in 0..3000 {
+            let mag = |r: u64| (((r >> 11) as f64) / (1u64 << 53) as f64) * 2f64.powi((r % 60) as i32 - 30);
+            let (ry, rx) = (next(), next());
+            let y = if ry & 1 == 0 { mag(ry) } else { -mag(ry) };
+            let x = if rx & 1 == 0 { mag(rx) } else { -mag(rx) };
+            let (got, want) = (fpatan_value(y, x), y.atan2(x));
+            let d = (got.to_bits() as i64 - want.to_bits() as i64).abs();
+            assert!(d <= 1, "atan2({y:e}, {x:e}): model {got:e}, libm {want:e}");
+            if d == 0 { equal += 1 } else { one_ulp += 1 }
+        }
+        assert!(equal > 2900, "{equal} equal, {one_ulp} one ULP apart");
     }
 
     #[test]

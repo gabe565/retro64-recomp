@@ -277,7 +277,7 @@ pub fn cases() -> Vec<Case> {
                     a.fld(qword_ptr(ebx))?; a.fcos()?; a.fstp(qword_ptr(ebx + 24))?;
                     a.fld(qword_ptr(ebx))?; a.fld(qword_ptr(ebx + 8))?; a.fpatan()?; a.fstp(qword_ptr(ebx + 32))?;
                     a.fld(qword_ptr(ebx + 8))?; a.fptan()?; a.fstp(qword_ptr(ebx + 40))?; a.fstp(qword_ptr(ebx + 48)) },
-               // Hardware values (AMD Ryzen 7 9800X3D). FPATAN still uses host libm (X87_NOTE_TRANSCENDENTAL).
+               // Hardware values (AMD Ryzen 7 9800X3D).
                flag_mask: 0, kind: Kind::Strict,
                expect: Expect { regs: &[], flags: None, mem: mem![(16, f64b!(0.8414709848078965)), (24, f64b!(0.5403023058681398)),
                    (32, f64b!(1.1071487177940904f64)), (40, f64b!(1.0)), (48, f64b!(0.5463024898437905))] }, ..base.clone() },
@@ -341,6 +341,30 @@ pub fn cases() -> Vec<Case> {
                    (88, f64b!(0.9873418913143515)), (96, f64b!(9223372036854775808.0)), (104, f64b!(-9223372036854775808.0)),
                    (112, 0xfff8_0000_0000_0000u64.to_le_bytes()), (120, 0x7ff8_0000_0000_0001u64.to_le_bytes()),
                    (144, f64b!(1.0)), (160, f64b!(9223372036854775808.0))] }, ..base.clone() },
+        // FPATAN (ST(1)=y, ST(0)=x): quadrants, results next to ±π and π/2 (where the
+        // quadrant terms meet the x87's internal π), and table entries. Each result is
+        // stored with its C1 (the 64-bit rounding direction); C0/C2/C3 are undefined.
+        // Expected values are the model's (x87trig::x87_fpatan); oracle runs confirm them.
+        Case { name: "x87_fpatan_quadrants_and_table",
+               mem: mem![(0, f64b!(2.0)), (8, f64b!(-3.0)), (16, f64b!(-0.75)), (24, f64b!(-0.5)),
+                         (32, f64b!(-3.0)), (40, f64b!(7.0)), (48, f64b!(1.0e-300)), (56, f64b!(-1.0)),
+                         (64, f64b!(-1.0e-20)), (72, f64b!(-3.0)), (80, f64b!(0.0)), (88, f64b!(-0.0)),
+                         (96, f64b!(f64::INFINITY)), (104, f64b!(f64::NEG_INFINITY)), (112, f64b!(12345.678)), (120, f64b!(-0.001))],
+               asm: |a| {
+                    for i in 0..8 {
+                        a.fld(qword_ptr(ebx + 16 * i))?; a.fld(qword_ptr(ebx + 16 * i + 8))?; a.fpatan()?;
+                        a.fnstsw(ax)?; a.and(ax, 0x0200)?; a.mov(word_ptr(ebx + 192 + 2 * i), ax)?;
+                        a.fstp(qword_ptr(ebx + 128 + 8 * i))?;
+                    }
+                    a.xor(eax, eax)
+               },
+               flag_mask: 0, kind: Kind::Strict,
+               expect: Expect { regs: &[], flags: None, mem: mem![
+                   (128, 0x40046dc09ec29433u64.to_le_bytes()), (136, 0xc00145385fa3af71u64.to_le_bytes()),
+                   (144, 0xbfd9e9bf3d20dc71u64.to_le_bytes()), (152, 0x400921fb54442d18u64.to_le_bytes()),
+                   (160, 0xc00921fb54442d18u64.to_le_bytes()), (168, 0x400921fb54442d18u64.to_le_bytes()),
+                   (176, 0x4002d97c7f3321d2u64.to_le_bytes()), (184, 0x3ff921fb6a027448u64.to_le_bytes()),
+                   (192, [0x00u8, 0x02, 0x00, 0x02, 0x00, 0x00, 0x00, 0x02, 0x00, 0x02, 0x00, 0x02, 0x00, 0x02, 0x00, 0x02])] }, ..base.clone() },
         // FPTAN: value, the pushed 1.0, and the out-of-range case (C2=1, nothing pushed).
         Case { name: "x87_fptan_values_and_stack",
                mem: mem![(0, f64b!(0.5)), (8, f64b!(-1.0)), (16, f64b!(std::f64::consts::FRAC_PI_4)), (24, f64b!(std::f64::consts::FRAC_PI_2)),
