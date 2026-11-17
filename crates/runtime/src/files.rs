@@ -66,8 +66,8 @@ pub struct Files {
     pub save_dir: PathBuf,
     open: HashMap<u32, (Handle, String)>,
     next: u32,
-    /// Current directory relative to the game directory ("" = the game directory itself).
-    pub cwd: String,
+    /// Current directory relative to the game directory (empty = the game directory).
+    pub cwd: GuestPath,
     /// Open FindFirstFile searches: handle → remaining entries.
     searches: HashMap<u32, Vec<FindEntry>>,
 }
@@ -96,11 +96,63 @@ pub fn wildcard_match(pattern: &str, name: &str) -> bool {
     m(pattern.as_bytes(), name.as_bytes())
 }
 
-/// Find `rel` (components separated by `\` or `/`) under `root`, matching each
-/// component case-insensitively as Windows does.
-fn resolve_ci(root: &Path, rel: &str) -> Option<PathBuf> {
+/// A path relative to the game directory, as components. Windows path rules (both
+/// separators, `.`, `..`, the current directory, the `C:\\Bugatron` prefix) are
+/// applied once, by [`GuestPath::parse`]; host paths are then built per component.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GuestPath(Vec<String>);
+
+impl GuestPath {
+    /// Resolve `name` against `cwd`. Paths outside the game directory are rejected.
+    pub fn parse(cwd: &GuestPath, name: &str) -> Result<GuestPath, String> {
+        let n = name.replace('/', "\\");
+        let lower = n.to_ascii_lowercase();
+        let game = GAME_DIR.to_ascii_lowercase();
+        let (mut parts, rest): (Vec<String>, &str) = if lower == game {
+            (Vec::new(), "")
+        } else if lower.starts_with(&(game.clone() + "\\")) {
+            (Vec::new(), &n[game.len() + 1..])
+        } else if (n.len() >= 2 && n.as_bytes()[1] == b':') || n.starts_with('\\') {
+            return Err(format!("path outside the game directory: {name}"));
+        } else {
+            (cwd.0.clone(), &n[..])
+        };
+        for c in rest.split('\\') {
+            match c {
+                "" | "." => {}
+                ".." => {
+                    if parts.pop().is_none() {
+                        return Err(format!("path outside the game directory: {name}"));
+                    }
+                }
+                c => parts.push(c.to_string()),
+            }
+        }
+        Ok(GuestPath(parts))
+    }
+
+    pub fn parts(&self) -> &[String] {
+        &self.0
+    }
+
+    /// The folder and the last component (empty for the game directory itself).
+    fn split_last(&self) -> (&[String], &str) {
+        match self.0.split_last() {
+            Some((last, dir)) => (dir, last),
+            None => (&[], ""),
+        }
+    }
+
+    /// As a Windows path relative to the game directory (`Audio\\boing.wav`).
+    pub fn to_windows(&self) -> String {
+        self.0.join("\\")
+    }
+}
+
+/// Find `parts` under `root`, matching each component case-insensitively as Windows does.
+fn resolve_ci(root: &Path, parts: &[String]) -> Option<PathBuf> {
     let mut cur = root.to_path_buf();
-    for comp in rel.split(['\\', '/']).filter(|c| !c.is_empty() && *c != ".") {
+    for comp in parts {
         let exact = cur.join(comp);
         if exact.exists() {
             cur = exact;
@@ -112,44 +164,19 @@ fn resolve_ci(root: &Path, rel: &str) -> Option<PathBuf> {
     Some(cur)
 }
 
-/// Resolve a guest path to a path relative to the game directory, applying the
-/// current directory and `.`/`..`. Paths outside the game directory are rejected.
-pub fn guest_relative(cwd: &str, name: &str) -> Result<String, String> {
-    let n = name.replace('/', "\\");
-    let lower = n.to_ascii_lowercase();
-    let game = GAME_DIR.to_ascii_lowercase();
-    let (base, rest): (Vec<&str>, &str) = if lower == game {
-        (Vec::new(), "")
-    } else if lower.starts_with(&(game.clone() + "\\")) {
-        (Vec::new(), &n[game.len() + 1..])
-    } else if (n.len() >= 2 && n.as_bytes()[1] == b':') || n.starts_with('\\') {
-        return Err(format!("path outside the game directory: {name}"));
-    } else {
-        (cwd.split('\\').filter(|c| !c.is_empty()).collect(), &n[..])
-    };
-    let mut parts = base;
-    for c in rest.split('\\') {
-        match c {
-            "" | "." => {}
-            ".." => {
-                if parts.pop().is_none() {
-                    return Err(format!("path outside the game directory: {name}"));
-                }
-            }
-            c => parts.push(c),
-        }
-    }
-    Ok(parts.join("\\"))
+/// Lower-cased `/`-joined key, for matching pack paths.
+fn pack_key(parts: &[String]) -> String {
+    parts.join("/").to_ascii_lowercase()
 }
 
-/// `rel` (separated by `\\` or `/`) as pack path components, lower-cased for matching.
-fn pack_key(rel: &str) -> String {
-    rel.split(['\\', '/']).filter(|c| !c.is_empty() && *c != ".").collect::<Vec<_>>().join("/").to_ascii_lowercase()
+/// Whether pack path `p` lies inside the folder `key` (a [`pack_key`], non-empty).
+fn in_pack_dir<'a>(p: &'a str, key: &str) -> Option<&'a str> {
+    (p.len() > key.len() && p.as_bytes()[key.len()] == b'/' && p[..key.len()].eq_ignore_ascii_case(key)).then(|| &p[key.len() + 1..])
 }
 
 impl Files {
-    /// An original game file (`rel` relative to the game folder), case-insensitively.
-    fn data_file(&self, rel: &str) -> Option<DataFile> {
+    /// An original game file, case-insensitively.
+    fn data_file(&self, rel: &[String]) -> Option<DataFile> {
         match self.pack {
             Some(pack) => {
                 let key = pack_key(rel);
@@ -159,49 +186,43 @@ impl Files {
         }
     }
 
-    /// `rel` as spelled in the original game files (`/`-separated), for every leading
-    /// component that exists there. Windows keeps an existing file's or folder's name
-    /// when it is opened under another case; the save copy does the same.
-    fn data_spelling(&self, rel: &str) -> String {
-        let parts: Vec<&str> = rel.split(['\\', '/']).filter(|c| !c.is_empty() && *c != ".").collect();
-        let mut out: Vec<String> = Vec::new();
-        for (i, part) in parts.iter().enumerate() {
-            let prefix = parts[..=i].join("/");
+    /// `rel` as spelled in the original game files, for every leading component that
+    /// exists there. Windows keeps an existing file's or folder's name when it is
+    /// opened under another case; the save copy does the same.
+    fn data_spelling(&self, rel: &[String]) -> PathBuf {
+        let mut out = PathBuf::new();
+        for (i, part) in rel.iter().enumerate() {
             let found = match self.pack {
                 Some(pack) => {
-                    let key = prefix.to_ascii_lowercase();
+                    let key = pack_key(&rel[..=i]);
                     pack.iter().find_map(|(p, _)| {
-                        let p_lower = p.to_ascii_lowercase();
-                        (p_lower == key || p_lower.starts_with(&(key.clone() + "/"))).then(|| p.split('/').nth(i).unwrap_or(part).to_string())
+                        (p.eq_ignore_ascii_case(&key) || in_pack_dir(p, &key).is_some()).then(|| p.split('/').nth(i).unwrap_or(part).to_string())
                     })
                 }
                 // Read the directory: on a case-insensitive file system a lookup
                 // would echo the requested spelling instead of the stored one.
-                None => {
-                    let dir = self.data_dir.join(out.join("/"));
-                    std::fs::read_dir(dir).ok().and_then(|it| {
-                        it.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).find(|n| n.eq_ignore_ascii_case(part))
-                    })
-                }
+                None => std::fs::read_dir(self.data_dir.join(&out)).ok().and_then(|it| {
+                    it.flatten().map(|e| e.file_name().to_string_lossy().into_owned()).find(|n| n.eq_ignore_ascii_case(part))
+                }),
             };
-            out.push(found.unwrap_or_else(|| part.to_string()));
+            out.push(found.as_deref().unwrap_or(part));
         }
-        out.join("/")
+        out
     }
 
     /// Whether `rel` is a folder of the original game files.
-    fn data_dir_exists(&self, rel: &str) -> bool {
+    fn data_dir_exists(&self, rel: &[String]) -> bool {
         match self.pack {
             Some(pack) => {
                 let key = pack_key(rel);
-                key.is_empty() || pack.iter().any(|(p, _)| p.len() > key.len() && p.as_bytes()[key.len()] == b'/' && p[..key.len()].eq_ignore_ascii_case(&key))
+                key.is_empty() || pack.iter().any(|(p, _)| in_pack_dir(p, &key).is_some())
             }
             None => resolve_ci(&self.data_dir, rel).is_some_and(|p| p.is_dir()),
         }
     }
 
     /// The entries of a folder of the original game files (None if it does not exist).
-    fn data_entries(&self, rel: &str) -> Option<Vec<FindEntry>> {
+    fn data_entries(&self, rel: &[String]) -> Option<Vec<FindEntry>> {
         match self.pack {
             Some(pack) => {
                 if !self.data_dir_exists(rel) {
@@ -212,10 +233,11 @@ impl Files {
                 for (p, d) in pack {
                     let rest = if key.is_empty() {
                         *p
-                    } else if p.len() > key.len() && p.as_bytes()[key.len()] == b'/' && p[..key.len()].eq_ignore_ascii_case(&key) {
-                        &p[key.len() + 1..]
                     } else {
-                        continue;
+                        match in_pack_dir(p, &key) {
+                            Some(rest) => rest,
+                            None => continue,
+                        }
                     };
                     let e = match rest.split_once('/') {
                         Some((dir, _)) => FindEntry { name: dir.to_string(), size: 0, dir: true },
@@ -241,13 +263,14 @@ impl Files {
 
     /// CreateFileA. Returns a handle or a Win32 error code.
     pub fn create(&mut self, name: &str, access: u32, disposition: u32) -> Result<u32, u32> {
-        let rel = guest_relative(&self.cwd, name).map_err(|e| {
+        let rel = GuestPath::parse(&self.cwd, name).map_err(|e| {
             eprintln!("[files] {e}");
             ERROR_ACCESS_DENIED
         })?;
+        let rel = rel.parts();
         let write = access & GENERIC_WRITE != 0;
-        let in_save = resolve_ci(&self.save_dir, &rel).filter(|p| p.is_file());
-        let in_data = self.data_file(&rel);
+        let in_save = resolve_ci(&self.save_dir, rel).filter(|p| p.is_file());
+        let in_data = self.data_file(rel);
         let exists = in_save.is_some() || in_data.is_some();
         // CREATE_NEW 1, CREATE_ALWAYS 2, OPEN_EXISTING 3, OPEN_ALWAYS 4, TRUNCATE_EXISTING 5
         match disposition {
@@ -263,7 +286,7 @@ impl Files {
                 (None, None) => return Err(ERROR_FILE_NOT_FOUND),
             }
         } else {
-            let target = in_save.unwrap_or_else(|| self.save_dir.join(self.data_spelling(&rel)));
+            let target = in_save.unwrap_or_else(|| self.save_dir.join(self.data_spelling(rel)));
             if let Some(parent) = target.parent() {
                 std::fs::create_dir_all(parent).map_err(|_| ERROR_ACCESS_DENIED)?;
             }
@@ -289,9 +312,9 @@ impl Files {
 
     /// SetCurrentDirectoryA: the directory must exist in the game or save directory.
     pub fn set_cwd(&mut self, path: &str) -> Result<(), u32> {
-        let rel = guest_relative(&self.cwd, path).map_err(|_| ERROR_PATH_NOT_FOUND)?;
-        let in_save = resolve_ci(&self.save_dir, &rel).is_some_and(|p| p.is_dir());
-        if !self.data_dir_exists(&rel) && !in_save {
+        let rel = GuestPath::parse(&self.cwd, path).map_err(|_| ERROR_PATH_NOT_FOUND)?;
+        let in_save = resolve_ci(&self.save_dir, rel.parts()).is_some_and(|p| p.is_dir());
+        if !self.data_dir_exists(rel.parts()) && !in_save {
             return Err(ERROR_PATH_NOT_FOUND);
         }
         self.cwd = rel;
@@ -300,17 +323,14 @@ impl Files {
 
     /// The guest current directory as an absolute guest path.
     pub fn cwd_path(&self) -> String {
-        if self.cwd.is_empty() { GAME_DIR.to_string() } else { format!("{GAME_DIR}\\{}", self.cwd) }
+        if self.cwd.parts().is_empty() { GAME_DIR.to_string() } else { format!("{GAME_DIR}\\{}", self.cwd.to_windows()) }
     }
 
     /// FindFirstFileA: entries of the game and save directories matching the
     /// pattern's file part, in NTFS order (case-insensitive). Returns a search handle.
     pub fn find_first(&mut self, pattern: &str) -> Result<(u32, FindEntry), u32> {
-        let rel = guest_relative(&self.cwd, pattern).map_err(|_| ERROR_PATH_NOT_FOUND)?;
-        let (dir, pat) = match rel.rfind('\\') {
-            Some(i) => (&rel[..i], &rel[i + 1..]),
-            None => ("", &rel[..]),
-        };
+        let rel = GuestPath::parse(&self.cwd, pattern).map_err(|_| ERROR_PATH_NOT_FOUND)?;
+        let (dir, pat) = rel.split_last();
         let mut found: Vec<FindEntry> = Vec::new();
         let mut any_dir = false;
         let mut in_save = Vec::new();
