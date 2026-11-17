@@ -53,10 +53,27 @@ fn create_window_sends_the_creation_sequence() {
     let hwnd = create(&mut cpu);
     assert_eq!(hwnd, MAIN_HWND);
     let m: Vec<u32> = messages().iter().map(|m| m.0).collect();
-    assert_eq!(m, [WM_GETMINMAXINFO, WM_NCCREATE, WM_NCCALCSIZE, WM_CREATE]);
+    // As traced from the original in the VM (RD6): a popup gets no WM_GETMINMAXINFO,
+    // and its first WM_SIZE and WM_MOVE come before CreateWindowExA returns.
+    assert_eq!(m, [WM_NCCREATE, WM_NCCALCSIZE, WM_CREATE, WM_SIZE, WM_MOVE]);
     // WM_NCCREATE and WM_CREATE carry the same CREATESTRUCTA.
     let msgs = messages();
-    assert_eq!(msgs[1].2, msgs[3].2);
+    assert_eq!(msgs[0].2, msgs[2].2);
+    assert_eq!(msgs[3].2, 1024 | (768 << 16), "WM_SIZE lParam = client size");
+}
+
+#[test]
+fn overlapped_window_gets_minmaxinfo() {
+    let mut cpu = setup();
+    let wc = SCRATCH + 0x100;
+    let class = put_str(0, "BugClass");
+    w32(wc + 4, HELPER_WNDPROC);
+    w32(wc + 36, class);
+    call_import(&mut cpu, "user32.dll", "RegisterClassA", &[wc]);
+    let title = put_str(0x40, "Bugatron");
+    // The game's windowed mode: WS_OVERLAPPEDWINDOW, CW_USEDEFAULT position, 640×500.
+    call_import(&mut cpu, "user32.dll", "CreateWindowExA", &[0, class, title, 0xcf_0000, 0x8000_0000, 0x8000_0000, 640, 500, 0, 0, 0x40_0000, 0]);
+    assert_eq!(messages()[0].0, WM_GETMINMAXINFO);
 }
 
 #[test]
@@ -66,8 +83,7 @@ fn show_window_activates_once() {
     clear_log();
     assert_eq!(call_import(&mut cpu, "user32.dll", "ShowWindow", &[MAIN_HWND, 1]), 0, "previously hidden");
     let m: Vec<u32> = messages().iter().map(|m| m.0).collect();
-    assert_eq!(m, [WM_SHOWWINDOW, WM_ACTIVATEAPP, WM_ACTIVATE, WM_SETFOCUS, WM_SIZE, WM_MOVE]);
-    assert_eq!(messages()[4].2, 1024 | (768 << 16), "WM_SIZE lParam = client size");
+    assert_eq!(m, [WM_SHOWWINDOW, WM_ACTIVATEAPP, WM_ACTIVATE, WM_SETFOCUS]);
     clear_log();
     assert_eq!(call_import(&mut cpu, "user32.dll", "ShowWindow", &[MAIN_HWND, 1]), 1, "already visible");
     assert!(messages().is_empty());
@@ -206,7 +222,7 @@ fn destroy_and_quit() {
     clear_log();
     call_import(&mut cpu, "user32.dll", "DefWindowProcA", &[MAIN_HWND, WM_CLOSE, 0, 0]);
     let m: Vec<u32> = messages().iter().map(|m| m.0).collect();
-    assert_eq!(m, [WM_KILLFOCUS, WM_DESTROY]);
+    assert_eq!(m, [WM_DESTROY], "no WM_KILLFOCUS, as traced from the original");
     call_import(&mut cpu, "user32.dll", "PostQuitMessage", &[3]);
     assert_eq!(peek(&mut cpu), Some((WM_QUIT, 3, 0)));
     assert_eq!(peek(&mut cpu), None);

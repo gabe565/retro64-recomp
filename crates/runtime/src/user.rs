@@ -2,7 +2,8 @@
 //!
 //! The game has one top-level window whose window procedure (0x407d10) is
 //! original code. This module delivers the messages Windows would send to it:
-//! creation (`WM_GETMINMAXINFO`, `WM_NCCREATE`, `WM_NCCALCSIZE`, `WM_CREATE`),
+//! creation (`WM_GETMINMAXINFO` unless a popup, `WM_NCCREATE`, `WM_NCCALCSIZE`,
+//! `WM_CREATE`, `WM_SIZE`, `WM_MOVE`),
 //! showing and activation, input translated from SDL events, and the close and
 //! destroy sequence. Messages are dispatched by the game's own message loop
 //! through `PeekMessageA`/`DispatchMessageA`.
@@ -467,14 +468,11 @@ pub(crate) fn import(cpu: &mut Cpu, name: &str) -> bool {
                     }
                 });
                 // The activation sequence Windows sends to a newly shown top-level window.
-                let (w, h, x, y) = with_rt(|rt| { let w = rt.user.window.as_ref().unwrap(); (w.w, w.h, w.x, w.y) });
                 with_rt(|rt| rt.user.focused = true);
                 send(cpu, hwnd, WM_SHOWWINDOW, 1, 0);
                 send(cpu, hwnd, WM_ACTIVATEAPP, 1, 0);
                 send(cpu, hwnd, WM_ACTIVATE, 1, 0);
                 send(cpu, hwnd, WM_SETFOCUS, 0, 0);
-                send(cpu, hwnd, WM_SIZE, 0, mk_lparam(w, h));
-                send(cpu, hwnd, WM_MOVE, 0, mk_lparam(x, y));
             }
             ret(cpu, was as u32, 2);
         }
@@ -645,7 +643,14 @@ fn create_window(cpu: &mut Cpu) {
         }
         (cs, mmi)
     });
-    send(cpu, hwnd, WM_GETMINMAXINFO, 0, mmi);
+    // As Windows (and Wine) do: no WM_GETMINMAXINFO for a popup without a sizing
+    // border, such as the game's fullscreen window (traced in the VM, RD6).
+    const WS_THICKFRAME: u32 = 0x0004_0000;
+    const WS_CHILD: u32 = 0x4000_0000;
+    const WS_POPUP: u32 = 0x8000_0000;
+    if a[3] & WS_THICKFRAME != 0 || a[3] & (WS_POPUP | WS_CHILD) == 0 {
+        send(cpu, hwnd, WM_GETMINMAXINFO, 0, mmi);
+    }
     if send(cpu, hwnd, WM_NCCREATE, 0, cs) == 0 {
         fatal("window procedure rejected WM_NCCREATE");
     }
@@ -659,6 +664,9 @@ fn create_window(cpu: &mut Cpu) {
         fatal("window procedure failed WM_CREATE");
     }
     with_rt(|rt| { rt.heap.free(cs); rt.heap.free(mmi); rt.heap.free(rect); });
+    // The window's first size and position, before CreateWindowExA returns.
+    send(cpu, hwnd, WM_SIZE, 0, mk_lparam(w, h));
+    send(cpu, hwnd, WM_MOVE, 0, mk_lparam(x, y));
     ret(cpu, hwnd, 12);
 }
 
@@ -666,7 +674,8 @@ fn destroy(cpu: &mut Cpu, hwnd: u32) {
     if hwnd != MAIN_HWND || with_rt(|rt| rt.user.window.is_none()) {
         return;
     }
-    send(cpu, hwnd, WM_KILLFOCUS, 0, 0);
+    // No WM_KILLFOCUS or deactivation first: the original's focused window gets
+    // only WM_DESTROY (and non-client messages) from DestroyWindow (VM trace, RD6).
     send(cpu, hwnd, WM_DESTROY, 0, 0);
     with_rt(|rt| {
         if let Some(w) = rt.user.window.take() {
