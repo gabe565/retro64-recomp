@@ -48,7 +48,33 @@ Repeat at other resolutions (`--video-mode`, and the dialog choice in the VM) an
 - 3D power-up icons: 92–98% identical, about 3.5% within ±10 levels (lighting and filtering rounding, A1/A2/A5), and 1–2% large differences, mostly on polygon edges (rasterisation, A7).
 
 **Small divergence in animation.** The 1/1024 s game timer (0x424440: `ftol((QPC − base) × 1024 / freq)`) lands exactly on a tick boundary every 15 frames at 24 MHz. In one such frame the original computed a delta of 17 where native computed 18 (ticks 28672 vs 28673 after flip 1623). Animated objects (ball rotation, about 0.25° by flip 1623; marquee scroll) then drift slightly apart, while static ones stay bit-identical.
-- Most likely cause: the two runs perform a different number of QPC reads between the timer's base sample and the frame starts. The script skips the video dialog (`DialogBoxParamA` returns at once), but the native build runs the dialog proc.
-- This is a harness alignment issue, not a runtime deviation. Next step: count QPC calls on both sides and align them, so that animated frames match too and the remaining differences can be attributed exactly.
+- The suspected cause, different QPC read counts, turned out not to be it. See the 2026-11-16 results below.
 
 The VM runs the original under Windows-on-Arm x86 emulation (Prism). Its x87 arithmetic has not been validated against hardware; the native model matches an AMD Ryzen bit for bit. Any remaining numeric divergence should be checked against that before it is attributed to the runtime.
+
+## Results (2026-11-16): timer phase aligned
+
+**The cause** was the harness, not the runtime.
+- The script hooked `Flip` only once `r3d_Initialize` returned, so the original's virtual clock missed the **two flips** the game makes during initialisation. Their refreshes are 1/30 s, or 34.13 ticks at 1/1024 s.
+- Counts still lined up: QPC reads, deltas and `tick_now` matched ours exactly, but two flips later.
+- The 0.13-tick phase shift changed which frames landed on a tick boundary: hence the 17-versus-18 delta.
+
+**The fix:** the game has a single `Flip` call site, 0x426493 in its page-flip wrapper 0x426420. That instruction is 3 bytes, too short for Frida to hook, so the script now:
+- captures frames at the wrapper's entry;
+- counts the flip and advances the clock at 0x426496, the instruction after `Flip` returns.
+
+Both work from process start. Flip numbers now mean the same frame on both sides; before, the original's "139" was our 141.
+
+The script also reports `{type:'tick', flip, qpc_reads, delta, tick_now}` at chosen flips, matching `BUGATRON_TRACE=delta` natively. It writes frames to raw files in the VM instead of base64-encoding them in-process, which stalled the game. `compare_frames.py --from-raw` converts them.
+
+**Result,** title sequence, no input:
+- Flip number, QPC reads, delta and `tick_now` agree exactly at every reported flip from 1 to 200.
+- Frames:
+
+  | Flip | Pixels that differ | Max channel diff |
+  |---|---|---|
+  | 139 | 206 (0.07 %) | 1 |
+  | 450 | 6,886 (2.24 %) | 2 |
+  | 700 | 8,861 (2.88 %) | 2 |
+
+  Animated frames no longer drift. What remains is rasterisation and rounding between dgVoodoo's Direct3D and our renderer (renderer.md A1–A7).

@@ -6,6 +6,7 @@ saved as .json messages or converted PNG).
 Usage:
   compare_frames.py NATIVE.png ORIGINAL.png [--diff OUT.png]
   compare_frames.py --from-frida MESSAGES.json OUTDIR   # write original frames as PNG
+  compare_frames.py --from-raw RAW W H PITCH BPP OUT.png  # a raw capture file (flip-N.raw)
 
 Reports the share of pixels that differ, the maximum and mean per-channel
 difference, and writes an amplified difference image (|a-b| x 8) if asked.
@@ -56,9 +57,9 @@ def write_png(path, w, h, rgba):
                 + chunk(b'IDAT', zlib.compress(raw)) + chunk(b'IEND', b''))
 
 
-def guest_to_rgba(m):
+def guest_to_rgba(m, raw=None):
     """Raw guest back-buffer pixels (XRGB8888 or RGB565) to RGBA."""
-    raw = base64.b64decode(m['b64'])
+    raw = base64.b64decode(m['b64']) if raw is None else raw
     w, h, pitch, bpp = m['w'], m['h'], m['pitch'], m['bpp']
     out = bytearray()
     for y in range(h):
@@ -108,6 +109,10 @@ if __name__ == '__main__':
                 p = f"{outdir}/frame-{m['flip']:05d}.png"
                 write_png(p, w, h, rgba)
                 print(p)
+    elif args and args[0] == '--from-raw':
+        raw, (w, h, pitch, bpp), out = open(args[1], 'rb').read(), map(int, args[2:6]), args[6]
+        write_png(out, *guest_to_rgba({'w': w, 'h': h, 'pitch': pitch, 'bpp': bpp}, raw))
+        print(out)
     else:
         diff = args[args.index('--diff') + 1] if '--diff' in args else None
         compare(args[0], args[1], diff)

@@ -48,6 +48,8 @@ pub struct Cadence {
     t: u128,
     /// Vertical blanks waited for (Flip and WaitForVerticalBlank).
     pub vblanks: u64,
+    /// QueryPerformanceCounter reads so far (diagnostics: aligning runs with the original).
+    pub qpc_reads: u64,
     reads_since_wait: u32,
     stall_warned: bool,
     stall_host_mark: Option<Instant>,
@@ -56,7 +58,7 @@ pub struct Cadence {
 
 impl Cadence {
     pub fn new() -> Cadence {
-        Cadence { t: 0, vblanks: 0, reads_since_wait: 0, stall_warned: false, stall_host_mark: None, host_start: Instant::now() }
+        Cadence { t: 0, vblanks: 0, qpc_reads: 0, reads_since_wait: 0, stall_warned: false, stall_host_mark: None, host_start: Instant::now() }
     }
 
     /// Virtual nanoseconds since start (rounded down).
@@ -81,6 +83,7 @@ impl Cadence {
         // One tick of `freq` in 1/REFRESH_HZ ns units, rounded up so the counter always advances.
         self.t += (NS * UNITS_PER_NS).div_ceil(freq.max(1) as u128);
         self.reads_since_wait = 0;
+        self.qpc_reads += 1;
         v
     }
 

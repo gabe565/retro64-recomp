@@ -19,12 +19,22 @@
 //          GetMonitorFrequency reports 60.
 //
 // Captures: the back buffer just before flip N (= the native front buffer
-// just after flip N), for each N in CAPTURE_FLIPS, sent as
-// {type:'frame', flip, w, h, pitch, bpp, b64} with the raw guest pixels.
+// just after flip N), for each N in CAPTURE_FLIPS, written raw to
+// CAPTURE_DIR\flip-N.raw (encoding megabytes in the script stalls the game);
+// {type:'frame', flip, w, h, pitch, bpp, file} describes each.
+//
+// Flips are counted at the game's single Flip call site (0x426493, in its
+// page-flip wrapper 0x426420; see the hooks below), from process start: r3d_Initialize
+// flips twice before any surface exists to hook, and missing those two
+// refreshes shifted the virtual clock's phase against the 1/1024 s game timer.
 
 'use strict';
 
 const CAPTURE_FLIPS = [139, 450, 700];
+const CAPTURE_DIR = 'C:\\Users\\Public\\bugatron-frames';
+// Flips at which to report the timer state, to align runs with the native build
+// (`BUGATRON_TRACE=delta`): {type:'tick', flip, qpc_reads, delta, tick_now, vt_ms}.
+const TRACE_FLIPS = new Set([1, 2, 3, 4, 5, 6, 25, 50, 75, 100, 125, 150, 175, 200]);
 // The game opens its files relative to the current directory; Frida's spawn
 // does not set it, so set it to the game directory before the game runs.
 const GAME_DIR = 'C:\\Program Files (x86)\\Bugatron Gold';
@@ -39,6 +49,7 @@ const inGame = (ra) => ra.compare(game.base) >= 0 && ra.compare(game.base.add(ga
 
 let t = 0n;        // virtual time
 let flips = 0;
+let qpcReads = 0;
 let cursor = [0, 0];
 
 const k32 = Process.getModuleByName('kernel32.dll');
@@ -63,6 +74,7 @@ replaceForGame(k32, 'QueryPerformanceCounter', 'int', ['pointer'], (p) => {
   const ticks = t * QPC_FREQ / (NS * UNITS);
   p.writeU64(uint64(ticks.toString()));
   t += QPC_TICK;
+  qpcReads += 1;
   return 1;
 });
 replaceForGame(winmm, 'timeGetTime', 'uint32', [], () => Number(t * 1000n / (NS * UNITS)) >>> 0);
@@ -83,16 +95,6 @@ replaceForGame(u32, 'DialogBoxParamA', 'int', ['pointer', 'pointer', 'pointer', 
 
 const vblank = () => { t = (t / REFRESH + 1n) * REFRESH; };
 
-function b64(bytes) {
-  const A = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
-  let out = '';
-  for (let i = 0; i < bytes.length; i += 3) {
-    const n = (bytes[i] << 16) | ((bytes[i + 1] || 0) << 8) | (bytes[i + 2] || 0);
-    out += A[(n >> 18) & 63] + A[(n >> 12) & 63] + (i + 1 < bytes.length ? A[(n >> 6) & 63] : '=') + (i + 2 < bytes.length ? A[n & 63] : '=');
-  }
-  return out;
-}
-
 function captureBackBuffer(flip) {
   const back = ptr(0xa06b58).readPointer();
   const vt = back.readPointer();
@@ -104,9 +106,11 @@ function captureBackBuffer(flip) {
   if (hr !== 0) { send({ type: 'error', flip, hr }); return; }
   const h = desc.add(8).readU32(), w = desc.add(12).readU32(), pitch = desc.add(16).readU32();
   const bits = desc.add(0x24).readPointer(), bpp = desc.add(0x54).readU32();
-  const bytes = new Uint8Array(bits.readByteArray(pitch * h));
+  const bytes = bits.readByteArray(pitch * h);
   unlock(back, NULL);
-  send({ type: 'frame', flip, w, h, pitch, bpp, vt_ms: Number(t * 1000n / (NS * UNITS)), b64: b64(bytes) });
+  const file = `${CAPTURE_DIR}\\flip-${flip}.raw`;
+  File.writeAllBytes(file, bytes);
+  send({ type: 'frame', flip, w, h, pitch, bpp, vt_ms: Number(t * 1000n / (NS * UNITS)), file });
 }
 
 // After r3d_Initialize (0x424b90): hook WaitForVerticalBlank, GetMonitorFrequency and Flip.
@@ -119,16 +123,29 @@ Interceptor.attach(ptr(0x424b90), {
     const ddvt = dd4.readPointer();
     Interceptor.attach(ddvt.add(22 * 4).readPointer(), { onLeave() { if (inGame(this.returnAddress)) vblank(); } });
     Interceptor.replace(ddvt.add(15 * 4).readPointer(), new NativeCallback((self, p) => { p.writeU32(60); return 0; }, 'int', ['pointer', 'pointer'], 'stdcall'));
-    const front = ptr(0xa06b44).readPointer();
-    Interceptor.attach(front.readPointer().add(11 * 4).readPointer(), {
-      onEnter() {
-        if (!inGame(this.returnAddress)) return;
-        flips += 1;
-        if (CAPTURE_FLIPS.includes(flips)) captureBackBuffer(flips);
-      },
-      onLeave() { if (inGame(this.returnAddress)) vblank(); },
-    });
     send({ type: 'hooked', vt_ms: Number(t * 1000n / (NS * UNITS)) });
   },
 });
+// The game's only Flip call is IDirectDrawSurface4::Flip(front, NULL, DDFLIP_WAIT)
+// at 0x426493, a 3-byte instruction Frida cannot patch. So: capture at the entry
+// of its page-flip wrapper 0x426420 (the back buffer holds the frame about to be
+// shown), and count the flip and advance the clock at 0x426496, the instruction
+// after Flip returns.
+Interceptor.attach(ptr(0x426420), function () {
+  if (CAPTURE_FLIPS.includes(flips + 1)) captureBackBuffer(flips + 1);
+});
+Interceptor.attach(ptr(0x426496), function () {
+  flips += 1;
+  vblank();
+  // Reported after the flip, as the native trace is (BUGATRON_TRACE=delta).
+  if (TRACE_FLIPS.has(flips)) {
+    send({ type: 'tick', flip: flips, qpc_reads: qpcReads, delta: ptr(0x8429e0).readU32(), tick_now: ptr(0x8429dc).readU32(), vt_ms: Number(t * 1000n / (NS * UNITS)) });
+  }
+});
+
+{
+  const mk = new NativeFunction(exp(k32, 'CreateDirectoryA'), 'int', ['pointer', 'pointer'], 'stdcall');
+  mk(Memory.allocAnsiString(CAPTURE_DIR), NULL);
+}
+
 send({ type: 'ready', base: game.base.toString() });

@@ -213,8 +213,8 @@ fn main() {
         rt.frame_hook = Some(Box::new(move |rt, n| {
             if trace_delta {
                 // The game's frame delta (1/1024 s ticks), written by its frame-timing function.
-                let vt_ms = rt.clock.cadence.as_ref().map(|c| c.now_ns() / 1_000_000).unwrap_or(0);
-                eprintln!("[delta] flip {n}: {} (tick_now {}, virtual {vt_ms} ms)", rt.mem.r32(0x8429e0), rt.mem.r32(0x8429dc));
+                let (vt_ms, qpc) = rt.clock.cadence.as_ref().map(|c| (c.now_ns() / 1_000_000, c.qpc_reads)).unwrap_or((0, 0));
+                eprintln!("[delta] flip {n}: {} (tick_now {}, virtual {vt_ms} ms, qpc reads {qpc})", rt.mem.r32(0x8429e0), rt.mem.r32(0x8429dc));
             }
             input_script::apply(rt, &input, n);
         }));
