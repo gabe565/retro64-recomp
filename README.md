@@ -59,7 +59,7 @@ Use `--exe FILE` (or `BUGATRON_EXE`) to choose one. An installer or zip is unpac
 |---|---|
 | `--exe FILE` | `Bug3D.exe`, the installer, or the download zip |
 | `--data DIR` | The game folder, if it isn't next to `Bug3D.exe` |
-| `--save DIR` | Where prefs and high scores go. The default is your per-user data folder, printed at startup (`~/Library/Application Support/bugatron-recomp/gold-1.20a` on macOS, `~/.local/share/…` on Linux, `%APPDATA%\…` on Windows). Game files are never modified |
+| `--save DIR` | Where prefs and high scores go. The default is your per-user data folder, printed at startup (`~/Library/Application Support/bugatron` on macOS, `~/.local/share/bugatron` on Linux, `%APPDATA%\bugatron` on Windows). Game files are never modified |
 | `--windowed` | Start in a window. The game is fullscreen by default, as the original was |
 | `--run-in-background` | Keep running when another app has focus (the original paused) |
 | `--video-mode WxHxBPP` | For example `1600x1200x32` or `640x480x16`. The default is the largest 4:3 mode that fits your display |
