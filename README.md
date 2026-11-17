@@ -83,8 +83,8 @@ To build for other machines without installing Rust on them, `tools/build-portab
 | Platform | Graphics backend | State |
 |---|---|---|
 | macOS (Apple Silicon) | Metal | Played and tested |
-| Linux x86-64 / arm64 | Vulkan | Tests pass. Frames match Metal (Mesa lavapipe); not yet tried on a hardware GPU or played by hand |
-| Windows x86-64 | Direct3D 12 | Tests pass. Frames and audio match macOS (WARP, in a VM); not yet tried on a hardware GPU or played by hand |
+| Linux x86-64 / arm64 | Vulkan | Played on a Steam Deck (x86-64, 2026-11-17). Tests pass; frames match Metal (Mesa lavapipe) |
+| Windows x86-64 | Direct3D 12 | Played on a hardware GPU (2026-11-17). Tests pass; frames and audio match macOS (WARP, in a VM) |
 
 ## Testing
 
