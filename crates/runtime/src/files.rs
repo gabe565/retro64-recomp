@@ -27,6 +27,22 @@ pub const ERROR_FILE_EXISTS: u32 = 80;
 
 const GENERIC_WRITE: u32 = 0x4000_0000;
 
+/// The per-user folder for saves: `~/Library/Application Support/bugatron-recomp/gold-1.20a/`
+/// on macOS, `~/.local/share/bugatron-recomp/gold-1.20a/` on Linux,
+/// `%APPDATA%\\bugatron-recomp\\gold-1.20a\\` on Windows (SDL_GetPrefPath, which creates it).
+pub fn default_save_dir() -> Option<PathBuf> {
+    // SAFETY: NUL-terminated strings; SDL allocates the result, freed with SDL_free.
+    unsafe {
+        let p = sdl3_sys::filesystem::SDL_GetPrefPath(c"bugatron-recomp".as_ptr(), c"gold-1.20a".as_ptr());
+        if p.is_null() {
+            return None;
+        }
+        let path = PathBuf::from(std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned());
+        sdl3_sys::stdinc::SDL_free(p as *mut std::ffi::c_void);
+        Some(path)
+    }
+}
+
 /// Read-only game files built into the program: (path relative to the game folder
 /// with `/` separators, contents).
 pub type Pack = &'static [(&'static str, &'static [u8])];

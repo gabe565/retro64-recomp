@@ -6,7 +6,8 @@
 //!
 //! Options: `bugatron --help` (generated from [`Args`]).
 //!
-//! Files the game writes (prefs, high scores) go to SAVE_DIR (default `./save`);
+//! Files the game writes (prefs, high scores) go to SAVE_DIR (default: the per-user
+//! folder, `bugatron_runtime::files::default_save_dir`);
 //! the game directory is only read.
 
 mod source;
@@ -35,9 +36,10 @@ struct Args {
     /// Game folder (Audio, Graphics, levels) [default: Bug3D.exe's folder, or the files in the installer]
     #[arg(long, value_name = "DIR")]
     data: Option<PathBuf>,
-    /// Where prefs and high scores are written (game files are never modified)
-    #[arg(long, value_name = "DIR", default_value = "save")]
-    save: PathBuf,
+    /// Where prefs and high scores are written (game files are never modified) [default: the
+    /// per-user data folder, printed at startup]
+    #[arg(long, value_name = "DIR")]
+    save: Option<PathBuf>,
 
     /// Start in a window instead of fullscreen (Alt+Enter or Ctrl+Cmd+F toggles)
     #[arg(long, help_heading = "Display")]
@@ -179,6 +181,8 @@ fn main() {
     }
     rt.files.data_dir = data.unwrap_or_default();
     rt.files.pack = pack;
+    let save = save.or_else(bugatron_runtime::files::default_save_dir).unwrap_or_else(|| PathBuf::from("save"));
+    eprintln!("saves: {}", save.display());
     rt.files.save_dir = save;
     rt.clock.cadence = Some(bugatron_runtime::clock::Cadence::new());
     rt.clock.pace = true;
