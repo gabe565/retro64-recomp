@@ -1,0 +1,6 @@
+# Only the source goes into the build image (Dockerfile); never game files.
+.git
+target
+_work
+reference
+**/__pycache__

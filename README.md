@@ -38,6 +38,20 @@ The build reads the game straight from the download: it unpacks the installer in
 
 The recompiler starts from a committed list of function and jump-table addresses ([`hints/`](hints/README.md)), produced once by Ghidra and tied to the exe's hash. Ghidra is only needed to regenerate it. `tools/extract_reference.sh [--ghidra]` (innoextract, Ghidra 12.x) sets up the analysis workspace in `_work/`.
 
+### Building with Docker
+
+With only [Docker](https://docs.docker.com/get-docker/) installed, this builds Linux x86-64 and Windows x86-64 binaries with the game built in. Put the downloaded zip (or the installer, or the installed game folder's contents) in a folder of its own (Docker reads the whole folder), then:
+
+```sh
+docker build --build-context game=path/to/that/folder --output bugatron \
+  https://github.com/gabe565/bugatron-recomp.git
+```
+
+- The binaries land in `./bugatron`: `bugatron-linux-x64/bugatron` (glibc 2.38 or newer, so the Steam Deck and current distributions) and `bugatron-windows-x64/` (`bugatron.exe` with `SDL3.dll`, also zipped). Add `--target linux` or `--target windows` to build just one.
+- It builds natively on the machine you run it on, Apple Silicon included, and cross-compiles. A first build takes a few minutes; compiled dependencies stay in Docker's build cache, so later builds are faster. No image is left behind; `docker builder prune` clears the cache.
+- macOS binaries can't be built in Docker; use the steps above.
+- The binaries contain the original game files, so keep them to your own devices.
+
 Windows builds are currently cross-compiled from x86-64 Linux with MinGW: `tools/windows/build-kit.sh` (see [docs/testing/windows-validation.md](docs/testing/windows-validation.md)). Direct3D 12 shaders are compiled with DXC.
 
 ## Running
@@ -76,7 +90,7 @@ cargo build --release -p bugatron --features embed-game
 
 This builds the whole game folder (about 11 MB) into the binary, so you can copy one file to another machine of the same platform. It then contains the original game files, so keep it to your own devices.
 
-To build for other machines without installing Rust on them, `tools/build-portable.sh` cross-builds a Linux x86-64 binary (SDL3 linked in; glibc 2.38 or newer, which covers the Steam Deck) and a Windows x86-64 build (`bugatron.exe` with `SDL3.dll`) into `_work/dist/`. Run it on x86-64 Linux, such as an OrbStack machine; the script lists what it needs.
+To build for other machines without installing Rust on them, use [Docker](#building-with-docker), or `tools/build-portable.sh`, which cross-builds a Linux x86-64 binary (SDL3 linked in; glibc 2.38 or newer, which covers the Steam Deck) and a Windows x86-64 build (`bugatron.exe` with `SDL3.dll`) into `_work/dist/`. Run it on x86-64 Linux, such as an OrbStack machine; the script lists what it needs.
 
 ## Platforms
 
