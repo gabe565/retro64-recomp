@@ -111,7 +111,7 @@ dependencies = [
 
 [[package]]
 name = "bugatron"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "bugatron-recomp",
  "bugatron-runtime",
@@ -126,11 +126,11 @@ dependencies = [
 
 [[package]]
 name = "bugatron-pe"
-version = "0.1.0"
+version = "1.0.0"
 
 [[package]]
 name = "bugatron-poc"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "bugatron-recomp",
  "bugatron-runtime",
@@ -144,7 +144,7 @@ dependencies = [
 
 [[package]]
 name = "bugatron-recomp"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "bugatron-pe",
  "iced-x86",
@@ -155,7 +155,7 @@ dependencies = [
 
 [[package]]
 name = "bugatron-runtime"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "bugatron-pe",
  "bugatron-xmp-sys",
@@ -171,7 +171,7 @@ dependencies = [
 
 [[package]]
 name = "bugatron-runtime-tests"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "bugatron-recomp",
  "bugatron-runtime",
@@ -182,14 +182,14 @@ dependencies = [
 
 [[package]]
 name = "bugatron-x86-cases"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "iced-x86",
 ]
 
 [[package]]
 name = "bugatron-x86-oracle"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "bugatron-x86-cases",
  "libc",
@@ -198,7 +198,7 @@ dependencies = [
 
 [[package]]
 name = "bugatron-x86-tests"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "bugatron-recomp",
  "bugatron-runtime",
@@ -210,7 +210,7 @@ dependencies = [
 
 [[package]]
 name = "bugatron-xmp-sys"
-version = "0.1.0"
+version = "1.0.0"
 dependencies = [
  "cc",
 ]
