@@ -26,7 +26,7 @@ Frame N is then the same scene in both. Native determinism is verified: two runs
 4. Capture the native side: `bugatron --video-mode 640x480x32 --frames 800 --dump-frames 139,450,700 --dump-dir _work/compare/native`.
 5. Compare: `tools/compare_frames.py _work/compare/native/frame-00450.png original-450.png --diff diff-450.png`.
 
-Repeat at other resolutions (`--video-mode`, and the dialog choice in the VM) and at 16-bit depth for approximation A6.
+Repeat at other resolutions (`--video-mode`, and the dialog choice in the VM). A 16-bit comparison (approximation A6) is optional, since 32 bpp is the default.
 
 ## Results (2026-11-15, 640×480×32, VM with dgVoodoo2)
 

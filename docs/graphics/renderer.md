@@ -60,7 +60,7 @@ device state model (ddraw/d3d.rs) ── records Clear / Draw commands with full
 | A3 | A stage-0 operation that references a missing texture passes the diffuse colour and alpha through. | Matches the common hardware behaviour; Direct3D 6 left it driver-defined | — |
 | A4 | Colours and texture coordinates are interpolated perspective-correctly. Some 2001 hardware interpolated Gouraud colour linearly in screen space. | Subtle shading differences on large, steep triangles | VM comparison |
 | A5 | Bilinear filtering uses modern GPU precision. No mipmaps are used (the game disables them). | Sub-texel filtering differences | VM comparison |
-| A6 | 16-bit display mode renders at 8 bits per channel and truncates to RGB565 at readback and present. There is no dithering (`DITHERENABLE` is ignored), and blending happens before quantisation. | 16-bit output can be smoother than period hardware | 16-bit captures (pending) |
+| A6 | 16-bit display mode renders at 8 bits per channel and truncates to RGB565 at readback and present. There is no dithering (`DITHERENABLE` is ignored), and blending happens before quantisation. | 16-bit output can be smoother than period hardware | Optional: 32 bpp is the default, and 16 bpp only applies when chosen with `--video-mode` |
 | A7 | GPU rasterisation (top-left fill rule, sub-pixel precision) matches Direct3D's rules, but not any one 2001 card's precision. | Edge pixels can differ | VM comparison |
 | A8 | Partial-rectangle `Clear2` stops with a diagnostic. | The game only clears the full target | — |
 | A9 | Destination alpha is always 1, because the guest targets have no alpha channel. | Matches XRGB/RGB565 semantics | — |
