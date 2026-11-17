@@ -333,7 +333,7 @@ The PE flag is modelled for FSIN/FCOS/FPTAN only. Arithmetic instructions don't 
 - **Rounding:** the result is rounded to the 64-bit significand (C1 = rounded up), then to binary64, flagging `X87_NOTE_EXT64` when that second rounding is inexact. PE is set for inexact results.
 - **Special values:** signed zeros and infinities follow the x87 table (the same as C99 `atan2`). NaNs propagate quieted, the larger significand winning when both operands are NaN. FPATAN has no invalid-operand or range cases. C0, C2 and C3 are undefined after FPATAN, so the oracle case compares C1 only.
 
-Assumption to confirm: the hardware's quadrant terms use the true π. It might instead use the 66-bit approximation FSIN uses for reduction, which could change the 64-bit rounding of results next to ±π. The oracle case `x87_fpatan_quadrants_and_table` covers each quadrant, results next to ±π and π/2, and the table entries. Its expected values are the model's; an oracle run on hardware (kit 4, testing/windows-validation.md) settles them.
+Assumption to confirm: the hardware's quadrant terms use the true π. It might instead use the 66-bit approximation FSIN uses for reduction, which could change the 64-bit rounding of results next to ±π. The oracle case `x87_fpatan_quadrants_and_table` covers each quadrant, results next to ±π and π/2, and the table entries. Its expected values are the model's; an oracle run on hardware (kit 5, testing/windows-validation.md) settles them.
 
 Checks so far:
 - The hardware case `x87_transcendentals` (atan2(1, 0.5), measured on the Ryzen) matches.

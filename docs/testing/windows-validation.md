@@ -1,5 +1,53 @@
 # Windows validation
 
+## Kit 5 (oracle only): x87 FPATAN confirmation
+
+Only the 32-bit instruction oracle is needed. It now includes `x87_fpatan_quadrants_and_table` (docs/recompilation-feasibility.md §7.11).
+
+| File | SHA-256 |
+|---|---|
+| `bugatron-x86-oracle.exe` (32-bit x86) | `d6969590d1f0214f876e2789f5b9798f835929f3886e598c896ffeea6d3787c8` |
+
+Run it on the physical x86-64 PC (not in the arm64 VM: Windows on Arm's x86 emulation does not reproduce x87 precision):
+
+```powershell
+Get-FileHash .\bugatron-x86-oracle.exe -Algorithm SHA256
+.\bugatron-x86-oracle.exe .\x86-oracle-windows.json > $null
+```
+
+Send back `x86-oracle-windows.json`. It replaces `tests/fixtures/x86-oracle-amd-ryzen7-9800x3d.json`. Every strict case should match the model, the new FPATAN case included, apart from the documented 64-bit-precision case. A mismatch next to ±π would mean the hardware's quadrant terms use its 66-bit π.
+
+Built with: `tools/windows/build-kit.sh`'s toolchain plus `gcc-mingw-w64-i686` and `rustup target add i686-pc-windows-gnu`, then `cargo build --release -p bugatron-x86-oracle --target i686-pc-windows-gnu`.
+
+---
+
+## Building natively on Windows on Arm (arm64)
+
+A native arm64 build avoids x64 emulation on Windows on Arm, the reference VM included. In the VM (or on any arm64 Windows machine):
+
+1. **Install the tools:**
+   - Visual Studio 2022 Build Tools, with the *C++ ARM64 build tools* and a *Windows 11 SDK* (which provides `dxc.exe`);
+   - CMake;
+   - Git;
+   - Rust from <https://rustup.rs> (it selects `aarch64-pc-windows-msvc` on arm64).
+2. **Get the source and the game:** clone the repository and put `Bugatron_Win_EN_Gold_120.zip` in `reference\`.
+3. **Put DXC on `PATH`** in a *Developer PowerShell for VS* (ARM64):
+
+   ```powershell
+   $env:PATH = (Get-ChildItem "${env:ProgramFiles(x86)}\Windows Kits\10\bin\*\arm64\dxc.exe" | Sort-Object FullName -Descending | Select-Object -First 1).DirectoryName + ";" + $env:PATH
+   ```
+
+4. **Build and run**, with SDL3 built from source as CI does on Windows:
+
+   ```powershell
+   cargo build --release -p bugatron --features bugatron-runtime/sdl3-from-source
+   .\target\release\bugatron.exe
+   ```
+
+The game finds the zip through the build path, or pass `--exe`. This path is untested so far: CI builds Windows x86-64 only.
+
+---
+
 ## Kit 4: the game on Direct3D 12 (Windows x86-64)
 
 Kit 4 is the full game (`bugatron.exe` with SDL3.dll) plus every test binary. `tools/windows/build-kit.sh` cross-builds it with MinGW on x86-64 Linux (the OrbStack machine `bugatron-linux-x64`), with DXC compiling the Direct3D 12 shaders.
