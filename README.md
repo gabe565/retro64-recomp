@@ -80,6 +80,8 @@ Use `--exe FILE` (or `BUGATRON_EXE`) to choose one. An installer or zip is unpac
 
 `bugatron --help` lists everything, including the testing options (`--input`, `--frames`, `--dump-frames`, `--record-audio`).
 
+**Controllers:** any controller SDL recognises works through the game's own joystick support: left stick or D-pad to steer, A/B/X/Y or the right trigger to fire. Menus still need the keyboard or mouse.
+
 **Keys:** the game's own controls, plus **Alt+Enter** (or **Ctrl+Cmd+F** on macOS) to toggle fullscreen. Some game functions use Page Up/Down, Home/End and Insert/Delete. Keyboards without those keys can't reach them yet; remapping is planned.
 
 ### Single-file build for testing

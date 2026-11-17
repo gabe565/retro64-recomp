@@ -64,3 +64,25 @@ fn shell_execute_of_a_non_url_fails_like_windows() {
     let (verb, file) = (put_str(0, "open"), put_str(0x40, "URL=http://www.bugatron.com/purchase.html"));
     assert_eq!(call_import(&mut cpu, "shell32.dll", "ShellExecuteA", &[0, verb, file, 0, 0, 1]), 2, "SE_ERR_FNF");
 }
+
+#[test]
+fn joystick_is_unplugged_without_controllers_and_centred_with_them() {
+    let mut cpu = setup();
+    let info = SCRATCH + 0x100;
+    // Headless and scripted runs: no joystick, as in the reference captures.
+    assert_eq!(call_import(&mut cpu, "winmm.dll", "joyGetPos", &[0, info]), 167, "JOYERR_UNPLUGGED");
+    // With the gamepad subsystem up, joystick 0 is always connected (the game stops
+    // polling after its first failure); with no controller attached it is centred.
+    with_rt(|rt| {
+        rt.user.headless = false;
+        rt.user.gamepads_ready = true;
+    });
+    for i in 0..4 {
+        w32(info + 4 * i, 0xcccc_cccc);
+    }
+    assert_eq!(call_import(&mut cpu, "winmm.dll", "joyGetPos", &[0, info]), 0, "JOYERR_NOERROR");
+    assert_eq!([r32(info), r32(info + 4), r32(info + 8), r32(info + 12)], [32768, 32768, 32768, 0]);
+    assert_eq!(call_import(&mut cpu, "winmm.dll", "joyGetPos", &[1, info]), 167, "only joystick 0");
+    with_rt(|rt| rt.user.ignore_host_input = true);
+    assert_eq!(call_import(&mut cpu, "winmm.dll", "joyGetPos", &[0, info]), 167, "scripted runs");
+}

@@ -53,7 +53,7 @@ How far the recompiled game runs on the portable runtime, which imports and COM 
     - `--windowed` starts in a window, and scripted runs stay windowed.
     - Alt+Enter, or Ctrl+Cmd+F on macOS, toggles fullscreen. These shortcuts are handled by the runtime and never reach the game.
   - SDL events become `WM_KEYDOWN`/`UP` (or `WM_SYSKEYDOWN`/`UP`) with Win32 virtual keys and scan codes, `WM_MOUSEMOVE`, and `WM_[LR]BUTTONDOWN`/`UP`. Window close becomes `WM_SYSCOMMAND(SC_CLOSE)`, then `WM_CLOSE`, then `WM_DESTROY`.
-- **WINMM:** `timeGetTime`, `joyGetPos` (returns `JOYERR_UNPLUGGED`: no joystick).
+- **WINMM:** `timeGetTime`, `joyGetPos`: joystick 0 is the host's controllers through SDL's gamepad API (`gamepad.rs`), always connected and centred while none is attached, since the game stops polling after its first failure (0x98d500). Left stick or D-pad for position, South/East/West/North for buttons 1–4, and the right trigger is button 1 too. Scripted and headless runs report `JOYERR_UNPLUGGED`, as in the captures of the original.
 - **KERNEL32 files and scheduling:** `SetCurrentDirectoryA`/`GetCurrentDirectoryA` (the guest current directory, confined to the game directory), `FindFirstFileA`/`FindNextFileA`/`FindClose` (wildcards; game and save directories merged, in NTFS case-insensitive order), and `SetPriorityClass`/`SetThreadPriority` (no-ops).
 - **FMOD 3.61** (`fmod.rs`): all 13 imports, with sound effects and XM music on the software mixer, libxmp, and SDL3 audio. See `audio.md`.
 - **DDRAW:** `DirectDrawEnumerateA`, `DirectDrawCreate` (primary driver only).

@@ -22,7 +22,7 @@ Rust names are proposed and not yet implemented.
 | 0x40b720 | Frame delta in 1/1024-s ticks (minimum 4, reuse previous if over 512) | V | `timing::frame_delta` |
 | 0x41c180 | Vsync-style limiter calibrated from `WaitForVerticalBlank` | V | `timing::vsync_limiter` |
 | 0x40b7c0 | vsync on/off toggle and HUD | S | |
-| 0x411f70 | Input poll: key bindings at `0x437f9c`, joystick, mouse | V(partial) | `input::poll` |
+| 0x411f70 | Input poll: key bindings at `0x437f9c`, joystick (`joyGetPos(0)` into 0x98d4f0, read digitally: X < 14000 left, X > 50000 right, Y < 14000 up, any button fires; 0x98d500 stops polling after a failure), mouse | V(partial) | `input::poll` |
 | 0x41cb50 / 0x41cb70 | key held / key pressed-edge test on `0x841a38[vk]` | V | `input::held` / `input::pressed` |
 | 0x412930 | Debug and HUD overlay ("MS LOGIC", "MS RENDER", "POLYGONS"), screenshot | S | |
 

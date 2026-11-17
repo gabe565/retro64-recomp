@@ -22,6 +22,7 @@ pub mod ddraw;
 pub mod dialog;
 pub mod display;
 pub mod files;
+pub mod gamepad;
 pub mod input_script;
 pub mod fmod;
 mod heap;

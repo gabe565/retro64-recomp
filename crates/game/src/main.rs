@@ -26,7 +26,7 @@ struct Script(Vec<(u64, input_script::Input)>);
 
 /// Bugatron Gold v1.20a, statically recompiled.
 #[derive(Parser)]
-#[command(version, about, after_help = "Environment: BUGATRON_TRACE=fmod,audio,imports,messages,sdl,gpu,draws,delta (or all) prints diagnostics.")]
+#[command(version, about, after_help = "Environment: BUGATRON_TRACE=fmod,audio,imports,messages,sdl,gpu,draws,delta,gamepad (or all) prints diagnostics.")]
 struct Args {
     /// Your Bugatron Gold v1.20a: Bug3D.exe, the installer (buggold_120.exe), or the downloaded
     /// zip [default: found in the current directory, next to this program, the Windows install

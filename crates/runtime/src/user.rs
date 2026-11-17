@@ -110,6 +110,10 @@ pub struct User {
     swallowed: Option<i32>,
     /// A host focus change not yet delivered to the guest (by the next PeekMessage).
     focus_pending: Option<bool>,
+    /// Controllers, read by `joyGetPos` (gamepad.rs).
+    pub gamepads: crate::gamepad::Gamepads,
+    /// The SDL gamepad subsystem is up (not for headless or scripted runs).
+    pub gamepads_ready: bool,
 }
 
 impl User {
@@ -141,7 +145,13 @@ pub fn ensure_sdl() {
     if !unsafe { SDL_Init(SDL_INIT_VIDEO | SDL_INIT_EVENTS) } {
         fatal(&format!("SDL_Init: {}", sdl_error()));
     }
-    with_rt(|rt| rt.user.sdl_ready = true);
+    // Controllers (gamepad.rs); scripted runs keep the joystick unplugged.
+    // SAFETY: SDL is initialised.
+    let pads = !with_rt(|rt| rt.user.ignore_host_input) && unsafe { SDL_InitSubSystem(SDL_INIT_GAMEPAD) };
+    with_rt(|rt| {
+        rt.user.sdl_ready = true;
+        rt.user.gamepads_ready = pads;
+    });
 }
 
 /// Send `msg` to the window procedure (synchronous, like SendMessage).
@@ -327,6 +337,12 @@ pub fn pump() {
             with_rt(close_requested_rt);
         } else if with_rt(|rt| rt.user.ignore_host_input) {
             continue;
+        } else if ty == SDL_EVENT_GAMEPAD_ADDED.0 {
+            let id = unsafe { ev.gdevice.which };
+            with_rt(|rt| rt.user.gamepads.added(id));
+        } else if ty == SDL_EVENT_GAMEPAD_REMOVED.0 {
+            let id = unsafe { ev.gdevice.which };
+            with_rt(|rt| rt.user.gamepads.removed(id));
         } else if ty == SDL_EVENT_WINDOW_FOCUS_LOST.0 || ty == SDL_EVENT_WINDOW_FOCUS_GAINED.0 {
             with_rt(|rt| {
                 if !rt.user.run_in_background {

@@ -435,8 +435,19 @@ fn call(rt: &mut Runtime, cpu: &mut Cpu, dll: &str, name: &str) {
         ("kernel32.dll", "QueryPerformanceCounter") => qpc(rt, cpu),
         ("kernel32.dll", "Sleep") => sleep(rt, cpu),
         ("winmm.dll", "timeGetTime") => ret(cpu, rt.clock_ms(), 0),
-        // No joystick is attached (controller support is a later enhancement).
-        ("winmm.dll", "joyGetPos") => ret(cpu, 167, 2), // JOYERR_UNPLUGGED
+        // Joystick 0 is the host's controllers (gamepad.rs).
+        ("winmm.dll", "joyGetPos") => {
+            let (id, p) = (a!(0), a!(1));
+            match crate::gamepad::joy_get_pos(rt, id) {
+                Some(j) => {
+                    for (i, v) in [j.x, j.y, j.z, j.buttons].into_iter().enumerate() {
+                        rt.mem.w32(p + 4 * i as u32, v);
+                    }
+                    ret(cpu, 0, 2);
+                }
+                None => ret(cpu, crate::gamepad::JOYERR_UNPLUGGED, 2),
+            }
+        }
         // The timer-calibration code (0x41c180) raises its priority; scheduling is not emulated.
         ("kernel32.dll", "SetPriorityClass") => ret(cpu, 1, 2),
         ("kernel32.dll", "SetThreadPriority") => ret(cpu, 1, 2),
