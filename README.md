@@ -76,6 +76,8 @@ cargo build --release -p bugatron --features embed-game
 
 This builds the whole game folder (about 11 MB) into the binary, so you can copy one file to another machine of the same platform. It then contains the original game files, so keep it to your own devices.
 
+To build for other machines without installing Rust on them, `tools/build-portable.sh` cross-builds a Linux x86-64 binary (SDL3 linked in; glibc 2.38 or newer, which covers the Steam Deck) and a Windows x86-64 build (`bugatron.exe` with `SDL3.dll`) into `_work/dist/`. Run it on x86-64 Linux, such as an OrbStack machine; the script lists what it needs.
+
 ## Platforms
 
 | Platform | Graphics backend | State |
