@@ -364,7 +364,7 @@ pub fn cases() -> Vec<Case> {
                    (144, 0xbfd9e9bf3d20dc71u64.to_le_bytes()), (152, 0x400921fb54442d18u64.to_le_bytes()),
                    (160, 0xc00921fb54442d18u64.to_le_bytes()), (168, 0x400921fb54442d18u64.to_le_bytes()),
                    (176, 0x4002d97c7f3321d2u64.to_le_bytes()), (184, 0x3ff921fb6a027448u64.to_le_bytes()),
-                   (192, [0x00u8, 0x02, 0x00, 0x02, 0x00, 0x00, 0x00, 0x02, 0x00, 0x02, 0x00, 0x02, 0x00, 0x02, 0x00, 0x02])] }, ..base.clone() },
+                   (192, [0x00u8, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00, 0x02, 0x00, 0x02, 0x00, 0x02, 0x00, 0x02, 0x00, 0x02])] }, ..base.clone() },
         // FPTAN: value, the pushed 1.0, and the out-of-range case (C2=1, nothing pushed).
         Case { name: "x87_fptan_values_and_stack",
                mem: mem![(0, f64b!(0.5)), (8, f64b!(-1.0)), (16, f64b!(std::f64::consts::FRAC_PI_4)), (24, f64b!(std::f64::consts::FRAC_PI_2)),

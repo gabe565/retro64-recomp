@@ -17,6 +17,8 @@ Get-FileHash .\bugatron-x86-oracle.exe -Algorithm SHA256
 
 Send back `x86-oracle-windows.json`. It replaces `tests/fixtures/x86-oracle-amd-ryzen7-9800x3d.json`. Every strict case should match the model, the new FPATAN case included, apart from the documented 64-bit-precision case. A mismatch next to ±π would mean the hardware's quadrant terms use its 66-bit π.
 
+**Result (2026-11-17):** all 61 cases ran. Every FPATAN value matched, but one status word did not: atan2(2, −3) had C1 = 0 where the model gave 1. That is the predicted sign of the 66-bit π in the quadrant terms. The model now uses it (§7.11), and every strict case matches. The output replaced the fixture.
+
 Built with: `tools/windows/build-kit.sh`'s toolchain plus `gcc-mingw-w64-i686` and `rustup target add i686-pc-windows-gnu`, then `cargo build --release -p bugatron-x86-oracle --target i686-pc-windows-gnu`.
 
 ---

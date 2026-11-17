@@ -244,7 +244,7 @@ Conclusions:
 | D4 | Ghidra missed C++ static initializers, and some function addresses appear only as immediates | **Fixed**: the recompiler roots code pointers found in data sections and immediate operands |
 | D5 | Windows x86-64 build | **Resolved.** Kit 1 exited silently: the M1 check read reserved-but-uncommitted guest memory. Guest memory is now commit-explicit on every OS, with fault diagnostics. Kit 2 on a physical AMD Ryzen 7 9800X3D (Windows, x86-64): **all tests PASS**, including 600/600 timing frames, 30/30 `.lev` files, CRT start-up with control word 0x027F, and random numbers. MSVC toolchain still untested (built with MinGW). |
 | D6 | The timing spin path (below 4 ticks) never occurred in the VM, which runs too slowly. It is covered only by the synthetic edge test derived from static analysis. | Open: capture on the physical machine |
-| D7 | x87 transcendentals versus host `libm` | **Resolved** (§7.10): FSIN/FCOS/FPTAN use x87 argument reduction with the 66-bit π. Confirmed on an AMD Ryzen 7 9800X3D (oracle kit 3): all values **and status words** in the trig regression cases match. FPATAN is modelled the same way (§7.11); hardware confirmation of its new oracle case is pending. |
+| D7 | x87 transcendentals versus host `libm` | **Resolved** (§7.10): FSIN/FCOS/FPTAN use x87 argument reduction with the 66-bit π. Confirmed on an AMD Ryzen 7 9800X3D (oracle kit 3): all values **and status words** in the trig regression cases match. FPATAN is modelled the same way and confirmed on the same CPU (oracle kit 5, §7.11). |
 | D8 | Exceptions: SEH frames are maintained, but the runtime does not dispatch exceptions | **Explicit**: the 4 C++ EH dispatcher jumps are `rt_trap` sites with reasons (`bugatron_recomp::targets`); `RaiseException`, `RtlUnwind`, and `UnhandledExceptionFilter` stop with a diagnostic |
 | D9 | Guest heap addresses differ from the original's Windows heap. Logic that depends on pointer values would diverge. | Open: differential tests must compare logical state, not raw pointers |
 | D10 | 8 instruction sites were unimplemented in the emitter: `RCR` ×4, `BTS` ×2, `PUSHAD`, `POPAD` | **Fixed**: `RCL`/`RCR` at all sizes, the `BT`/`BTS`/`BTR`/`BTC` family with bit-string addressing, and `PUSHAD`/`POPAD`. The whole program now has 0 unimplemented sites; regression cases in §7.7. |
@@ -258,7 +258,7 @@ Conclusions:
 - `cargo test -p bugatron-x86-tests` runs each case through the real recompiler and runtime. It checks hand-derived expectations from the Intel SDM, compared on defined flags only, and every oracle fixture present.
 - `crates/x86-oracle` runs the same bytes natively. Fixtures:
   - `tests/fixtures/x86-oracle-qemu-i386.json` comes from QEMU's i386 emulator (**not hardware**). It validates the harness and integer and flag semantics. All strict cases match. The 64-bit-precision case differs as documented, since QEMU implements 80-bit precision.
-  - `tests/fixtures/x86-oracle-amd-ryzen7-9800x3d.json` comes from real hardware (AMD Ryzen 7 9800X3D). **All strict cases match.** The 64-bit-precision case differs exactly as documented, and the transcendental report-only case matches bit for bit.
+  - `tests/fixtures/x86-oracle-amd-ryzen7-9800x3d.json` comes from real hardware (AMD Ryzen 7 9800X3D). **All strict cases match**, FPATAN included (kit 5, 2026-11-17). The 64-bit-precision case differs exactly as documented, and the transcendental report-only case matches bit for bit.
 
 ### 7.9 x87 transcendentals on real hardware
 
@@ -329,11 +329,14 @@ The PE flag is modelled for FSIN/FCOS/FPTAN only. Arithmetic instructions don't 
 ### 7.11 x87-compatible FPATAN
 
 `FPATAN` (ST(1) = atan2(ST(1), ST(0)), then pop) was the last transcendental still computed by the host `libm`. It now uses the model in `runtime/src/x87trig.rs` (`x87_fpatan`):
-- **Computing the angle:** the ratio min(|y|,|x|)/max(|y|,|x|) is formed exactly in wide fixed point (widened for tiny ratios). atan is evaluated by halving the angle (`atan t = 2·atan(t/(1+√(1+t²)))`) until t ≤ 1/8, then by the Taylor series. The quadrant terms π/2 and π are then applied.
+- **Computing the angle:** the ratio min(|y|,|x|)/max(|y|,|x|) is formed exactly in wide fixed point (widened for tiny ratios). atan is evaluated by halving the angle (`atan t = 2·atan(t/(1+√(1+t²)))`) until t ≤ 1/8, then by the Taylor series. The quadrant terms π/2 and π are then applied, using the 66-bit π (π₆₆) that FSIN's reduction uses.
 - **Rounding:** the result is rounded to the 64-bit significand (C1 = rounded up), then to binary64, flagging `X87_NOTE_EXT64` when that second rounding is inexact. PE is set for inexact results.
 - **Special values:** signed zeros and infinities follow the x87 table (the same as C99 `atan2`). NaNs propagate quieted, the larger significand winning when both operands are NaN. FPATAN has no invalid-operand or range cases. C0, C2 and C3 are undefined after FPATAN, so the oracle case compares C1 only.
 
-Assumption to confirm: the hardware's quadrant terms use the true π. It might instead use the 66-bit approximation FSIN uses for reduction, which could change the 64-bit rounding of results next to ±π. The oracle case `x87_fpatan_quadrants_and_table` covers each quadrant, results next to ±π and π/2, and the table entries. Its expected values are the model's; an oracle run on hardware (kit 5, testing/windows-validation.md) settles them.
+**Confirmed on hardware (kit 5, 2026-11-17, AMD Ryzen 7 9800X3D):** the quadrant terms use π₆₆, not the true π. The oracle case `x87_fpatan_quadrants_and_table` covers each quadrant, results next to ±π and π/2, and the table entries.
+- All eight results matched bit for bit. With the true π, one status word differed: atan2(2, −3) = π − atan(2/3) lies just above a 64-bit rounding midpoint, so it rounds up (C1 = 1), but the hardware rounded it down (C1 = 0).
+- π₆₆ is about 4·10⁻²¹ below π, which puts that result just below the midpoint. With π₆₆ the model matches every value and status word.
+- The binary64 results are the same either way, and the scripted gameplay frames are unchanged.
 
 Checks so far:
 - The hardware case `x87_transcendentals` (atan2(1, 0.5), measured on the Ryzen) matches.

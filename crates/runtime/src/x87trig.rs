@@ -119,8 +119,11 @@ pub fn x87_trig(op: TrigOp, x: f64) -> TrigOutcome {
 /// quadrant per the x87/C99 table. The angle is computed exactly in wide fixed
 /// point, rounded to the 64-bit significand (C1), then to binary64 like the
 /// other functions here. Unlike FSIN, FPATAN takes no argument reduction, so
-/// the hardware's internal π only enters through the quadrant terms (π/2, π);
-/// the model uses the true π. Oracle cases near ±π check that assumption.
+/// the hardware's internal π only enters through the quadrant terms (π/2, π).
+/// Those use π₆₆, as FSIN's reduction does. Evidence (AMD Ryzen 7 9800X3D):
+/// atan2(2, −3) = π − atan(2/3) lies just above a 64-bit rounding midpoint, so
+/// with the true π it rounds up (C1 = 1); the hardware rounds it down (C1 = 0),
+/// as π₆₆ (about 4·10⁻²¹ below π) does.
 pub fn x87_fpatan(y: f64, x: f64) -> TrigOutcome {
     if y.is_nan() || x.is_nan() {
         // Two NaNs: the larger significand wins; one: that one, quieted.
@@ -163,7 +166,7 @@ pub fn x87_fpatan(y: f64, x: f64) -> TrigOutcome {
             let sh = frac as i64 + es - eb;
             let t = if sh >= 0 { (ms << sh as u32) / &mb } else { ms / (mb << (-sh) as u32) };
             let mut a = atan_fixed(&t, frac);
-            let pi = pi_fixed(frac);
+            let pi = BigInt::from(PI66_SCALED) << (frac - 64);
             if ay > ax {
                 a = (&pi >> 1u32) - a;
             }

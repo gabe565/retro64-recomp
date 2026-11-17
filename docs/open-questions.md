@@ -33,7 +33,7 @@ This is a living list. Each entry states its scope, what is known, and how to re
 | R5 | Does `r3d` contain any gameplay-affecting logic (needed before overriding it)? | Read the 90 `r3d` functions' data flow into game globals |
 | R6 | Exact COM methods used, per interface | Type the vtable call sites in `r3d` and WinMain |
 | R7 | Windows build executed? | **Resolved**: passes on physical Windows x86-64 (§7.5 D5) |
-| R8 | Transcendental x87 results versus real hardware | **Resolved** for FSIN/FCOS/FPTAN (§7.10). FPATAN is modelled the same way (§7.11); its oracle case awaits a hardware run (kit 5) |
+| R8 | Transcendental x87 results versus real hardware | **Resolved**: FSIN/FCOS/FPTAN (§7.10) and FPATAN (§7.11, kit 5 on 2026-11-17: its quadrant terms use the 66-bit π) match an AMD Ryzen 7 9800X3D |
 | R9 | The x87 precision flag (PE) and other exception flags are not set by arithmetic instructions | Only matters if game code reads the status-word exception bits; check for FNSTSW consumers that test bits 0–5 |
 | R10 | An F1 injected on the title screen by the Frida script does not start the original; natively, the same input does | The posted `WM_KEYDOWN` (wParam 0x70, lParam 0x3b0001) is retrieved by `PeekMessageA` and reaches the window procedure 0x407d10, yet the key array entry `[0x841a38 + 4×0x70]` read 0 about a second later. A click starts both, and scripted arrows and Ctrl steer both identically, so the key path works in general. Open: whether the title screen reads F1 another way (for example by edge detection that our injection timing misses), or whether this is a real runtime difference. Check with a real key press in the VM and a watchpoint on that array entry |
 
