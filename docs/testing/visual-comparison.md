@@ -13,7 +13,7 @@ The original's simulation depends on its time sources, its input, and its random
 | `Sleep(n)` | +n ms; `Sleep(0)` takes no time | same (and really sleeps n ms) |
 | Vblank waits, `Flip(WAIT)` | next 1/60 s boundary | same, after the real wait |
 | `GetMonitorFrequency` | 60 | 60 |
-| Keyboard / mouse / joystick | none; cursor only moved by `SetCursorPos`; joystick unplugged | same |
+| Keyboard / mouse / joystick | `--input` script; cursor otherwise only moved by `SetCursorPos`; joystick unplugged | `INPUT_SPEC`, same syntax and the same messages and lParams |
 | Video dialog | headless, OK | `DialogBoxParamA` returns IDOK (selection from `prefs`) |
 
 Frame N is then the same scene in both. Native determinism is verified: two runs give byte-identical captures.
@@ -21,10 +21,10 @@ Frame N is then the same scene in both. Native determinism is verified: two runs
 ## Procedure
 
 1. In the VM, check that `prefs` selects 640×480×32 on device 1 (the reference: driver 0, device 1, mode 38 with dgVoodoo2). Then start `frida-server`.
-2. Spawn the original under the script (REA `start_frida_session` with `mode: spawn` and the `Bug3D.exe` path, load the script, resume). Let it run past flip 700. The script sends `{type: 'frame', flip, …}` messages with raw back-buffer pixels for flips 139, 450, and 700.
-3. Save the messages as JSON and convert them: `tools/compare_frames.py --from-frida messages.json _work/compare/original`.
-4. Capture the native side: `bugatron --video-mode "640 x 480 x 32" --frames 800 --dump-frames 139,450,700 --dump-dir _work/compare/native`.
-5. Compare: `tools/compare_frames.py _work/compare/native/frame-00450.png _work/compare/original/frame-00450.png --diff diff-450.png`.
+2. Set `CAPTURE_FLIPS`, `INPUT_SPEC` and `TRACE_FLIPS` in a copy of the script. Spawn the original under it (REA `start_frida_session` with `mode: spawn` and the `Bug3D.exe` path, load the script, resume), and let it run past the last capture. The script writes `C:\Users\Public\bugatron-frames\flip-N.raw` and sends a `{type: 'frame', flip, w, h, pitch, bpp, file}` message for each.
+3. Copy the raw files out of the VM and convert them: `tools/compare_frames.py --from-raw flip-450.raw 640 480 2560 32 original-450.png`.
+4. Capture the native side: `bugatron --video-mode 640x480x32 --frames 800 --dump-frames 139,450,700 --dump-dir _work/compare/native`.
+5. Compare: `tools/compare_frames.py _work/compare/native/frame-00450.png original-450.png --diff diff-450.png`.
 
 Repeat at other resolutions (`--video-mode`, and the dialog choice in the VM) and at 16-bit depth for approximation A6.
 
@@ -78,3 +78,21 @@ The script also reports `{type:'tick', flip, qpc_reads, delta, tick_now}` at cho
   | 700 | 8,861 (2.88 %) | 2 |
 
   Animated frames no longer drift. What remains is rasterisation and rounding between dgVoodoo's Direct3D and our renderer (renderer.md A1–A7).
+
+## Results (2026-11-16): scripted gameplay
+
+**Input:** a click at flip 600 starts the game from the title screen. A second click at 800 picks the first level. Ctrl (fire) is held from 1000. Left and right then alternate, each held 45 flips, every 100 flips. This is `--input "600:click@70x120,800:click@70x120,1000:CTRL+,1000:LEFT+,1045:LEFT-,1100:RIGHT+,1145:RIGHT-,…"` natively and `INPUT_SPEC` in the script. The script must have `CAPTURE_FLIPS` 2000, 4000, 6000.
+
+**Timer:** QPC reads, delta and `tick_now` agree exactly at every reported flip, from 1 to 6000. At 6000 they are 501,860,307 QPC reads and tick 103,373 on both sides. The frame limiter's polling, and so the read count, depends on the game state, so this also shows the two runs stayed in the same state.
+
+**Frames** (native `--video-mode 640x480x32 --frames 6100 --dump-frames 2000,4000,6000`):
+
+| Flip | Pixels that differ | Max channel diff |
+|---|---|---|
+| 2000 | 1,197 (0.39 %) | 1 |
+| 4000 | 1,104 (0.36 %) | 1 |
+| 6000 | 1,159 (0.38 %) | 1 |
+
+The ship, enemies, shots and score are in the same places in both, after 100 seconds of play with the same steering and firing. Every remaining difference is a single level, from rounding.
+
+**F1 does not start the original under the script.** See R10 in `../open-questions.md`; the click is used instead.
