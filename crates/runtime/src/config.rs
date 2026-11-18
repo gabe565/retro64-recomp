@@ -51,49 +51,23 @@ pub struct Config {
     pub bindings: Bindings,
 }
 
-const HEADER: &str = "\
-# Bugatron settings. Rewritten by the settings overlay (F10); edit while the game is closed.
-";
-
-const DISPLAY: &str = "\
-# [display]: resolution is \"auto\" (the largest 4:3 mode that fits the display) or
-# \"WIDTHxHEIGHT\"; it takes effect when the game starts. --video-mode and
-# --windowed override these. skip_loading goes straight from one screen to the
-# next: the original holds an empty \"LOADING\" screen for most of a second.
-[display]
-";
-
-const FIXES: &str = "\
-# [fixes]: corrections of bugs in the original game. Set one to false for the
-# original's behaviour.
-[fixes]
-# The title screen shows the difficulty actually set. The original updates the
-# label only when F3 is pressed, so it says NORMAL again whenever the title is
-# rebuilt (after a game or the high scores), whatever the difficulty.
-";
-
-const BINDINGS: &str = "\
-# [bindings]: for each of the game's keys, the host keys and controller buttons that
-# press it. Keys are SDL key names (\"PageUp\", \"Left Ctrl\", \"=\"); buttons are \"Pad \" and
-# an SDL button name (\"Pad start\", \"Pad leftshoulder\"). Keys bound to nothing type
-# themselves (high-score names); a game key removed from its own list stops working.
-# Space always fires and can't be rebound: high-score names use it.
-";
-
 pub fn path(rt: &Runtime) -> PathBuf {
     rt.files.save_dir.join("config.toml")
 }
 
-/// Read `config.toml`; a missing file is written with the defaults. Problems are
-/// returned as warnings and the defaults used for what could not be read.
+/// Read `config.toml`; a missing file is written with the defaults, and a file that
+/// differs from what this version writes (older comments, settings added since) is
+/// rewritten with its values. A file with problems is left for the user to fix:
+/// they are returned as warnings and the defaults used for what could not be read.
 pub fn load(path: &Path) -> (Config, Vec<String>) {
     let mut warnings = Vec::new();
-    let table: toml::Table = match std::fs::read_to_string(path) {
-        Ok(text) => toml::from_str(&text).unwrap_or_else(|e| {
+    let existing = std::fs::read_to_string(path).ok();
+    let table: toml::Table = match &existing {
+        Some(text) => toml::from_str(text).unwrap_or_else(|e| {
             warnings.push(format!("{e}"));
             toml::Table::new()
         }),
-        Err(_) => {
+        None => {
             if let Err(e) = save(&Config::default(), path) {
                 warnings.push(format!("cannot write the defaults: {e}"));
             }
@@ -121,20 +95,101 @@ pub fn load(path: &Path) -> (Config, Vec<String>) {
         }
     }
     let bindings = Bindings::from_table(table.get("bindings").and_then(|v| v.as_table()), &mut warnings);
+    let config = Config { display, fixes, bindings };
+    if existing.as_ref().is_some_and(|text| warnings.is_empty() && *text != render(&config)) {
+        if let Err(e) = save(&config, path) {
+            warnings.push(format!("cannot update it: {e}"));
+        }
+    }
     let warnings = warnings.into_iter().map(|w| format!("{}: {w}", path.display())).collect();
-    (Config { display, fixes, bindings }, warnings)
+    (config, warnings)
 }
 
 /// Write `config.toml`.
 pub fn save(c: &Config, path: &Path) -> std::io::Result<()> {
-    let res = c.display.resolution.map_or("auto".to_string(), |(w, h)| format!("{w}x{h}"));
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    let mut text = format!("{HEADER}\n{DISPLAY}resolution = \"{res}\"\nfullscreen = {}\nskip_loading = {}\n\n{BINDINGS}", c.display.fullscreen, c.display.skip_loading);
-    c.bindings.write(&mut text);
-    text += &format!("\n{FIXES}difficulty_label = {}\n", c.fixes.difficulty_label);
-    std::fs::write(path, text)
+    std::fs::write(path, render(c))
+}
+
+/// The text of `config.toml` for `c`: every setting, each with a comment.
+fn render(c: &Config) -> String {
+    use toml_edit::{value, Array, DocumentMut, Item, Table};
+    /// A table with a comment above its header (and a blank line, after the first).
+    fn section(comment: &str, first: bool) -> Table {
+        let mut t = Table::new();
+        t.decor_mut().set_prefix(if first { "" } else { "\n" }.to_string() + &comment_lines(comment));
+        t
+    }
+    /// A setting with a comment above it.
+    fn set(t: &mut Table, key: &str, v: impl Into<Item>, comment: &str) {
+        t.insert(key, v.into());
+        t.key_mut(key).expect("just inserted").leaf_decor_mut().set_prefix(comment_lines(comment));
+    }
+
+    let mut display = section(
+        "Bugatron settings. The game rewrites this file when the settings overlay (F10) changes \
+         them, and on start when it was written by an older version; edit it while the game is closed.\n\n\
+         [display]: --video-mode and --windowed override these.",
+        true,
+    );
+    let d = &c.display;
+    let res = d.resolution.map_or("auto".to_string(), |(w, h)| format!("{w}x{h}"));
+    set(&mut display, "resolution", value(res), "\"auto\" (the largest 4:3 mode that fits the display) or \"WIDTHxHEIGHT\"; takes effect when the game starts.");
+    set(&mut display, "fullscreen", value(d.fullscreen), "Fullscreen, or a window.");
+    set(&mut display, "skip_loading", value(d.skip_loading), "Go straight from one screen to the next. The original holds an empty \"LOADING\" screen between them for most of a second.");
+
+    let mut bindings = section(
+        "[bindings]: for each of the game's keys, the host keys and controller buttons that press it. \
+         Keys are SDL key names (\"PageUp\", \"Left Ctrl\", \"=\"); buttons are \"Pad \" and an SDL button name \
+         (\"Pad start\", \"Pad leftshoulder\"). Keys bound to nothing type themselves (high-score names); \
+         a game key removed from its own list stops working. Space always fires and can't be rebound: \
+         high-score names use it.",
+        false,
+    );
+    for (id, label, names) in c.bindings.entries() {
+        set(&mut bindings, id, value(names.into_iter().collect::<Array>()), label);
+    }
+
+    let mut fixes = section("[fixes]: corrections of bugs in the original game; false keeps the original's behaviour.", false);
+    set(
+        &mut fixes,
+        "difficulty_label",
+        value(c.fixes.difficulty_label),
+        "The title screen shows the difficulty actually set. The original says NORMAL again whenever the title is \
+         rebuilt (after a game or the high scores), whatever the difficulty.",
+    );
+
+    let mut doc = DocumentMut::new();
+    doc.insert("display", Item::Table(display));
+    doc.insert("bindings", Item::Table(bindings));
+    doc.insert("fixes", Item::Table(fixes));
+    doc.to_string()
+}
+
+/// `text` as `#` comment lines wrapped at 88 columns, ending with a newline;
+/// a blank line between sections.
+fn comment_lines(text: &str) -> String {
+    let mut out = String::new();
+    for para in text.split("\n\n") {
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        let mut line = String::from("#");
+        for word in para.split_whitespace() {
+            if line.len() + 1 + word.len() > 88 && line.len() > 1 {
+                out += &line;
+                out.push('\n');
+                line = String::from("#");
+            }
+            line.push(' ');
+            line += word;
+        }
+        out += &line;
+        out.push('\n');
+    }
+    out
 }
 
 /// Load the settings into the runtime (host-input runs only).
@@ -188,6 +243,31 @@ mod tests {
         let (again, warnings) = load(&path);
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(again.bindings.inputs, c.bindings.inputs);
+        std::fs::remove_dir_all(&d).ok();
+    }
+
+    #[test]
+    fn an_older_file_is_brought_up_to_date_keeping_its_values() {
+        let d = dir("old");
+        let path = d.join("config.toml");
+        // An older layout: no skip_loading, other comments.
+        std::fs::write(&path, "# old\n[display]\nresolution = \"1280x960\"\nfullscreen = false\n[bindings]\nstart = [\"Return\"]\n").unwrap();
+        let (c, warnings) = load(&path);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.starts_with("# Bugatron settings"), "{text}");
+        assert!(text.contains("resolution = \"1280x960\"") && text.contains("fullscreen = false") && text.contains("skip_loading = true"), "{text}");
+        assert!(text.contains("start = [\"Return\"]"), "{text}");
+        assert_eq!(c.display.resolution, Some((1280, 960)));
+        // Loading it again changes nothing.
+        load(&path);
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), text);
+        // A file with problems is left as it is, for the user to fix.
+        let broken = "[display]\nresolution = \"huge\"\n";
+        std::fs::write(&path, broken).unwrap();
+        let (_, warnings) = load(&path);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), broken);
         std::fs::remove_dir_all(&d).ok();
     }
 

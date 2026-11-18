@@ -175,13 +175,9 @@ impl Bindings {
         Bindings::from_inputs(inputs)
     }
 
-    /// The `[bindings]` section of `config.toml`, with a comment naming each action.
-    pub(crate) fn write(&self, text: &mut String) {
-        *text += "[bindings]\n";
-        for (a, list) in ACTIONS.iter().zip(&self.inputs) {
-            let names: Vec<String> = list.iter().map(|i| toml::Value::String(i.name()).to_string()).collect();
-            *text += &format!("# {}\n{} = [{}]\n", a.label, a.id, names.join(", "));
-        }
+    /// For `config.toml`: each action's id, label and input names.
+    pub(crate) fn entries(&self) -> impl Iterator<Item = (&'static str, &'static str, Vec<String>)> + '_ {
+        ACTIONS.iter().zip(&self.inputs).map(|(a, l)| (a.id, a.label, l.iter().map(|i| i.name()).collect()))
     }
 
     /// Whether `input` opens the settings overlay.
