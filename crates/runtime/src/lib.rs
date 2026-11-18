@@ -16,6 +16,7 @@
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
 pub mod audio;
+pub mod bindings;
 pub mod clock;
 pub mod cpu;
 pub mod ddraw;

@@ -114,6 +114,8 @@ pub struct User {
     pub gamepads: crate::gamepad::Gamepads,
     /// The SDL gamepad subsystem is up (not for headless or scripted runs).
     pub gamepads_ready: bool,
+    /// Host keys and controller buttons → the game's keys (bindings.rs).
+    pub bindings: crate::bindings::Bindings,
 }
 
 impl User {
@@ -151,6 +153,13 @@ pub fn ensure_sdl() {
     with_rt(|rt| {
         rt.user.sdl_ready = true;
         rt.user.gamepads_ready = pads;
+        if !rt.user.ignore_host_input {
+            let (b, warnings) = crate::bindings::Bindings::load(&rt.files.save_dir.join("config.toml"));
+            for w in warnings {
+                eprintln!("bindings: {w}");
+            }
+            rt.user.bindings = b;
+        }
     });
 }
 
@@ -354,7 +363,19 @@ pub fn pump() {
             if runtime_shortcut(k.scancode.0, k.down, k.repeat, k.r#mod.0) {
                 continue;
             }
-            key_input(k.scancode.0, k.down, k.repeat, (k.r#mod.0 & SDL_KMOD_ALT.0) != 0);
+            let alt = (k.r#mod.0 & SDL_KMOD_ALT.0) != 0;
+            with_rt(|rt| {
+                for (sc, down, repeat) in rt.user.bindings.press(crate::bindings::Input::Key(k.scancode.0), k.down, k.repeat) {
+                    key_input_rt(rt, sc, down, repeat, alt);
+                }
+            });
+        } else if ty == SDL_EVENT_GAMEPAD_BUTTON_DOWN.0 || ty == SDL_EVENT_GAMEPAD_BUTTON_UP.0 {
+            let b = unsafe { ev.gbutton };
+            with_rt(|rt| {
+                for (sc, down, repeat) in rt.user.bindings.press(crate::bindings::Input::Pad(b.button as i32), b.down, false) {
+                    key_input_rt(rt, sc, down, repeat, false);
+                }
+            });
         } else if ty == SDL_EVENT_MOUSE_MOTION.0 {
             let m = unsafe { ev.motion };
             with_rt(|rt| mouse_motion_rt(rt, m.xrel, m.yrel));

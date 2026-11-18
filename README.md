@@ -82,7 +82,32 @@ Use `--exe FILE` (or `BUGATRON_EXE`) to choose one. An installer or zip is unpac
 
 **Controllers:** any controller SDL recognises works through the game's own joystick support: left stick or D-pad to steer, A/B/X/Y or the right trigger to fire. Menus still need the keyboard or mouse.
 
-**Keys:** the game's own controls, plus **Alt+Enter** (or **Ctrl+Cmd+F** on macOS) to toggle fullscreen. Some game functions use Page Up/Down, Home/End and Insert/Delete. Keyboards without those keys can't reach them yet; remapping is planned.
+**Keys:** the game's own controls, plus **Alt+Enter** (or **Ctrl+Cmd+F** on macOS) to toggle fullscreen:
+
+| Key | Action | Also |
+|---|---|---|
+| Arrows | Move | |
+| Ctrl, Space | Fire (Space can't be remapped: names use it) | |
+| F1 | Start game | any fire button |
+| F2 | High scores | |
+| F3 | Difficulty | |
+| P | Pause | controller Start |
+| Esc | Exit | controller Back |
+| Page Up / Page Down | Music volume | `=` / `-` |
+| Home / End | Sound volume | `]` / `[` |
+| Insert | Screenshot (`screenshot<N>.bmp` in the save folder) | |
+| Delete | Show frame time | |
+
+**Remapping:** the first run writes `config.toml` to the save folder, listing the keys and controller buttons for each action (SDL key names, or `Pad ` and an SDL button name). Edit it while the game is closed. Actions missing from the file keep their defaults, and a key you remove from its action stops working. For example:
+
+```toml
+[bindings]
+start = ["F1", "Return"]
+high_scores = ["F2", "Tab"]
+pause = ["P", "Pad start"]
+```
+
+The action names are `left`, `right`, `up`, `down`, `fire`, `start`, `high_scores`, `difficulty`, `pause`, `exit`, `music_up`, `music_down`, `sound_up`, `sound_down`, `screenshot` and `frame_time`. A settings overlay to change them in the game is planned.
 
 ### Single-file build for testing
 
