@@ -8,8 +8,8 @@
 //! The difficulty is set directly (0x4370e4, read by gameplay every frame), and the
 //! title screen's "F3: DIFFICULTY - NORMAL" text is updated as the game's own F3
 //! handler does (`set_difficulty`), so it works on any screen and mid-game. The
-//! high scores are reached by pressing the game's F2 once it resumes
-//! (`taps`): changing screens happens only inside the game's input handling.
+//! high scores are reached with the game's own screen transition, from any screen,
+//! gameplay included (`show_high_scores`).
 //! Text uses the game's title font (`Fonts/nj*.bmp`), with a few drawn glyphs for
 //! characters it lacks.
 
@@ -39,6 +39,17 @@ const SOUND_ON: u32 = 0x438144;
 /// Nonzero: the game shows its frames per second and render and logic times in
 /// milliseconds (toggled by Delete, 0x412df8).
 const FRAME_TIME: u32 = 0x8429b8;
+/// The main loop's state (0x40ba70): 5 runs a screen (menus, high scores and
+/// gameplay alike), 3 fades out and tears it down, 1 loads the next.
+const STATE: u32 = 0x4370a0;
+const STATE_SCREEN: u32 = 5;
+const STATE_FADE_OUT: u32 = 3;
+/// The config the next screen is loaded from.
+const NEXT_SCREEN: u32 = 0x81d548;
+/// Fade-out timers and start time (float, in the game's 1/1024 s ticks).
+const FADE_TIMERS: [u32; 3] = [0x98d4c4, 0x98d4b8, 0x98d4bc];
+const FADE_START: u32 = 0x437864;
+const TICK_NOW: u32 = 0x8429dc;
 /// Labels as the F3 handler writes them (0x437e60..), six letters each.
 const DIFFICULTIES: [(f32, &[u8; 6]); 3] = [(4.0, b"NORMAL"), (1.0, b"HARD  "), (8.0, b"EASY  ")];
 
@@ -47,7 +58,6 @@ const SC_RETURN: i32 = 40;
 const SC_ESCAPE: i32 = 41;
 const SC_BACKSPACE: i32 = 42;
 const SC_SPACE: i32 = 44;
-const SC_F2: i32 = 59;
 const SC_DELETE: i32 = 76;
 const SC_RIGHT: i32 = 79;
 const SC_LEFT: i32 = 80;
@@ -99,10 +109,6 @@ pub struct Overlay {
     capture: bool,
     /// The volumes changed: apply them through the game once it resumes.
     apply_volumes: bool,
-    /// Game keys to tap after resuming, one at a time (scancode).
-    taps: Vec<i32>,
-    /// Flips into the current tap: down at 0, up at 2, next tap from 4.
-    tap_phase: u32,
     font: Option<HashMap<char, [u8; 256]>>,
     dirty: bool,
 }
@@ -137,25 +143,11 @@ pub fn request(rt: &mut Runtime) {
     }
 }
 
-/// After every flip: run the overlay if it was requested, else deliver pending taps.
+/// After every flip: run the overlay if it was requested.
 pub(crate) fn after_flip(rt: &mut Runtime, front: u32) {
     fix_difficulty_label(rt);
     if rt.overlay.open {
         run(rt, front);
-    } else if !rt.overlay.taps.is_empty() {
-        let o = &mut rt.overlay;
-        let sc = o.taps[0];
-        let phase = o.tap_phase;
-        o.tap_phase += 1;
-        match phase {
-            0 => crate::user::key_input_rt(rt, sc, true, false, false),
-            2 => crate::user::key_input_rt(rt, sc, false, false, false),
-            p if p >= 4 => {
-                rt.overlay.taps.remove(0);
-                rt.overlay.tap_phase = 0;
-            }
-            _ => {}
-        }
     }
 }
 
@@ -273,7 +265,7 @@ fn input(rt: &mut Runtime, i: Input) {
     let Some(n) = (if rt.user.bindings.opens_settings(i) { Some(Nav::Close) } else { nav(i) }) else { return };
     let items = rt.overlay.items();
     let item = items[rt.overlay.sel.min(items.len() - 1)];
-    let (title_menu, current) = (title_menu(rt), current_difficulty(rt));
+    let (in_screen, current) = (in_screen(rt), current_difficulty(rt));
     let o = &mut rt.overlay;
     match n {
         Nav::Up => o.sel = (o.sel + items.len() - 1) % items.len(),
@@ -318,9 +310,9 @@ fn input(rt: &mut Runtime, i: Input) {
         Nav::Select => match item {
             Item::Resume => o.open = false,
             Item::Difficulty => set_difficulty(rt, (current + 1) % DIFFICULTIES.len()),
-            Item::HighScores if title_menu => {
-                o.taps.push(SC_F2);
-                o.open = false;
+            Item::HighScores if in_screen => {
+                show_high_scores(rt);
+                rt.overlay.open = false;
             }
             Item::Controls => {
                 o.page = Some(Page::Controls);
@@ -340,6 +332,29 @@ fn input(rt: &mut Runtime, i: Input) {
         },
         _ => {}
     }
+}
+
+/// Leave the current screen for the high scores, as the game leaves a screen
+/// (main loop 0x40bc4d): the next screen's config name in NEXT_SCREEN, the fade-out
+/// state with its three fade timers at 5, and its start time. Gameplay is a screen
+/// too, so a game in progress is torn down by the game's own transition (and, as
+/// when quitting it, its score is not recorded).
+fn show_high_scores(rt: &mut Runtime) {
+    for (i, &b) in b"highscores.xml\0".iter().enumerate() {
+        rt.mem.w8(NEXT_SCREEN + i as u32, b);
+    }
+    rt.mem.w32(STATE, STATE_FADE_OUT);
+    for a in FADE_TIMERS {
+        rt.mem.w32(a, 5.0f32.to_bits());
+    }
+    let now = rt.mem.r32(TICK_NOW) as f32;
+    rt.mem.w32(FADE_START, now.to_bits());
+}
+
+/// Whether a screen is running (a menu, the high scores or gameplay), not a
+/// transition between screens.
+fn in_screen(rt: &Runtime) -> bool {
+    rt.mem.r32(STATE) == STATE_SCREEN
 }
 
 /// Set the difficulty and the title screen's label.
@@ -605,7 +620,6 @@ fn render(rt: &Runtime, w: u32, h: u32) -> Vec<u8> {
     };
     let top = px(48.0);
     c.centered(font, top, title, GREEN);
-    let title_menu = title_menu(rt);
     let mut y = top + line * 2;
     // Two columns of COLUMN letters each: labels, then values.
     const COLUMN: u32 = 19;
@@ -629,7 +643,7 @@ fn render(rt: &Runtime, w: u32, h: u32) -> Vec<u8> {
             }
             Item::Fullscreen => ("FULLSCREEN".to_string(), format!("< {} >", if rt.display.fullscreen { "ON" } else { "OFF" }), true),
             Item::FrameTime => ("SHOW FPS".to_string(), format!("< {} >", if rt.mem.r32(FRAME_TIME) != 0 { "ON" } else { "OFF" }), true),
-            Item::HighScores => ("HIGH SCORES".to_string(), String::new(), title_menu),
+            Item::HighScores => ("HIGH SCORES".to_string(), String::new(), in_screen(rt)),
             Item::Controls => ("CONTROLS".to_string(), String::new(), true),
             Item::Quit => ("QUIT BUGATRON".to_string(), String::new(), true),
             Item::Action(a) => {
@@ -653,7 +667,7 @@ fn render(rt: &Runtime, w: u32, h: u32) -> Vec<u8> {
     let hint = match (o.page(), o.capture) {
         (_, true) => "ESC: CANCEL",
         (Page::Main, _) if o.items().get(o.sel) == Some(&Item::Resolution) => "* AFTER A RESTART",
-        (Page::Main, _) => if title_menu { "ENTER/A: SELECT   ESC/B: CLOSE" } else { "HIGH SCORES: FROM THE TITLE SCREEN" },
+        (Page::Main, _) => "ENTER/A: SELECT   ESC/B: CLOSE",
         (Page::Controls, _) => "ENTER/A: ADD   BACKSPACE/X: REMOVE   ESC/B: BACK",
     };
     c.centered(font, h.saturating_sub(px(48.0)), hint, GREY);
