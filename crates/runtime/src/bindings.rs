@@ -9,15 +9,15 @@
 //! Backspace for high-score names, F8+F9...), except an action's original key
 //! once it has been unbound from it.
 //!
-//! Bindings are read from `config.toml` in the save folder (written by the
-//! settings overlay), as `[bindings]` with an action id and a list of inputs:
+//! Bindings are the `[bindings]` table of `config.toml` (config.rs): an action id
+//! and a list of inputs:
 //! SDL key names ("PageUp", "Left Ctrl", "=") or "Pad " and an SDL gamepad button
 //! name ("Pad start", "Pad back"). Actions missing from the file keep their defaults.
 
-use std::collections::{BTreeMap, HashMap};
-use std::path::Path;
+use std::collections::HashMap;
 
-/// One of the game's keys, by the SDL scancode of its original key.
+/// One of the game's keys, by the SDL scancode of its original key, or a runtime
+/// action ([`SETTINGS`]).
 pub struct Action {
     pub id: &'static str,
     pub label: &'static str,
@@ -42,29 +42,33 @@ const PAGE_DOWN: i32 = 78;
 const HOME: i32 = 74;
 const END: i32 = 77;
 const P: i32 = 19;
+/// Not a game key: opens the settings overlay (handled by the runtime).
+pub const SETTINGS: i32 = -1;
 
 /// The game's keys (Gold 1.20 input poll 0x411f70 and its title screen), with the
 /// defaults: every original key, plus alternatives on keys every keyboard has
-/// for the volume keys laptops lack, and controller buttons for pause and exit
-/// (the joystick itself steers and fires; any fire button also starts a game).
+/// for the volume keys laptops lack, and controller Start for pause (the joystick
+/// itself steers and fires, and any fire button also starts a game), and F10 or
+/// controller Back for the settings overlay.
 pub const ACTIONS: &[Action] = &[
     Action { id: "left", label: "Move left", key: LEFT, defaults: &["Left"] },
     Action { id: "right", label: "Move right", key: RIGHT, defaults: &["Right"] },
     Action { id: "up", label: "Move up", key: UP, defaults: &["Up"] },
     Action { id: "down", label: "Move down", key: DOWN, defaults: &["Down"] },
     // Space also fires, but stays itself: high-score names and "press a key" screens read it.
-    Action { id: "fire", label: "Fire (Space always fires too)", key: LCTRL, defaults: &["Left Ctrl", "Right Ctrl"] },
+    Action { id: "fire", label: "Fire", key: LCTRL, defaults: &["Left Ctrl", "Right Ctrl"] },
     Action { id: "start", label: "Start game", key: F1, defaults: &["F1"] },
     Action { id: "high_scores", label: "High scores", key: F2, defaults: &["F2"] },
     Action { id: "difficulty", label: "Difficulty", key: F3, defaults: &["F3"] },
     Action { id: "pause", label: "Pause", key: P, defaults: &["P", "Pad start"] },
-    Action { id: "exit", label: "Exit", key: ESCAPE, defaults: &["Escape", "Pad back"] },
+    Action { id: "exit", label: "Exit", key: ESCAPE, defaults: &["Escape"] },
     Action { id: "music_up", label: "Music volume up", key: PAGE_UP, defaults: &["PageUp", "="] },
     Action { id: "music_down", label: "Music volume down", key: PAGE_DOWN, defaults: &["PageDown", "-"] },
     Action { id: "sound_up", label: "Sound volume up", key: HOME, defaults: &["Home", "]"] },
     Action { id: "sound_down", label: "Sound volume down", key: END, defaults: &["End", "["] },
     Action { id: "screenshot", label: "Screenshot", key: INSERT, defaults: &["Insert"] },
     Action { id: "frame_time", label: "Show frame time", key: DELETE, defaults: &["Delete"] },
+    Action { id: "settings", label: "Open settings", key: SETTINGS, defaults: &["F10", "Pad back"] },
 ];
 
 /// A host input.
@@ -111,24 +115,6 @@ impl Input {
     }
 }
 
-/// The top of `config.toml`.
-const HEADER: &str = "\
-# Bugatron settings. Rewritten by the settings overlay; edit while the game is closed.
-#
-# [bindings]: for each of the game's keys, the host keys and controller buttons that
-# press it. Keys are SDL key names (\"PageUp\", \"Left Ctrl\", \"=\"); buttons are \"Pad \" and
-# an SDL button name (\"Pad start\", \"Pad leftshoulder\"). Keys bound to nothing type
-# themselves (high-score names); a game key removed from its own list stops working.
-
-";
-
-/// The config file's shape.
-#[derive(serde::Deserialize, serde::Serialize, Default)]
-struct ConfigFile {
-    #[serde(default)]
-    bindings: BTreeMap<String, Vec<String>>,
-}
-
 /// The current bindings and which game keys are held through them.
 pub struct Bindings {
     /// Per action (ACTIONS order), its inputs.
@@ -156,60 +142,63 @@ impl Bindings {
         Bindings { inputs, map, held: HashMap::new() }
     }
 
-    /// Read `config.toml`; a missing file means the defaults. Unknown actions and
-    /// input names are reported and skipped.
-    pub fn load(path: &Path) -> (Bindings, Vec<String>) {
-        let mut warnings = Vec::new();
-        let file: ConfigFile = match std::fs::read_to_string(path) {
-            Ok(text) => toml::from_str(&text).unwrap_or_else(|e| {
-                warnings.push(format!("{}: {e}", path.display()));
-                ConfigFile::default()
-            }),
-            Err(_) => {
-                // First run: write the defaults, so the file documents itself.
-                if let Err(e) = Bindings::default().save(path) {
-                    warnings.push(format!("{}: cannot write the defaults: {e}", path.display()));
-                }
-                ConfigFile::default()
-            }
-        };
+    /// The `[bindings]` table of `config.toml` (config.rs). Actions missing from it
+    /// keep their defaults; unknown actions and input names are reported and skipped.
+    pub(crate) fn from_table(table: Option<&toml::Table>, warnings: &mut Vec<String>) -> Bindings {
         let mut inputs: Vec<Vec<Input>> = Bindings::default().inputs;
-        for (id, names) in &file.bindings {
+        for (id, value) in table.into_iter().flatten() {
             let Some(a) = ACTIONS.iter().position(|a| a.id == id) else {
-                warnings.push(format!("{}: unknown action {id:?}", path.display()));
+                warnings.push(format!("bindings: unknown action {id:?}"));
+                continue;
+            };
+            let Some(names) = value.as_array() else {
+                warnings.push(format!("bindings: {id}: not a list"));
                 continue;
             };
             inputs[a] = names
                 .iter()
                 .filter_map(|n| {
-                    let i = Input::parse(n);
+                    let i = n.as_str().and_then(Input::parse);
                     if i.is_none() {
-                        warnings.push(format!("{}: {id}: unknown key or button {n:?}", path.display()));
+                        warnings.push(format!("bindings: {id}: unknown key or button {n}"));
                     }
                     i
                 })
                 .collect();
         }
-        (Bindings::from_inputs(inputs), warnings)
+        // Keep a way to open the overlay.
+        let s = ACTIONS.iter().position(|a| a.key == SETTINGS).expect("the settings action");
+        if inputs[s].is_empty() {
+            warnings.push("bindings: settings: nothing would open the settings; using the default".into());
+            inputs[s] = Bindings::default().inputs[s].clone();
+        }
+        Bindings::from_inputs(inputs)
     }
 
-    /// Write every action's inputs to `config.toml`, keeping the file's other
-    /// settings. Each action gets a comment naming it.
-    pub fn save(&self, path: &Path) -> std::io::Result<()> {
-        let mut doc: toml::Table = std::fs::read_to_string(path).ok().and_then(|t| toml::from_str(&t).ok()).unwrap_or_default();
-        doc.remove("bindings");
-        let mut text = String::from(HEADER);
-        let rest = toml::to_string(&doc).expect("a TOML table serialises");
-        if !rest.is_empty() {
-            text += &rest;
-            text.push('\n');
-        }
-        text += "[bindings]\n";
+    /// The `[bindings]` section of `config.toml`, with a comment naming each action.
+    pub(crate) fn write(&self, text: &mut String) {
+        *text += "[bindings]\n";
         for (a, list) in ACTIONS.iter().zip(&self.inputs) {
             let names: Vec<String> = list.iter().map(|i| toml::Value::String(i.name()).to_string()).collect();
-            text += &format!("# {}\n{} = [{}]\n", a.label, a.id, names.join(", "));
+            *text += &format!("# {}\n{} = [{}]\n", a.label, a.id, names.join(", "));
         }
-        std::fs::write(path, text)
+    }
+
+    /// Whether `input` opens the settings overlay.
+    pub fn opens_settings(&self, input: Input) -> bool {
+        self.map.get(&input).is_some_and(|k| k.contains(&SETTINGS))
+    }
+
+    /// Replace every action's inputs (the settings overlay). Release held keys first.
+    pub fn set(&mut self, inputs: Vec<Vec<Input>>) {
+        *self = Bindings::from_inputs(inputs);
+    }
+
+    /// Release every game key held through a binding: the transitions to send.
+    pub fn release_all(&mut self) -> Vec<(i32, bool, bool)> {
+        let out = self.held.iter().filter(|&(_, &n)| n > 0).map(|(&k, _)| (k, false, false)).collect();
+        self.held.clear();
+        out
     }
 
     /// A host input went down or up: the game key transitions to send, as
@@ -271,6 +260,19 @@ mod tests {
         assert_eq!(b.press(key("A"), true, false), [(4, true, false)]);
         assert_eq!(b.press(key("Space"), true, false), [(44, true, false)], "Space stays itself");
         assert_eq!(b.press(key("Pad dpup"), true, false), []);
+        // The overlay key is a runtime action, not a game key.
+        assert!(b.opens_settings(key("F10")) && b.opens_settings(key("Pad back")));
+        assert!(!b.opens_settings(key("F1")));
+        assert_eq!(b.press(key("F10"), true, false), [(SETTINGS, true, false)]);
+    }
+
+    #[test]
+    fn the_settings_binding_cannot_be_emptied() {
+        let table: toml::Table = toml::from_str("settings = []").unwrap();
+        let mut warnings = Vec::new();
+        let b = Bindings::from_table(Some(&table), &mut warnings);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(b.opens_settings(key("F10")));
     }
 
     #[test]
@@ -280,44 +282,5 @@ mod tests {
         assert_eq!(b.press(key("Right Ctrl"), true, false), [(LCTRL, true, true)]);
         assert_eq!(b.press(key("Left Ctrl"), false, false), []);
         assert_eq!(b.press(key("Right Ctrl"), false, false), [(LCTRL, false, false)]);
-    }
-
-    #[test]
-    fn config_overrides_actions_and_unbinds_original_keys() {
-        let dir = std::env::temp_dir().join(format!("bugatron-bindings-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("config.toml");
-        std::fs::write(&path, "[bindings]\nstart = [\"Return\", \"Pad y\"]\nfly = [\"F9\"]\nexit = [\"Escape\", \"Nope\"]\n").unwrap();
-        let (mut b, warnings) = Bindings::load(&path);
-        assert_eq!(warnings.len(), 2, "{warnings:?}");
-        assert_eq!(b.press(key("Return"), true, false), [(F1, true, false)]);
-        assert_eq!(b.press(key("F1"), true, false), [], "F1 no longer starts a game");
-        assert_eq!(b.press(key("PageDown"), true, false), [(PAGE_DOWN, true, false)], "defaults kept");
-        // Saving writes every action and keeps other settings.
-        std::fs::write(&path, "volume = 3\n").unwrap();
-        b.save(&path).unwrap();
-        let text = std::fs::read_to_string(&path).unwrap();
-        assert!(text.starts_with("# Bugatron settings"), "{text}");
-        assert!(text.contains("volume = 3") && text.contains("# Start game\nstart = [\"Return\", \"Pad y\"]"), "{text}");
-        let (again, warnings) = Bindings::load(&path);
-        assert!(warnings.is_empty());
-        assert_eq!(again.inputs, b.inputs);
-        std::fs::remove_dir_all(&dir).ok();
-    }
-
-    #[test]
-    fn a_missing_config_is_written_with_the_defaults() {
-        let dir = std::env::temp_dir().join(format!("bugatron-bindings-new-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let path = dir.join("config.toml");
-        let (b, warnings) = Bindings::load(&path);
-        assert!(warnings.is_empty(), "{warnings:?}");
-        assert_eq!(b.inputs, Bindings::default().inputs);
-        let text = std::fs::read_to_string(&path).unwrap();
-        assert!(text.contains("# Music volume up\nmusic_up = [\"PageUp\", \"=\"]"), "{text}");
-        let (again, warnings) = Bindings::load(&path);
-        assert!(warnings.is_empty(), "{warnings:?}");
-        assert_eq!(again.inputs, b.inputs);
-        std::fs::remove_dir_all(&dir).ok();
     }
 }

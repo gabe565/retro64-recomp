@@ -82,7 +82,7 @@ Use `--exe FILE` (or `BUGATRON_EXE`) to choose one. An installer or zip is unpac
 
 **Controllers:** any controller SDL recognises works through the game's own joystick support: left stick or D-pad to steer, A/B/X/Y or the right trigger to fire. Menus still need the keyboard or mouse.
 
-**Keys:** the game's own controls, plus **Alt+Enter** (or **Ctrl+Cmd+F** on macOS) to toggle fullscreen:
+**Keys:** the game's own controls, plus **F10** (or a controller's **Back** button) for the settings overlay and **Alt+Enter** (or **Ctrl+Cmd+F** on macOS) to toggle fullscreen:
 
 | Key | Action | Also |
 |---|---|---|
@@ -92,7 +92,7 @@ Use `--exe FILE` (or `BUGATRON_EXE`) to choose one. An installer or zip is unpac
 | F2 | High scores | |
 | F3 | Difficulty | |
 | P | Pause | controller Start |
-| Esc | Exit | controller Back |
+| Esc | Exit | |
 | Page Up / Page Down | Music volume | `=` / `-` |
 | Home / End | Sound volume | `]` / `[` |
 | Insert | Screenshot (`screenshot<N>.bmp` in the save folder) | |
@@ -107,7 +107,9 @@ high_scores = ["F2", "Tab"]
 pause = ["P", "Pad start"]
 ```
 
-The action names are `left`, `right`, `up`, `down`, `fire`, `start`, `high_scores`, `difficulty`, `pause`, `exit`, `music_up`, `music_down`, `sound_up`, `sound_down`, `screenshot` and `frame_time`. A settings overlay to change them in the game is planned.
+The action names are `left`, `right`, `up`, `down`, `fire`, `start`, `high_scores`, `difficulty`, `pause`, `exit`, `music_up`, `music_down`, `sound_up`, `sound_down`, `screenshot` and `frame_time`. The settings overlay's Controls page edits them too.
+
+**Settings overlay (F10 or controller Back, rebindable as `settings`):** freezes the game and its sound until closed. It changes the difficulty on any screen, opens the high scores (from the title screen), quits, and edits the key and button bindings, saving them to `config.toml`.
 
 ### Single-file build for testing
 

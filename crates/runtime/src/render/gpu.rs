@@ -103,6 +103,9 @@ pub struct Gpu {
     white: *mut SDL_GPUTexture,
     vbuf: (*mut SDL_GPUBuffer, u32),
     ibuf: (*mut SDL_GPUBuffer, u32),
+    /// Settings overlay: its image, and the frame with the overlay drawn on it
+    /// (both at the guest frame's size).
+    overlay: Option<(*mut SDL_GPUTexture, *mut SDL_GPUTexture, u32, u32)>,
 }
 
 impl Gpu {
@@ -148,7 +151,7 @@ impl Gpu {
             let mut g = Gpu {
                 device, window, vs: null_mut(), fs: null_mut(),
                 pipelines: HashMap::new(), samplers: HashMap::new(), storage: HashMap::new(), textures: HashMap::new(),
-                white: null_mut(), vbuf: (null_mut(), 0), ibuf: (null_mut(), 0),
+                white: null_mut(), vbuf: (null_mut(), 0), ibuf: (null_mut(), 0), overlay: None,
             };
             g.vs = g.shader(SDL_GPU_SHADERSTAGE_VERTEX, 0, 0);
             g.fs = g.shader(SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 1);
@@ -745,6 +748,16 @@ pub fn sync_for_cpu(rt: &mut Runtime, obj: u32) {
 
 /// Present guest surface `front` (the visible front buffer) in the window.
 pub fn present(rt: &mut Runtime, front: u32) {
+    present_with(rt, front, None);
+}
+
+/// Present `front` with the settings overlay drawn over it: `image` is straight-alpha
+/// RGBA8 at the frame's size, uploaded when `changed`.
+pub fn present_overlay(rt: &mut Runtime, front: u32, image: &[u8], changed: bool) {
+    present_with(rt, front, Some((image, changed)));
+}
+
+fn present_with(rt: &mut Runtime, front: u32, overlay: Option<(&[u8], bool)>) {
     flush(rt);
     if rt.gpu.as_ref().is_some_and(|g| g.window.is_null()) {
         return; // offscreen
@@ -760,6 +773,7 @@ pub fn present(rt: &mut Runtime, front: u32) {
     unsafe {
         let cmd = SDL_AcquireGPUCommandBuffer(g.device);
         let mut staging = null_mut();
+        let mut staging_extra: Vec<*mut SDL_GPUTransferBuffer> = Vec::new();
         if let Some(px) = upload {
             let copy = SDL_BeginGPUCopyPass(cmd);
             staging = g.staged(&px);
@@ -771,11 +785,15 @@ pub fn present(rt: &mut Runtime, front: u32) {
         if !SDL_WaitAndAcquireGPUSwapchainTexture(cmd, g.window, &mut sw, &mut ww, &mut wh) {
             sdl_err("SDL_WaitAndAcquireGPUSwapchainTexture");
         }
+        let mut shown = tex;
+        if let Some((image, changed)) = overlay {
+            shown = draw_overlay(&mut g, cmd, tex, w, h, image, changed, &mut staging_extra);
+        }
         if !sw.is_null() && ww > 0 && wh > 0 {
             let scale = (ww as f32 / w as f32).min(wh as f32 / h as f32);
             let (dw, dh) = ((w as f32 * scale) as u32, (h as f32 * scale) as u32);
             let blit = SDL_GPUBlitInfo {
-                source: SDL_GPUBlitRegion { texture: tex, w, h, ..Default::default() },
+                source: SDL_GPUBlitRegion { texture: shown, w, h, ..Default::default() },
                 destination: SDL_GPUBlitRegion { texture: sw, x: (ww - dw) / 2, y: (wh - dh) / 2, w: dw, h: dh, ..Default::default() },
                 load_op: SDL_GPU_LOADOP_CLEAR,
                 clear_color: sdl3_sys::pixels::SDL_FColor { r: 0.0, g: 0.0, b: 0.0, a: 1.0 },
@@ -788,8 +806,67 @@ pub fn present(rt: &mut Runtime, front: u32) {
         if !staging.is_null() {
             SDL_ReleaseGPUTransferBuffer(g.device, staging);
         }
+        for tb in staging_extra {
+            SDL_ReleaseGPUTransferBuffer(g.device, tb);
+        }
     }
     rt.gpu = Some(g);
+}
+
+/// Copy the frame `tex` into the overlay's composite texture and blend the overlay
+/// image over it with the fixed-function pipeline (texture × diffuse, source alpha).
+/// Returns the composite.
+#[allow(clippy::too_many_arguments)]
+unsafe fn draw_overlay(g: &mut Gpu, cmd: *mut SDL_GPUCommandBuffer, tex: *mut SDL_GPUTexture, w: u32, h: u32, image: &[u8], changed: bool, staging: &mut Vec<*mut SDL_GPUTransferBuffer>) -> *mut SDL_GPUTexture {
+    let fresh = !matches!(g.overlay, Some((_, _, ow, oh)) if ow == w && oh == h);
+    if fresh {
+        if let Some((a, b, _, _)) = g.overlay.take() {
+            SDL_ReleaseGPUTexture(g.device, a);
+            SDL_ReleaseGPUTexture(g.device, b);
+        }
+        g.overlay = Some((g.create_texture(w, h, false, false), g.create_texture(w, h, true, false), w, h));
+    }
+    let (image_tex, composite, _, _) = g.overlay.unwrap();
+    let corner = |x: f32, y: f32| GpuVertex { pos: [x * 2.0 - 1.0, 1.0 - y * 2.0, 0.0, 1.0], diffuse: [1.0; 4], specular: [0.0; 4], uv: [x, y], _pad: [0.0; 2] };
+    let quad = [corner(0.0, 0.0), corner(1.0, 0.0), corner(0.0, 1.0), corner(1.0, 0.0), corner(1.0, 1.0), corner(0.0, 1.0)];
+    let vbytes = bytemuck_slice(&quad);
+    let vb = g.ensure_buffer(false, vbytes.len() as u32);
+    let copy = SDL_BeginGPUCopyPass(cmd);
+    if changed || fresh {
+        let tb = g.staged(image);
+        upload_tex(copy, tb, 0, image_tex, w, h);
+        staging.push(tb);
+    }
+    let tb = g.staged(vbytes);
+    SDL_UploadToGPUBuffer(copy, &SDL_GPUTransferBufferLocation { transfer_buffer: tb, offset: 0 }, &SDL_GPUBufferRegion { buffer: vb, offset: 0, size: vbytes.len() as u32 }, true);
+    staging.push(tb);
+    SDL_EndGPUCopyPass(copy);
+    let blit = SDL_GPUBlitInfo {
+        source: SDL_GPUBlitRegion { texture: tex, w, h, ..Default::default() },
+        destination: SDL_GPUBlitRegion { texture: composite, w, h, ..Default::default() },
+        load_op: SDL_GPU_LOADOP_DONT_CARE,
+        filter: SDL_GPU_FILTER_NEAREST,
+        ..Default::default()
+    };
+    SDL_BlitGPUTexture(cmd, &blit);
+    let ct = SDL_GPUColorTargetInfo { texture: composite, load_op: SDL_GPU_LOADOP_LOAD, store_op: SDL_GPU_STOREOP_STORE, ..Default::default() };
+    let pass = SDL_BeginGPURenderPass(cmd, &ct, 1, std::ptr::null());
+    if pass.is_null() {
+        sdl_err("SDL_BeginGPURenderPass");
+    }
+    // SRCALPHA / INVSRCALPHA, no depth, no culling.
+    let pipe = g.pipeline(PipelineKey { blend: true, src: 5, dst: 6, z_test: false, z_write: false, z_func: 8, cull: 1, has_depth: false });
+    SDL_BindGPUGraphicsPipeline(pass, pipe);
+    SDL_SetGPUViewport(pass, &SDL_GPUViewport { x: 0.0, y: 0.0, w: w as f32, h: h as f32, min_depth: 0.0, max_depth: 1.0 });
+    SDL_BindGPUVertexBuffers(pass, 0, &SDL_GPUBufferBinding { buffer: vb, offset: 0 }, 1);
+    let samp = g.sampler(SamplerKey { mag: 1, min: 1, u: 3, v: 3 });
+    SDL_BindGPUFragmentSamplers(pass, 0, &SDL_GPUTextureSamplerBinding { texture: image_tex, sampler: samp }, 1);
+    // D3DTOP_MODULATE of TEXTURE and DIFFUSE for colour and alpha.
+    let u = StageUniforms { color: [4, 2, 0, 0], alpha: [4, 2, 0, 0], test: [0; 4], tfactor: [0.0; 4] };
+    SDL_PushGPUFragmentUniformData(cmd, 0, &u as *const _ as *const c_void, std::mem::size_of::<StageUniforms>() as u32);
+    SDL_DrawGPUPrimitives(pass, 6, 1, 0, 0);
+    SDL_EndGPURenderPass(pass);
+    composite
 }
 
 /// Forget GPU resources of a destroyed surface.

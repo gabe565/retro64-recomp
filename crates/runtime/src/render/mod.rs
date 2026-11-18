@@ -68,6 +68,9 @@ pub(crate) fn after_flip(rt: &mut Runtime, front: u32) {
         hook(rt, n);
         rt.frame_hook.get_or_insert(hook);
     }
+    if backend(rt) {
+        crate::overlay::after_flip(rt, front);
+    }
 }
 
 /// A surface's pixel storage is going away.

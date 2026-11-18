@@ -18,6 +18,7 @@
 pub mod audio;
 pub mod bindings;
 pub mod clock;
+pub mod config;
 pub mod cpu;
 pub mod ddraw;
 pub mod dialog;
@@ -31,6 +32,7 @@ pub mod render;
 pub mod user;
 mod imports;
 pub mod mem;
+pub mod overlay;
 pub mod testing;
 pub mod x87trig;
 
@@ -126,6 +128,8 @@ pub struct Runtime {
     pub audio_record_path: Option<std::path::PathBuf>,
     /// Called after every Flip with the flip count (diagnostics, scripted input).
     pub frame_hook: Option<Box<dyn FnMut(&mut Runtime, u64)>>,
+    /// The settings overlay (overlay.rs).
+    pub overlay: overlay::Overlay,
     pub mem: GuestMemory,
     pub pe: Pe,
     pub(crate) import_names: Vec<(&'static str, &'static str)>,
@@ -216,6 +220,7 @@ impl Runtime {
             capture_frames: Vec::new(),
             capture_dir: std::path::PathBuf::from("."),
             frame_hook: None,
+            overlay: Default::default(),
             video_mode: None,
             audio_record_path: None,
         };
@@ -260,6 +265,7 @@ impl Runtime {
             capture_frames: Vec::new(),
             capture_dir: std::path::PathBuf::from("."),
             frame_hook: None,
+            overlay: Default::default(),
             video_mode: None,
             audio_record_path: None,
         })

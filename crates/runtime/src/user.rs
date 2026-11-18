@@ -154,11 +154,7 @@ pub fn ensure_sdl() {
         rt.user.sdl_ready = true;
         rt.user.gamepads_ready = pads;
         if !rt.user.ignore_host_input {
-            let (b, warnings) = crate::bindings::Bindings::load(&rt.files.save_dir.join("config.toml"));
-            for w in warnings {
-                eprintln!("bindings: {w}");
-            }
-            rt.user.bindings = b;
+            crate::config::load_into(rt);
         }
     });
 }
@@ -175,29 +171,32 @@ pub fn send(cpu: &mut Cpu, hwnd: u32, msg: u32, wp: u32, lp: u32) -> u32 {
 /// Host-only shortcuts, never seen by the game: Alt+Enter, and Ctrl+Cmd+F on macOS,
 /// toggle fullscreen presentation. Returns true if the key was consumed.
 fn runtime_shortcut(sc: i32, down: bool, repeat: bool, md: u16) -> bool {
+    with_rt(|rt| runtime_shortcut_rt(rt, sc, down, repeat, md))
+}
+
+/// [`runtime_shortcut`] for callers that already hold the runtime (the overlay).
+pub(crate) fn runtime_shortcut_rt(rt: &mut crate::Runtime, sc: i32, down: bool, repeat: bool, md: u16) -> bool {
     const ENTER: i32 = 40;
     const F: i32 = 9;
     let alt = md & SDL_KMOD_ALT.0 != 0;
     let ctrl_cmd = md & SDL_KMOD_CTRL.0 != 0 && md & SDL_KMOD_GUI.0 != 0;
-    with_rt(|rt| {
-        if !down {
-            return rt.user.swallowed.take_if(|s| *s == sc).is_some();
-        }
-        if !((sc == ENTER && alt) || (sc == F && ctrl_cmd)) {
-            return false;
-        }
-        rt.user.swallowed = Some(sc);
-        if !repeat {
-            if let Some(w) = rt.user.window.as_ref().filter(|w| !w.sdl.is_null()) {
-                // SAFETY: valid window.
-                unsafe {
-                    let on = SDL_GetWindowFlags(w.sdl) & SDL_WINDOW_FULLSCREEN == 0;
-                    SDL_SetWindowFullscreen(w.sdl, on);
-                }
+    if !down {
+        return rt.user.swallowed.take_if(|s| *s == sc).is_some();
+    }
+    if !((sc == ENTER && alt) || (sc == F && ctrl_cmd)) {
+        return false;
+    }
+    rt.user.swallowed = Some(sc);
+    if !repeat {
+        if let Some(w) = rt.user.window.as_ref().filter(|w| !w.sdl.is_null()) {
+            // SAFETY: valid window.
+            unsafe {
+                let on = SDL_GetWindowFlags(w.sdl) & SDL_WINDOW_FULLSCREEN == 0;
+                SDL_SetWindowFullscreen(w.sdl, on);
             }
         }
-        true
-    })
+    }
+    true
 }
 
 /// The game took exclusive fullscreen (`SetCooperativeLevel`): present fullscreen
@@ -330,6 +329,20 @@ fn side_vk(sc: i32) -> Option<u32> {
     Some(match sc { 224 => 0xa2, 228 => 0xa3, 225 => 0xa0, 229 => 0xa1, 226 => 0xa4, 230 => 0xa5, _ => return None })
 }
 
+/// A host key or button through the bindings: the game keys it presses, or the
+/// settings overlay.
+fn bound_input(rt: &mut crate::Runtime, input: crate::bindings::Input, down: bool, repeat: bool, alt: bool) {
+    for (sc, down, repeat) in rt.user.bindings.press(input, down, repeat) {
+        if sc == crate::bindings::SETTINGS {
+            if down && !repeat {
+                crate::overlay::request(rt);
+            }
+        } else {
+            key_input_rt(rt, sc, down, repeat, alt);
+        }
+    }
+}
+
 /// Translate pending SDL events into window messages.
 pub fn pump() {
     if !with_rt(|rt| rt.user.sdl_ready && rt.user.window.is_some() && !rt.user.headless) {
@@ -364,18 +377,10 @@ pub fn pump() {
                 continue;
             }
             let alt = (k.r#mod.0 & SDL_KMOD_ALT.0) != 0;
-            with_rt(|rt| {
-                for (sc, down, repeat) in rt.user.bindings.press(crate::bindings::Input::Key(k.scancode.0), k.down, k.repeat) {
-                    key_input_rt(rt, sc, down, repeat, alt);
-                }
-            });
+            with_rt(|rt| bound_input(rt, crate::bindings::Input::Key(k.scancode.0), k.down, k.repeat, alt));
         } else if ty == SDL_EVENT_GAMEPAD_BUTTON_DOWN.0 || ty == SDL_EVENT_GAMEPAD_BUTTON_UP.0 {
             let b = unsafe { ev.gbutton };
-            with_rt(|rt| {
-                for (sc, down, repeat) in rt.user.bindings.press(crate::bindings::Input::Pad(b.button as i32), b.down, false) {
-                    key_input_rt(rt, sc, down, repeat, false);
-                }
-            });
+            with_rt(|rt| bound_input(rt, crate::bindings::Input::Pad(b.button as i32), b.down, false, false));
         } else if ty == SDL_EVENT_MOUSE_MOTION.0 {
             let m = unsafe { ev.motion };
             with_rt(|rt| mouse_motion_rt(rt, m.xrel, m.yrel));

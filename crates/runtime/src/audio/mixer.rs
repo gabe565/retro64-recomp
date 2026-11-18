@@ -111,11 +111,14 @@ pub struct Mixer {
     /// The device outputs silence while set (the window is in the background:
     /// DirectSound without global focus). Mixing and recording continue.
     pub output_muted: bool,
+    /// Nothing advances and the device outputs silence while set (the settings
+    /// overlay freezes the game).
+    pub paused: bool,
 }
 
 impl Mixer {
     pub fn new(rate: u32, channels: usize) -> Mixer {
-        Mixer { rate, channels: vec![None; channels], samples: HashMap::new(), songs: HashMap::new(), sfx_volume: 255, started: 0, scratch: Vec::new(), recording: None, output_muted: false }
+        Mixer { rate, channels: vec![None; channels], samples: HashMap::new(), songs: HashMap::new(), sfx_volume: 255, started: 0, scratch: Vec::new(), recording: None, output_muted: false, paused: false }
     }
 
     /// `FSOUND_PlaySound(FSOUND_FREE, sample)`: the channel used, or None (-1).
