@@ -48,9 +48,13 @@ pub fn default_save_dir() -> Option<PathBuf> {
 /// with `/` separators, contents).
 pub type Pack = &'static [(&'static str, &'static [u8])];
 
+/// A runtime edit of a game file's bytes (None: not the expected file).
+type Edit = fn(&[u8]) -> Option<Vec<u8>>;
+
 enum Handle {
     Disk(File),
-    Pack(Cursor<&'static [u8]>),
+    /// A file in the pack, or one the runtime substitutes (`substitute`).
+    Memory(Cursor<std::borrow::Cow<'static, [u8]>>),
 }
 
 /// An original game file, on disk or in the pack.
@@ -61,6 +65,8 @@ enum DataFile {
 
 #[derive(Default)]
 pub struct Files {
+    /// Serve the title logo without "GOLD" (config `[display] logo`).
+    pub plain_logo: bool,
     pub data_dir: PathBuf,
     /// Game files built into the program; used instead of `data_dir` when set.
     pub pack: Option<Pack>,
@@ -263,6 +269,13 @@ impl Files {
     }
 
     /// CreateFileA. Returns a handle or a Win32 error code.
+    /// A runtime edit of a game file read at `rel`: the plain "BUGATRON" title logo
+    /// (`plain_logo`; assets.rs).
+    fn substitute(&self, rel: &[String]) -> Option<Edit> {
+        let is = |want: &[&str]| rel.len() == want.len() && rel.iter().zip(want).all(|(a, b)| a.eq_ignore_ascii_case(b));
+        (self.plain_logo && is(&["m", "junk2.bmp"])).then_some(crate::assets::plain_logo as Edit)
+    }
+
     pub fn create(&mut self, name: &str, access: u32, disposition: u32) -> Result<u32, u32> {
         let rel = GuestPath::parse(&self.cwd, name).map_err(|e| {
             eprintln!("[files] {e}");
@@ -281,10 +294,27 @@ impl Files {
             d => crate::fatal(&format!("CreateFileA({name}): unsupported disposition {d}")),
         }
         let file = if !write {
-            match (in_save, in_data) {
+            let mut file = match (in_save, in_data) {
                 (Some(p), _) | (None, Some(DataFile::Disk(p))) => Handle::Disk(File::open(p).map_err(|_| ERROR_ACCESS_DENIED)?),
-                (None, Some(DataFile::Pack(d))) => Handle::Pack(Cursor::new(d)),
+                (None, Some(DataFile::Pack(d))) => Handle::Memory(Cursor::new(std::borrow::Cow::Borrowed(d))),
                 (None, None) => return Err(ERROR_FILE_NOT_FOUND),
+            };
+            match self.substitute(rel) {
+                Some(edit) => {
+                    let mut original = Vec::new();
+                    let ok = match &mut file {
+                        Handle::Disk(f) => f.read_to_end(&mut original).is_ok(),
+                        Handle::Memory(c) => c.read_to_end(&mut original).is_ok(),
+                    };
+                    match edit(&original).filter(|_| ok) {
+                        Some(v) => Handle::Memory(Cursor::new(std::borrow::Cow::Owned(v))),
+                        None => {
+                            // Not the expected file: serve it unchanged.
+                            Handle::Memory(Cursor::new(std::borrow::Cow::Owned(original)))
+                        }
+                    }
+                }
+                None => file,
             }
         } else {
             let target = in_save.unwrap_or_else(|| self.save_dir.join(self.data_spelling(rel)));
@@ -383,7 +413,7 @@ impl Files {
         while n < buf.len() {
             let r = match f {
                 Handle::Disk(f) => f.read(&mut buf[n..]),
-                Handle::Pack(c) => c.read(&mut buf[n..]),
+                Handle::Memory(c) => c.read(&mut buf[n..]),
             };
             match r {
                 Ok(0) => break,
@@ -411,7 +441,7 @@ impl Files {
         };
         match f {
             Handle::Disk(f) => f.seek(pos).ok(),
-            Handle::Pack(c) => c.seek(pos).ok(),
+            Handle::Memory(c) => c.seek(pos).ok(),
         }
     }
 
@@ -434,7 +464,7 @@ impl Files {
     pub fn size(&mut self, h: u32) -> Option<u64> {
         match &self.open.get(&h)?.0 {
             Handle::Disk(f) => Some(f.metadata().ok()?.len()),
-            Handle::Pack(c) => Some(c.get_ref().len() as u64),
+            Handle::Memory(c) => Some(c.get_ref().len() as u64),
         }
     }
 

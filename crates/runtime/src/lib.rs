@@ -15,6 +15,7 @@
 // its live `Cpu` pointer; they cannot be `unsafe fn` and remain FFI-safe.
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
+pub mod assets;
 pub mod audio;
 pub mod bindings;
 pub mod clock;

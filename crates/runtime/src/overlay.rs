@@ -88,6 +88,7 @@ enum Item {
     Resolution,
     Fullscreen,
     SkipLoading,
+    Logo,
     FrameTime,
     HighScores,
     Controls,
@@ -130,7 +131,7 @@ impl Overlay {
 
     fn items(&self) -> Vec<Item> {
         match self.page() {
-            Page::Main => vec![Item::Resume, Item::Difficulty, Item::Music, Item::Sound, Item::Resolution, Item::Fullscreen, Item::SkipLoading, Item::FrameTime, Item::HighScores, Item::Controls, Item::Quit],
+            Page::Main => vec![Item::Resume, Item::Difficulty, Item::Music, Item::Sound, Item::Resolution, Item::Fullscreen, Item::SkipLoading, Item::Logo, Item::FrameTime, Item::HighScores, Item::Controls, Item::Quit],
             Page::Controls => (0..ACTIONS.len()).map(Item::Action).chain([Item::ResetControls, Item::Back]).collect(),
         }
     }
@@ -284,7 +285,7 @@ fn input(rt: &mut Runtime, i: Input) {
         Nav::Close => o.open = false,
         Nav::Back if o.page() == Page::Controls => {
             o.page = Some(Page::Main);
-            o.sel = 9; // Controls
+            o.sel = o.items().iter().position(|&i| i == Item::Controls).unwrap_or(0);
         }
         Nav::Back => o.open = false,
         Nav::Left | Nav::Right if matches!(item, Item::Music | Item::Sound) => {
@@ -302,6 +303,11 @@ fn input(rt: &mut Runtime, i: Input) {
             crate::config::save_from(rt);
         }
         Nav::Left | Nav::Right | Nav::Select if item == Item::Fullscreen => set_fullscreen(rt, !rt.display.fullscreen),
+        Nav::Left | Nav::Right | Nav::Select if item == Item::Logo => {
+            rt.display.gold_logo = !rt.display.gold_logo;
+            rt.files.plain_logo = !rt.display.gold_logo;
+            crate::config::save_from(rt);
+        }
         Nav::Left | Nav::Right | Nav::Select if item == Item::SkipLoading => {
             rt.display.skip_loading = !rt.display.skip_loading;
             crate::config::save_from(rt);
@@ -341,7 +347,7 @@ fn input(rt: &mut Runtime, i: Input) {
             Item::ResetControls => set_bindings(rt, Bindings::default().inputs),
             Item::Back => {
                 o.page = Some(Page::Main);
-                o.sel = 9; // Controls
+                o.sel = o.items().iter().position(|&i| i == Item::Controls).unwrap_or(0);
             }
             _ => {}
         },
@@ -707,6 +713,7 @@ fn render(rt: &Runtime, w: u32, h: u32) -> Vec<u8> {
                 ("RESOLUTION".to_string(), format!("< {r} >{mark}"), true)
             }
             Item::Fullscreen => ("FULLSCREEN".to_string(), format!("< {} >", if rt.display.fullscreen { "ON" } else { "OFF" }), true),
+            Item::Logo => ("LOGO".to_string(), format!("< {} >", if rt.display.gold_logo { "GOLD" } else { "BUGATRON" }), true),
             Item::SkipLoading => ("SKIP LOADING SCREEN".to_string(), format!("< {} >", if rt.display.skip_loading { "ON" } else { "OFF" }), true),
             Item::FrameTime => ("SHOW FPS".to_string(), format!("< {} >", if rt.mem.r32(FRAME_TIME) != 0 { "ON" } else { "OFF" }), true),
             Item::HighScores => ("HIGH SCORES".to_string(), String::new(), in_screen(rt)),
@@ -733,6 +740,7 @@ fn render(rt: &Runtime, w: u32, h: u32) -> Vec<u8> {
     let hint = match (o.page(), o.capture) {
         (_, true) => "ESC: CANCEL",
         (Page::Main, _) if o.items().get(o.sel) == Some(&Item::Resolution) => "* AFTER A RESTART",
+        (Page::Main, _) if o.items().get(o.sel) == Some(&Item::Logo) => "SHOWN THE NEXT TIME THE TITLE SCREEN LOADS",
         (Page::Main, _) => "ENTER/A: SELECT   ESC/B: CLOSE",
         (Page::Controls, _) => "ENTER/A: ADD   BACKSPACE/X: REMOVE   ESC/B: BACK",
     };

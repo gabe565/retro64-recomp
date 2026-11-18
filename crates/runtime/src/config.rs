@@ -35,11 +35,13 @@ pub struct Display {
     /// Go straight from one screen to the next, without the "LOADING" hold
     /// (overlay.rs `skip_loading`).
     pub skip_loading: bool,
+    /// The title logo reads "BUGATRON GOLD" (true) or "BUGATRON" (assets.rs `plain_logo`).
+    pub gold_logo: bool,
 }
 
 impl Default for Display {
     fn default() -> Display {
-        Display { resolution: None, fullscreen: true, skip_loading: true }
+        Display { resolution: None, fullscreen: true, skip_loading: true, gold_logo: true }
     }
 }
 
@@ -79,6 +81,7 @@ pub fn load(path: &Path) -> (Config, Vec<String>) {
         match (k.as_str(), v) {
             ("fullscreen", toml::Value::Boolean(b)) => display.fullscreen = *b,
             ("skip_loading", toml::Value::Boolean(b)) => display.skip_loading = *b,
+            ("logo", toml::Value::String(l)) if l == "gold" || l == "bugatron" => display.gold_logo = l == "gold",
             ("resolution", toml::Value::String(r)) if r == "auto" => display.resolution = None,
             ("resolution", toml::Value::String(r)) => match r.split_once('x').and_then(|(w, h)| Some((w.trim().parse().ok()?, h.trim().parse().ok()?))) {
                 Some((w, h)) if w >= 320 && h >= 240 => display.resolution = Some((w, h)),
@@ -139,6 +142,7 @@ fn render(c: &Config) -> String {
     set(&mut display, "resolution", value(res), "\"auto\" (the largest 4:3 mode that fits the display) or \"WIDTHxHEIGHT\"; takes effect when the game starts.");
     set(&mut display, "fullscreen", value(d.fullscreen), "Fullscreen, or a window.");
     set(&mut display, "skip_loading", value(d.skip_loading), "Go straight from one screen to the next. The original holds an empty \"LOADING\" screen between them for most of a second.");
+    set(&mut display, "logo", value(if d.gold_logo { "gold" } else { "bugatron" }), "The title logo: \"gold\" (BUGATRON GOLD) or \"bugatron\" (BUGATRON, drawn from the Gold logo).");
 
     let mut bindings = section(
         "[bindings]: for each of the game's keys, the host keys and controller buttons that press it. \
@@ -198,6 +202,7 @@ pub fn load_into(rt: &mut Runtime) {
     for w in warnings {
         eprintln!("config: {w}");
     }
+    rt.files.plain_logo = !c.display.gold_logo;
     rt.display = c.display;
     rt.fixes = c.fixes;
     rt.user.bindings = c.bindings;
@@ -275,11 +280,11 @@ mod tests {
     fn settings_override_defaults_and_unknown_ones_are_reported() {
         let d = dir("edit");
         let path = d.join("config.toml");
-        std::fs::write(&path, "[display]\nresolution = \"1280x960\"\nfullscreen = false\nskip_loading = false\n[fixes]\ndifficulty_label = false\nwings = true\n[bindings]\nstart = [\"Return\", \"Pad y\"]\nfly = [\"F9\"]\nexit = [\"Escape\", \"Nope\"]\n").unwrap();
+        std::fs::write(&path, "[display]\nresolution = \"1280x960\"\nfullscreen = false\nskip_loading = false\nlogo = \"bugatron\"\n[fixes]\ndifficulty_label = false\nwings = true\n[bindings]\nstart = [\"Return\", \"Pad y\"]\nfly = [\"F9\"]\nexit = [\"Escape\", \"Nope\"]\n").unwrap();
         let (mut c, warnings) = load(&path);
         assert_eq!(warnings.len(), 3, "{warnings:?}");
         assert!(!c.fixes.difficulty_label);
-        assert_eq!(c.display, Display { resolution: Some((1280, 960)), fullscreen: false, skip_loading: false });
+        assert_eq!(c.display, Display { resolution: Some((1280, 960)), fullscreen: false, skip_loading: false, gold_logo: false });
         assert_eq!(c.bindings.press(key("Return"), true, false), [(58, true, false)]);
         assert_eq!(c.bindings.press(key("F1"), true, false), [], "F1 no longer starts a game");
         assert_eq!(c.bindings.press(key("PageDown"), true, false), [(78, true, false)], "defaults kept");
