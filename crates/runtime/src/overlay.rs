@@ -29,6 +29,13 @@ const TEXT_LIST: u32 = 0x84223c;
 /// record 1; the letter count is at +0x55b9c.
 const LETTER: u32 = 164;
 const LETTER_COUNT: u32 = 0x55b9c;
+/// Music and sound-effect volumes (int, 0..=100; defaults 90 and 25), changed in
+/// steps of 10 by Page Up/Down and Home/End (0x413377..), each change applied by
+/// `APPLY_VOLUMES(music - 1, sound, 0)` (cdecl floats) while sound is on (`SOUND_ON`).
+const MUSIC_VOLUME: u32 = 0x4370a8;
+const SOUND_VOLUME: u32 = 0x4370ac;
+const APPLY_VOLUMES: u32 = 0x417210;
+const SOUND_ON: u32 = 0x438144;
 /// Labels as the F3 handler writes them (0x437e60..), six letters each.
 const DIFFICULTIES: [(f32, &[u8; 6]); 3] = [(4.0, b"NORMAL"), (1.0, b"HARD  "), (8.0, b"EASY  ")];
 
@@ -54,6 +61,8 @@ enum Page {
 enum Item {
     Resume,
     Difficulty,
+    Music,
+    Sound,
     HighScores,
     Controls,
     Quit,
@@ -82,6 +91,8 @@ pub struct Overlay {
     sel: usize,
     /// Waiting for a key or button to add to the selected action.
     capture: bool,
+    /// The volumes changed: apply them through the game once it resumes.
+    apply_volumes: bool,
     /// Game keys to tap after resuming, one at a time (scancode).
     taps: Vec<i32>,
     /// Flips into the current tap: down at 0, up at 2, next tap from 4.
@@ -97,7 +108,7 @@ impl Overlay {
 
     fn items(&self) -> Vec<Item> {
         match self.page() {
-            Page::Main => vec![Item::Resume, Item::Difficulty, Item::HighScores, Item::Controls, Item::Quit],
+            Page::Main => vec![Item::Resume, Item::Difficulty, Item::Music, Item::Sound, Item::HighScores, Item::Controls, Item::Quit],
             Page::Controls => (0..ACTIONS.len()).map(Item::Action).chain([Item::ResetControls, Item::Back]).collect(),
         }
     }
@@ -139,6 +150,16 @@ pub(crate) fn after_flip(rt: &mut Runtime, front: u32) {
             }
             _ => {}
         }
+    }
+}
+
+/// From `PeekMessageA`, where game code may run: apply volumes changed in the
+/// overlay with the game's own function, as its volume keys do.
+pub(crate) fn deliver(cpu: &mut crate::Cpu) {
+    let apply = crate::with_rt(|rt| std::mem::take(&mut rt.overlay.apply_volumes) && rt.mem.r32(SOUND_ON) != 0);
+    if apply {
+        let (music, sound) = crate::with_rt(|rt| (rt.mem.r32(MUSIC_VOLUME) as i32, rt.mem.r32(SOUND_VOLUME) as i32));
+        crate::call_guest(cpu, APPLY_VOLUMES, &[((music - 1) as f32).to_bits(), (sound as f32).to_bits(), 0]);
     }
 }
 
@@ -254,9 +275,16 @@ fn input(rt: &mut Runtime, i: Input) {
         Nav::Close => o.open = false,
         Nav::Back if o.page() == Page::Controls => {
             o.page = Some(Page::Main);
-            o.sel = 3; // Controls
+            o.sel = 5; // Controls
         }
         Nav::Back => o.open = false,
+        Nav::Left | Nav::Right if matches!(item, Item::Music | Item::Sound) => {
+            let at = if item == Item::Music { MUSIC_VOLUME } else { SOUND_VOLUME };
+            let v = rt.mem.r32(at) as i32;
+            let v = if matches!(n, Nav::Right) { (v / 10 + 1) * 10 } else { (v + 9) / 10 * 10 - 10 };
+            rt.mem.w32(at, v.clamp(0, 100) as u32);
+            rt.overlay.apply_volumes = true;
+        }
         Nav::Left | Nav::Right if item == Item::Difficulty => {
             let step = if matches!(n, Nav::Right) { 1 } else { DIFFICULTIES.len() - 1 };
             set_difficulty(rt, (current + step) % DIFFICULTIES.len());
@@ -290,7 +318,7 @@ fn input(rt: &mut Runtime, i: Input) {
             Item::ResetControls => set_bindings(rt, Bindings::default().inputs),
             Item::Back => {
                 o.page = Some(Page::Main);
-                o.sel = 3; // Controls
+                o.sel = 5; // Controls
             }
             _ => {}
         },
@@ -546,6 +574,8 @@ fn render(rt: &Runtime, w: u32, h: u32) -> Vec<u8> {
                 let name = String::from_utf8_lossy(DIFFICULTIES[current_difficulty(rt)].1).trim().to_string();
                 ("DIFFICULTY".to_string(), format!("< {name} >"), true)
             }
+            Item::Music => ("MUSIC VOLUME".to_string(), format!("< {} >", rt.mem.r32(MUSIC_VOLUME)), true),
+            Item::Sound => ("SOUND VOLUME".to_string(), format!("< {} >", rt.mem.r32(SOUND_VOLUME)), true),
             Item::HighScores => ("HIGH SCORES".to_string(), String::new(), title_menu),
             Item::Controls => ("CONTROLS".to_string(), String::new(), true),
             Item::Quit => ("QUIT BUGATRON".to_string(), String::new(), true),

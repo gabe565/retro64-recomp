@@ -551,6 +551,7 @@ pub(crate) fn import(cpu: &mut Cpu, name: &str) -> bool {
             if hwnd != 0 || lo != 0 || hi != 0 { fatal("PeekMessageA with a filter is not emulated"); }
             pump();
             deliver_focus(cpu);
+            crate::overlay::deliver(cpu);
             let m = with_rt(|rt| {
                 let m = rt.user.queue.front().copied().or_else(|| rt.user.quit.map(|c| Msg { hwnd: 0, message: WM_QUIT, wparam: c, lparam: 0 }));
                 if m.is_some() && remove & 1 != 0 {
