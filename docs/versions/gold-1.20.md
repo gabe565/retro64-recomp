@@ -92,7 +92,7 @@ The function map is in `docs/function-map/gold-1.20.md`.
   - Alpha polygons are collected, with a cap at `_R3D_MAXALPHAPOLYS`, and drawn after opaque geometry.
   - There is a 2D blit path (`r3d_2DBegin/Blit/End`).
   - `r3d_Initialize` receives 75.0 (likely the vertical field of view in degrees) and 184800.0 (meaning unknown).
-- **Screenshots**: the string `screenshot%d.bmp` is referenced in `FUN_00412930`, and `r3d_SurfaceToBMP` exists. The README says F12 writes `ss.bmp`. The key binding and the actual file name are not yet traced.
+- **Screenshots**: Insert writes `screenshot%d.bmp` (counter 0x98d518, `FUN_00412930`); the README's "F12 → ss.bmp" is out of date (open-questions Q11).
 
 ## Runtime observations
 
