@@ -130,6 +130,8 @@ pub struct Runtime {
     pub frame_hook: Option<Box<dyn FnMut(&mut Runtime, u64)>>,
     /// The settings overlay (overlay.rs).
     pub overlay: overlay::Overlay,
+    /// Fixes for bugs in the original (config.toml `[fixes]`).
+    pub fixes: config::Fixes,
     pub mem: GuestMemory,
     pub pe: Pe,
     pub(crate) import_names: Vec<(&'static str, &'static str)>,
@@ -221,6 +223,7 @@ impl Runtime {
             capture_dir: std::path::PathBuf::from("."),
             frame_hook: None,
             overlay: Default::default(),
+            fixes: Default::default(),
             video_mode: None,
             audio_record_path: None,
         };
@@ -266,6 +269,7 @@ impl Runtime {
             capture_dir: std::path::PathBuf::from("."),
             frame_hook: None,
             overlay: Default::default(),
+            fixes: Default::default(),
             video_mode: None,
             audio_record_path: None,
         })

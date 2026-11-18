@@ -66,4 +66,9 @@ See `graphics/r3d-interface.md` §7 (G1–G7) and §8: runtime boundary validati
 
 ## Known deviations
 
-None yet, because no game code exists. Record deviations here as they are introduced.
+Deliberate differences from the original in normal play. Scripted runs (`--input`) have none of them, so comparisons with the original stay exact.
+
+| # | Deviation | Why | Switch |
+|---|---|---|---|
+| D1 | Bug fix: the title screen's "F3: DIFFICULTY - NORMAL" shows the difficulty actually set. The original updates the label only in its F3 handlers (0x413143, 0x410b36), so whenever the title is rebuilt from its config (after a game or the high scores) it says NORMAL again while the difficulty (0x4370e4) stays as chosen | A bug in the original | `config.toml` `[fixes] difficulty_label = false` |
+| D2 | Joystick 0 is always reported connected (centred without a controller), so controllers can be plugged in at any time. The original stops polling after the first `joyGetPos` failure | Hot-plugging | — |

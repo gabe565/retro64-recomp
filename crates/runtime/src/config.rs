@@ -3,19 +3,46 @@
 //! runs (`--input`) ignore it.
 //!
 //! - `[bindings]`: host keys and controller buttons for the game's keys (bindings.rs).
+//! - `[fixes]`: corrections of bugs in the original game, each on by default; set
+//!   one to `false` for the original's behaviour.
 
 use crate::bindings::Bindings;
 use crate::Runtime;
 use std::path::{Path, PathBuf};
 
+/// Corrections of bugs in the original game, made by the runtime (the game's code
+/// is unchanged).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Fixes {
+    /// The title screen's "F3: DIFFICULTY - NORMAL" follows the actual difficulty
+    /// (overlay::fix_difficulty_label).
+    pub difficulty_label: bool,
+}
+
+impl Default for Fixes {
+    fn default() -> Fixes {
+        Fixes { difficulty_label: true }
+    }
+}
+
 /// Everything `config.toml` holds.
 #[derive(Default)]
 pub struct Config {
+    pub fixes: Fixes,
     pub bindings: Bindings,
 }
 
 const HEADER: &str = "\
 # Bugatron settings. Rewritten by the settings overlay (F10); edit while the game is closed.
+";
+
+const FIXES: &str = "\
+# [fixes]: corrections of bugs in the original game. Set one to false for the
+# original's behaviour.
+[fixes]
+# The title screen shows the difficulty actually set. The original updates the
+# label only when F3 is pressed, so it says NORMAL again whenever the title is
+# rebuilt (after a game or the high scores), whatever the difficulty.
 ";
 
 const BINDINGS: &str = "\
@@ -46,15 +73,23 @@ pub fn load(path: &Path) -> (Config, Vec<String>) {
             toml::Table::new()
         }
     };
+    let mut fixes = Fixes::default();
+    for (k, v) in table.get("fixes").and_then(|v| v.as_table()).into_iter().flatten() {
+        match (k.as_str(), v.as_bool()) {
+            ("difficulty_label", Some(b)) => fixes.difficulty_label = b,
+            _ => warnings.push(format!("fixes: unknown setting {k} = {v}")),
+        }
+    }
     let bindings = Bindings::from_table(table.get("bindings").and_then(|v| v.as_table()), &mut warnings);
     let warnings = warnings.into_iter().map(|w| format!("{}: {w}", path.display())).collect();
-    (Config { bindings }, warnings)
+    (Config { fixes, bindings }, warnings)
 }
 
 /// Write `config.toml`.
 pub fn save(c: &Config, path: &Path) -> std::io::Result<()> {
     let mut text = format!("{HEADER}\n{BINDINGS}");
     c.bindings.write(&mut text);
+    text += &format!("\n{FIXES}difficulty_label = {}\n", c.fixes.difficulty_label);
     std::fs::write(path, text)
 }
 
@@ -64,12 +99,13 @@ pub fn load_into(rt: &mut Runtime) {
     for w in warnings {
         eprintln!("config: {w}");
     }
+    rt.fixes = c.fixes;
     rt.user.bindings = c.bindings;
 }
 
 /// Save the runtime's settings (after the overlay changes them).
 pub fn save_from(rt: &mut Runtime) {
-    let c = Config { bindings: std::mem::take(&mut rt.user.bindings) };
+    let c = Config { fixes: rt.fixes.clone(), bindings: std::mem::take(&mut rt.user.bindings) };
     let path = path(rt);
     if let Err(e) = save(&c, &path) {
         eprintln!("config: {}: {e}", path.display());
@@ -98,8 +134,10 @@ mod tests {
         let path = d.join("config.toml");
         let (c, warnings) = load(&path);
         assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(c.fixes, Fixes::default());
         let text = std::fs::read_to_string(&path).unwrap();
         assert!(text.starts_with("# Bugatron settings"), "{text}");
+        assert!(text.contains("[fixes]") && text.contains("difficulty_label = true"), "{text}");
         assert!(text.contains("# Music volume up\nmusic_up = [\"PageUp\", \"=\"]"), "{text}");
         let (again, warnings) = load(&path);
         assert!(warnings.is_empty(), "{warnings:?}");
@@ -108,21 +146,23 @@ mod tests {
     }
 
     #[test]
-    fn bindings_override_defaults_and_unknown_ones_are_reported() {
+    fn settings_override_defaults_and_unknown_ones_are_reported() {
         let d = dir("edit");
         let path = d.join("config.toml");
-        std::fs::write(&path, "[bindings]\nstart = [\"Return\", \"Pad y\"]\nfly = [\"F9\"]\nexit = [\"Escape\", \"Nope\"]\n").unwrap();
+        std::fs::write(&path, "[fixes]\ndifficulty_label = false\nwings = true\n[bindings]\nstart = [\"Return\", \"Pad y\"]\nfly = [\"F9\"]\nexit = [\"Escape\", \"Nope\"]\n").unwrap();
         let (mut c, warnings) = load(&path);
-        assert_eq!(warnings.len(), 2, "{warnings:?}");
+        assert_eq!(warnings.len(), 3, "{warnings:?}");
+        assert!(!c.fixes.difficulty_label);
         assert_eq!(c.bindings.press(key("Return"), true, false), [(58, true, false)]);
         assert_eq!(c.bindings.press(key("F1"), true, false), [], "F1 no longer starts a game");
         assert_eq!(c.bindings.press(key("PageDown"), true, false), [(78, true, false)], "defaults kept");
         save(&c, &path).unwrap();
         let text = std::fs::read_to_string(&path).unwrap();
-        assert!(text.contains("# Start game\nstart = [\"Return\", \"Pad y\"]"), "{text}");
+        assert!(text.contains("difficulty_label = false") && text.contains("# Start game\nstart = [\"Return\", \"Pad y\"]"), "{text}");
         let (again, warnings) = load(&path);
         assert!(warnings.is_empty(), "{warnings:?}");
         assert_eq!(again.bindings.inputs, c.bindings.inputs);
+        assert_eq!(again.fixes, c.fixes);
         std::fs::remove_dir_all(&d).ok();
     }
 }

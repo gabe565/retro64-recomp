@@ -122,6 +122,7 @@ pub fn request(rt: &mut Runtime) {
 
 /// After every flip: run the overlay if it was requested, else deliver pending taps.
 pub(crate) fn after_flip(rt: &mut Runtime, front: u32) {
+    fix_difficulty_label(rt);
     if rt.overlay.open {
         run(rt, front);
     } else if !rt.overlay.taps.is_empty() {
@@ -301,6 +302,17 @@ fn input(rt: &mut Runtime, i: Input) {
 fn set_difficulty(rt: &mut Runtime, d: usize) {
     rt.mem.w32(DIFFICULTY, DIFFICULTIES[d].0.to_bits());
     write_difficulty_label(rt, DIFFICULTIES[d].1);
+}
+
+/// Fix for a bug in the original: the title's "F3: DIFFICULTY - NORMAL" is only
+/// updated when F3 changes the difficulty, so whenever the title is rebuilt (after
+/// a game or the high scores) it says NORMAL again while the difficulty stays as
+/// chosen. On the title, keep the label in step with the difficulty. Config
+/// `[fixes] difficulty_label`; not in scripted runs, which reproduce the original.
+pub(crate) fn fix_difficulty_label(rt: &mut Runtime) {
+    if rt.fixes.difficulty_label && !rt.user.ignore_host_input && title_menu(rt) {
+        write_difficulty_label(rt, DIFFICULTIES[current_difficulty(rt)].1);
+    }
 }
 
 /// The title screen's difficulty label, as the game's F3 handler (0x413143) writes

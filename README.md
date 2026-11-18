@@ -98,6 +98,8 @@ Use `--exe FILE` (or `BUGATRON_EXE`) to choose one. An installer or zip is unpac
 | Insert | Screenshot (`screenshot<N>.bmp` in the save folder) | |
 | Delete | Show frame time | |
 
+**Bug fixes:** the game fixes one bug of the original: the title screen's difficulty no longer reverts to "NORMAL" after a game or the high scores. For the original's behaviour, set `difficulty_label = false` under `[fixes]` in `config.toml`.
+
 **Remapping:** the first run writes `config.toml` to the save folder, listing the keys and controller buttons for each action (SDL key names, or `Pad ` and an SDL button name). Edit it while the game is closed. Actions missing from the file keep their defaults, and a key you remove from its action stops working. For example:
 
 ```toml
