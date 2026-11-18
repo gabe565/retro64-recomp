@@ -36,6 +36,9 @@ const MUSIC_VOLUME: u32 = 0x4370a8;
 const SOUND_VOLUME: u32 = 0x4370ac;
 const APPLY_VOLUMES: u32 = 0x417210;
 const SOUND_ON: u32 = 0x438144;
+/// Nonzero: the game shows its frames per second and render and logic times in
+/// milliseconds (toggled by Delete, 0x412df8).
+const FRAME_TIME: u32 = 0x8429b8;
 /// Labels as the F3 handler writes them (0x437e60..), six letters each.
 const DIFFICULTIES: [(f32, &[u8; 6]); 3] = [(4.0, b"NORMAL"), (1.0, b"HARD  "), (8.0, b"EASY  ")];
 
@@ -65,6 +68,7 @@ enum Item {
     Sound,
     Resolution,
     Fullscreen,
+    FrameTime,
     HighScores,
     Controls,
     Quit,
@@ -110,7 +114,7 @@ impl Overlay {
 
     fn items(&self) -> Vec<Item> {
         match self.page() {
-            Page::Main => vec![Item::Resume, Item::Difficulty, Item::Music, Item::Sound, Item::Resolution, Item::Fullscreen, Item::HighScores, Item::Controls, Item::Quit],
+            Page::Main => vec![Item::Resume, Item::Difficulty, Item::Music, Item::Sound, Item::Resolution, Item::Fullscreen, Item::FrameTime, Item::HighScores, Item::Controls, Item::Quit],
             Page::Controls => (0..ACTIONS.len()).map(Item::Action).chain([Item::ResetControls, Item::Back]).collect(),
         }
     }
@@ -277,7 +281,7 @@ fn input(rt: &mut Runtime, i: Input) {
         Nav::Close => o.open = false,
         Nav::Back if o.page() == Page::Controls => {
             o.page = Some(Page::Main);
-            o.sel = 7; // Controls
+            o.sel = 8; // Controls
         }
         Nav::Back => o.open = false,
         Nav::Left | Nav::Right if matches!(item, Item::Music | Item::Sound) => {
@@ -295,6 +299,8 @@ fn input(rt: &mut Runtime, i: Input) {
             crate::config::save_from(rt);
         }
         Nav::Left | Nav::Right | Nav::Select if item == Item::Fullscreen => set_fullscreen(rt, !rt.display.fullscreen),
+        // As the game's Delete key does: flip the flag.
+        Nav::Left | Nav::Right | Nav::Select if item == Item::FrameTime => rt.mem.w32(FRAME_TIME, (rt.mem.r32(FRAME_TIME) == 0) as u32),
         Nav::Left | Nav::Right if item == Item::Difficulty => {
             let step = if matches!(n, Nav::Right) { 1 } else { DIFFICULTIES.len() - 1 };
             set_difficulty(rt, (current + step) % DIFFICULTIES.len());
@@ -328,7 +334,7 @@ fn input(rt: &mut Runtime, i: Input) {
             Item::ResetControls => set_bindings(rt, Bindings::default().inputs),
             Item::Back => {
                 o.page = Some(Page::Main);
-                o.sel = 7; // Controls
+                o.sel = 8; // Controls
             }
             _ => {}
         },
@@ -622,6 +628,7 @@ fn render(rt: &Runtime, w: u32, h: u32) -> Vec<u8> {
                 ("RESOLUTION".to_string(), format!("< {r} >{mark}"), true)
             }
             Item::Fullscreen => ("FULLSCREEN".to_string(), format!("< {} >", if rt.display.fullscreen { "ON" } else { "OFF" }), true),
+            Item::FrameTime => ("SHOW FPS".to_string(), format!("< {} >", if rt.mem.r32(FRAME_TIME) != 0 { "ON" } else { "OFF" }), true),
             Item::HighScores => ("HIGH SCORES".to_string(), String::new(), title_menu),
             Item::Controls => ("CONTROLS".to_string(), String::new(), true),
             Item::Quit => ("QUIT BUGATRON".to_string(), String::new(), true),

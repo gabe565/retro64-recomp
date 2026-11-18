@@ -67,7 +67,7 @@ pub const ACTIONS: &[Action] = &[
     Action { id: "sound_up", label: "Sound volume up", key: HOME, defaults: &["Home", "]"] },
     Action { id: "sound_down", label: "Sound volume down", key: END, defaults: &["End", "["] },
     Action { id: "screenshot", label: "Screenshot", key: INSERT, defaults: &["Insert"] },
-    Action { id: "frame_time", label: "Show frame time", key: DELETE, defaults: &["Delete"] },
+    Action { id: "frame_time", label: "Show FPS", key: DELETE, defaults: &["Delete"] },
     Action { id: "settings", label: "Open settings", key: SETTINGS, defaults: &["F10", "Pad back"] },
 ];
 

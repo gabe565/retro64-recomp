@@ -96,7 +96,7 @@ Use `--exe FILE` (or `BUGATRON_EXE`) to choose one. An installer or zip is unpac
 | Page Up / Page Down | Music volume | `=` / `-` |
 | Home / End | Sound volume | `]` / `[` |
 | Insert | Screenshot (`screenshot<N>.bmp` in the save folder) | |
-| Delete | Show frame time | |
+| Delete | Show FPS and render/logic times | |
 
 **Bug fixes:** the game fixes one bug of the original: the title screen's difficulty no longer reverts to "NORMAL" after a game or the high scores. For the original's behaviour, set `difficulty_label = false` under `[fixes]` in `config.toml`.
 
@@ -111,7 +111,7 @@ pause = ["P", "Pad start"]
 
 The action names are `left`, `right`, `up`, `down`, `fire`, `start`, `high_scores`, `difficulty`, `pause`, `exit`, `music_up`, `music_down`, `sound_up`, `sound_down`, `screenshot` and `frame_time`. The settings overlay's Controls page edits them too.
 
-**Settings overlay (F10 or controller Back, rebindable as `settings`):** freezes the game and its sound until closed. It changes the difficulty and the music and sound volumes on any screen, sets the resolution (from the next start) and fullscreen, opens the high scores (from the title screen), quits, and edits the key and button bindings, saving them to `config.toml`.
+**Settings overlay (F10 or controller Back, rebindable as `settings`):** freezes the game and its sound until closed. It changes the difficulty and the music and sound volumes on any screen, sets the resolution (from the next start) and fullscreen, shows the game's FPS counter, opens the high scores (from the title screen), quits, and edits the key and button bindings, saving them to `config.toml`.
 
 ### Single-file build for testing
 
