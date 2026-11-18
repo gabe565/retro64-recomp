@@ -153,9 +153,6 @@ pub fn ensure_sdl() {
     with_rt(|rt| {
         rt.user.sdl_ready = true;
         rt.user.gamepads_ready = pads;
-        if !rt.user.ignore_host_input {
-            crate::config::load_into(rt);
-        }
     });
 }
 

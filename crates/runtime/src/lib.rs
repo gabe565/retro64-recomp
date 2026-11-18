@@ -132,6 +132,8 @@ pub struct Runtime {
     pub overlay: overlay::Overlay,
     /// Fixes for bugs in the original (config.toml `[fixes]`).
     pub fixes: config::Fixes,
+    /// Display settings (config.toml `[display]`).
+    pub display: config::Display,
     pub mem: GuestMemory,
     pub pe: Pe,
     pub(crate) import_names: Vec<(&'static str, &'static str)>,
@@ -224,6 +226,7 @@ impl Runtime {
             frame_hook: None,
             overlay: Default::default(),
             fixes: Default::default(),
+            display: Default::default(),
             video_mode: None,
             audio_record_path: None,
         };
@@ -270,6 +273,7 @@ impl Runtime {
             frame_hook: None,
             overlay: Default::default(),
             fixes: Default::default(),
+            display: Default::default(),
             video_mode: None,
             audio_record_path: None,
         })

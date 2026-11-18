@@ -184,6 +184,11 @@ fn main() {
     let save = save.or_else(bugatron_runtime::files::default_save_dir).unwrap_or_else(|| PathBuf::from("save"));
     eprintln!("saves: {}", save.display());
     rt.files.save_dir = save;
+    // config.toml (bindings, display, fixes); scripted runs keep the original behaviour.
+    if !scripted {
+        bugatron_runtime::config::load_into(&mut rt);
+        rt.user.host_fullscreen &= rt.display.fullscreen;
+    }
     rt.clock.cadence = Some(bugatron_runtime::clock::Cadence::new());
     rt.clock.pace = true;
     rt.clock.stop_after_vblanks = frames;
@@ -195,7 +200,7 @@ fn main() {
     }
     // Display mode: explicit, else sized to the host display; offered to the game
     // as a driver mode and picked in its dialog.
-    let mode = video_mode.or_else(|| {
+    let mode = video_mode.or_else(|| rt.display.resolution.filter(|_| !scripted).map(|(w, h)| (w, h, 32))).or_else(|| {
         let d = display::query()?;
         let m = display::auto_mode(&d);
         eprintln!("display {}x{} points at {}x density ({}x{} pixels): rendering at {}", d.w_points, d.h_points, d.density, d.pixels().0, d.pixels().1, display::mode_label(m));

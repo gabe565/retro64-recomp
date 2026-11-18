@@ -63,6 +63,8 @@ enum Item {
     Difficulty,
     Music,
     Sound,
+    Resolution,
+    Fullscreen,
     HighScores,
     Controls,
     Quit,
@@ -108,7 +110,7 @@ impl Overlay {
 
     fn items(&self) -> Vec<Item> {
         match self.page() {
-            Page::Main => vec![Item::Resume, Item::Difficulty, Item::Music, Item::Sound, Item::HighScores, Item::Controls, Item::Quit],
+            Page::Main => vec![Item::Resume, Item::Difficulty, Item::Music, Item::Sound, Item::Resolution, Item::Fullscreen, Item::HighScores, Item::Controls, Item::Quit],
             Page::Controls => (0..ACTIONS.len()).map(Item::Action).chain([Item::ResetControls, Item::Back]).collect(),
         }
     }
@@ -275,7 +277,7 @@ fn input(rt: &mut Runtime, i: Input) {
         Nav::Close => o.open = false,
         Nav::Back if o.page() == Page::Controls => {
             o.page = Some(Page::Main);
-            o.sel = 5; // Controls
+            o.sel = 7; // Controls
         }
         Nav::Back => o.open = false,
         Nav::Left | Nav::Right if matches!(item, Item::Music | Item::Sound) => {
@@ -285,6 +287,14 @@ fn input(rt: &mut Runtime, i: Input) {
             rt.mem.w32(at, v.clamp(0, 100) as u32);
             rt.overlay.apply_volumes = true;
         }
+        Nav::Left | Nav::Right if item == Item::Resolution => {
+            let choices = resolutions();
+            let at = choices.iter().position(|&c| c == rt.display.resolution).unwrap_or(0);
+            let step = if matches!(n, Nav::Right) { 1 } else { choices.len() - 1 };
+            rt.display.resolution = choices[(at + step) % choices.len()];
+            crate::config::save_from(rt);
+        }
+        Nav::Left | Nav::Right | Nav::Select if item == Item::Fullscreen => set_fullscreen(rt, !rt.display.fullscreen),
         Nav::Left | Nav::Right if item == Item::Difficulty => {
             let step = if matches!(n, Nav::Right) { 1 } else { DIFFICULTIES.len() - 1 };
             set_difficulty(rt, (current + step) % DIFFICULTIES.len());
@@ -318,7 +328,7 @@ fn input(rt: &mut Runtime, i: Input) {
             Item::ResetControls => set_bindings(rt, Bindings::default().inputs),
             Item::Back => {
                 o.page = Some(Page::Main);
-                o.sel = 5; // Controls
+                o.sel = 7; // Controls
             }
             _ => {}
         },
@@ -361,6 +371,34 @@ fn write_difficulty_label(rt: &mut Runtime, label: &[u8; 6]) {
         }
         obj = rt.mem.r32(obj);
     }
+}
+
+/// Resolution choices: automatic, then the 32-bit modes of the period list that fit
+/// the host display.
+fn resolutions() -> Vec<Option<(u32, u32)>> {
+    let (pw, ph) = crate::display::query().map_or((u32::MAX, u32::MAX), |d| d.pixels());
+    let mut v: Vec<(u32, u32)> = crate::ddraw::MODES.iter().filter(|m| m.2 == 32 && m.0 <= pw && m.1 <= ph).map(|m| (m.0, m.1)).collect();
+    v.sort();
+    std::iter::once(None).chain(v.into_iter().map(Some)).collect()
+}
+
+/// What "auto" resolves to on this display.
+fn auto_resolution() -> Option<(u32, u32)> {
+    crate::display::query().map(|d| {
+        let m = crate::display::auto_mode(&d);
+        (m.0, m.1)
+    })
+}
+
+/// Fullscreen on or off, now and at the next start.
+fn set_fullscreen(rt: &mut Runtime, on: bool) {
+    rt.display.fullscreen = on;
+    rt.user.host_fullscreen = on;
+    if let Some(w) = rt.user.window.as_ref().filter(|w| !w.sdl.is_null()) {
+        // SAFETY: valid window.
+        unsafe { sdl3_sys::video::SDL_SetWindowFullscreen(w.sdl, on) };
+    }
+    crate::config::save_from(rt);
 }
 
 /// Change the bindings and save them to `config.toml`.
@@ -576,6 +614,14 @@ fn render(rt: &Runtime, w: u32, h: u32) -> Vec<u8> {
             }
             Item::Music => ("MUSIC VOLUME".to_string(), format!("< {} >", rt.mem.r32(MUSIC_VOLUME)), true),
             Item::Sound => ("SOUND VOLUME".to_string(), format!("< {} >", rt.mem.r32(SOUND_VOLUME)), true),
+            Item::Resolution => {
+                let r = rt.display.resolution.map_or("AUTO".to_string(), |(rw, rh)| format!("{rw}X{rh}"));
+                // Takes effect at the next start: mark a choice that differs from now.
+                let now = rt.display.resolution.unwrap_or_else(|| auto_resolution().unwrap_or((w, h)));
+                let mark = if now != (w, h) { " *" } else { "" };
+                ("RESOLUTION".to_string(), format!("< {r} >{mark}"), true)
+            }
+            Item::Fullscreen => ("FULLSCREEN".to_string(), format!("< {} >", if rt.display.fullscreen { "ON" } else { "OFF" }), true),
             Item::HighScores => ("HIGH SCORES".to_string(), String::new(), title_menu),
             Item::Controls => ("CONTROLS".to_string(), String::new(), true),
             Item::Quit => ("QUIT BUGATRON".to_string(), String::new(), true),
@@ -599,6 +645,7 @@ fn render(rt: &Runtime, w: u32, h: u32) -> Vec<u8> {
     }
     let hint = match (o.page(), o.capture) {
         (_, true) => "ESC: CANCEL",
+        (Page::Main, _) if o.items().get(o.sel) == Some(&Item::Resolution) => "* AFTER A RESTART",
         (Page::Main, _) => if title_menu { "ENTER/A: SELECT   ESC/B: CLOSE" } else { "HIGH SCORES: FROM THE TITLE SCREEN" },
         (Page::Controls, _) => "ENTER/A: ADD   BACKSPACE/X: REMOVE   ESC/B: BACK",
     };

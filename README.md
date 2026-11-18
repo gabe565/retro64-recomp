@@ -111,7 +111,7 @@ pause = ["P", "Pad start"]
 
 The action names are `left`, `right`, `up`, `down`, `fire`, `start`, `high_scores`, `difficulty`, `pause`, `exit`, `music_up`, `music_down`, `sound_up`, `sound_down`, `screenshot` and `frame_time`. The settings overlay's Controls page edits them too.
 
-**Settings overlay (F10 or controller Back, rebindable as `settings`):** freezes the game and its sound until closed. It changes the difficulty and the music and sound volumes on any screen, opens the high scores (from the title screen), quits, and edits the key and button bindings, saving them to `config.toml`.
+**Settings overlay (F10 or controller Back, rebindable as `settings`):** freezes the game and its sound until closed. It changes the difficulty and the music and sound volumes on any screen, sets the resolution (from the next start) and fullscreen, opens the high scores (from the title screen), quits, and edits the key and button bindings, saving them to `config.toml`.
 
 ### Single-file build for testing
 
