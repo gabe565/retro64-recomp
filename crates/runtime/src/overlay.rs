@@ -46,10 +46,19 @@ const STATE_SCREEN: u32 = 5;
 const STATE_FADE_OUT: u32 = 3;
 /// The config the next screen is loaded from.
 const NEXT_SCREEN: u32 = 0x81d548;
-/// Fade-out timers and start time (float, in the game's 1/1024 s ticks).
+/// The fade's start time (float, in the game's 1/1024 s ticks), and the camera's
+/// last three heights during it (set to 5 when it starts; it ends at 16, 16, 16).
 const FADE_TIMERS: [u32; 3] = [0x98d4c4, 0x98d4b8, 0x98d4bc];
 const FADE_START: u32 = 0x437864;
 const TICK_NOW: u32 = 0x8429dc;
+/// The camera's height (its position is 0x81d670..; the camera object 0x81d64c):
+/// 0 on a screen, 16 at the "LOADING" sign between screens (`skip_loading`).
+const CAMERA_Y: u32 = 0x81d674;
+/// Where the new screen's camera starts: the sign is out of view below about 12.2
+/// (and a screen's top edge comes into view at about 10.8).
+const ENTER_FROM: f32 = 12.0;
+/// Fade time (ticks of 2000) by which every screen tested has slid out of view.
+const SKIP_AT: f32 = 1450.0;
 /// Labels as the F3 handler writes them (0x437e60..), six letters each.
 const DIFFICULTIES: [(f32, &[u8; 6]); 3] = [(4.0, b"NORMAL"), (1.0, b"HARD  "), (8.0, b"EASY  ")];
 
@@ -78,6 +87,7 @@ enum Item {
     Sound,
     Resolution,
     Fullscreen,
+    SkipLoading,
     FrameTime,
     HighScores,
     Controls,
@@ -120,7 +130,7 @@ impl Overlay {
 
     fn items(&self) -> Vec<Item> {
         match self.page() {
-            Page::Main => vec![Item::Resume, Item::Difficulty, Item::Music, Item::Sound, Item::Resolution, Item::Fullscreen, Item::FrameTime, Item::HighScores, Item::Controls, Item::Quit],
+            Page::Main => vec![Item::Resume, Item::Difficulty, Item::Music, Item::Sound, Item::Resolution, Item::Fullscreen, Item::SkipLoading, Item::FrameTime, Item::HighScores, Item::Controls, Item::Quit],
             Page::Controls => (0..ACTIONS.len()).map(Item::Action).chain([Item::ResetControls, Item::Back]).collect(),
         }
     }
@@ -145,6 +155,7 @@ pub fn request(rt: &mut Runtime) {
 
 /// After every flip: run the overlay if it was requested.
 pub(crate) fn after_flip(rt: &mut Runtime, front: u32) {
+    skip_loading(rt);
     fix_difficulty_label(rt);
     if rt.overlay.open {
         run(rt, front);
@@ -273,7 +284,7 @@ fn input(rt: &mut Runtime, i: Input) {
         Nav::Close => o.open = false,
         Nav::Back if o.page() == Page::Controls => {
             o.page = Some(Page::Main);
-            o.sel = 8; // Controls
+            o.sel = 9; // Controls
         }
         Nav::Back => o.open = false,
         Nav::Left | Nav::Right if matches!(item, Item::Music | Item::Sound) => {
@@ -291,6 +302,10 @@ fn input(rt: &mut Runtime, i: Input) {
             crate::config::save_from(rt);
         }
         Nav::Left | Nav::Right | Nav::Select if item == Item::Fullscreen => set_fullscreen(rt, !rt.display.fullscreen),
+        Nav::Left | Nav::Right | Nav::Select if item == Item::SkipLoading => {
+            rt.display.skip_loading = !rt.display.skip_loading;
+            crate::config::save_from(rt);
+        }
         // As the game's Delete key does: flip the flag.
         Nav::Left | Nav::Right | Nav::Select if item == Item::FrameTime => rt.mem.w32(FRAME_TIME, (rt.mem.r32(FRAME_TIME) == 0) as u32),
         Nav::Left | Nav::Right if item == Item::Difficulty => {
@@ -326,7 +341,7 @@ fn input(rt: &mut Runtime, i: Input) {
             Item::ResetControls => set_bindings(rt, Bindings::default().inputs),
             Item::Back => {
                 o.page = Some(Page::Main);
-                o.sel = 8; // Controls
+                o.sel = 9; // Controls
             }
             _ => {}
         },
@@ -349,6 +364,56 @@ fn show_high_scores(rt: &mut Runtime) {
     }
     let now = rt.mem.r32(TICK_NOW) as f32;
     rt.mem.w32(FADE_START, now.to_bits());
+}
+
+/// Skip the loading screen (config `[display] skip_loading`), after every flip.
+///
+/// The game moves between screens with its camera: leaving a screen it raises the
+/// camera from height 0 to 16 over a 2000-tick fade (about 2 s, while the music
+/// fades), so the old screen slides out of view by about height 11 and a
+/// "LOADING" sign placed above it comes into view from about 13. At 16 it loads
+/// the next screen with the sign in view, then lowers the camera back to 0 by 0.2
+/// a frame, so the new screen slides in from above, past the sign. The runtime
+/// instead ends the fade at height 11.6 (1450 ticks: the old screen is gone), does
+/// not present the frames at 16 (`hide_loading_frame`), and starts the new screen's
+/// camera at 12.0 (past the sign, before any of the screen is in view), so it
+/// slides in without passing the sign. Game time is not skipped: the new screen
+/// then matches the original at every camera height, and the stars stay smooth.
+/// Not in scripted runs.
+fn skip_loading(rt: &mut Runtime) {
+    if !rt.display.skip_loading || rt.user.ignore_host_input {
+        return;
+    }
+    let f = |a: u32| f32::from_bits(rt.mem.r32(a));
+    let now = rt.mem.r32(TICK_NOW) as f32;
+    match rt.mem.r32(STATE) {
+        STATE_FADE_OUT if (SKIP_AT..2001.0).contains(&(now - f(FADE_START))) => {
+            rt.mem.w32(FADE_START, (now - 2001.0).to_bits());
+            // The game loads once the camera has been at 16 for three frames
+            // (FADE_TIMERS hold its last three heights); fill them so it loads on
+            // the next frame and fewer frames go unshown.
+            for a in FADE_TIMERS {
+                rt.mem.w32(a, 16.0f32.to_bits());
+            }
+        }
+        STATE_SCREEN if f(CAMERA_Y) >= 16.0 => {
+            rt.mem.w32(CAMERA_Y, ENTER_FROM.to_bits());
+            // Loading the screen took real time (about 0.3 s) that the original spends
+            // at the sign, followed by a burst of catch-up frames; here they would be
+            // on screen, so the backlog is forgiven instead.
+            if let Some(c) = rt.clock.cadence.as_mut() {
+                c.forgive_lag(std::time::Duration::ZERO);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Whether the frame about to be presented has the camera at the "LOADING" sign
+/// (the frames the next screen loads in, and the new screen's first): with
+/// `skip_loading`, the window keeps the previous frame instead.
+pub(crate) fn hide_loading_frame(rt: &Runtime) -> bool {
+    rt.display.skip_loading && !rt.user.ignore_host_input && f32::from_bits(rt.mem.r32(CAMERA_Y)) >= 16.0
 }
 
 /// Whether a screen is running (a menu, the high scores or gameplay), not a
@@ -642,6 +707,7 @@ fn render(rt: &Runtime, w: u32, h: u32) -> Vec<u8> {
                 ("RESOLUTION".to_string(), format!("< {r} >{mark}"), true)
             }
             Item::Fullscreen => ("FULLSCREEN".to_string(), format!("< {} >", if rt.display.fullscreen { "ON" } else { "OFF" }), true),
+            Item::SkipLoading => ("SKIP LOADING SCREEN".to_string(), format!("< {} >", if rt.display.skip_loading { "ON" } else { "OFF" }), true),
             Item::FrameTime => ("SHOW FPS".to_string(), format!("< {} >", if rt.mem.r32(FRAME_TIME) != 0 { "ON" } else { "OFF" }), true),
             Item::HighScores => ("HIGH SCORES".to_string(), String::new(), in_screen(rt)),
             Item::Controls => ("CONTROLS".to_string(), String::new(), true),

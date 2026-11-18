@@ -32,11 +32,14 @@ pub struct Display {
     /// The guest resolution (32 bpp); None: the largest 4:3 mode that fits the display.
     pub resolution: Option<(u32, u32)>,
     pub fullscreen: bool,
+    /// Go straight from one screen to the next, without the "LOADING" hold
+    /// (overlay.rs `skip_loading`).
+    pub skip_loading: bool,
 }
 
 impl Default for Display {
     fn default() -> Display {
-        Display { resolution: None, fullscreen: true }
+        Display { resolution: None, fullscreen: true, skip_loading: true }
     }
 }
 
@@ -55,7 +58,8 @@ const HEADER: &str = "\
 const DISPLAY: &str = "\
 # [display]: resolution is \"auto\" (the largest 4:3 mode that fits the display) or
 # \"WIDTHxHEIGHT\"; it takes effect when the game starts. --video-mode and
-# --windowed override these.
+# --windowed override these. skip_loading goes straight from one screen to the
+# next: the original holds an empty \"LOADING\" screen for most of a second.
 [display]
 ";
 
@@ -100,6 +104,7 @@ pub fn load(path: &Path) -> (Config, Vec<String>) {
     for (k, v) in table.get("display").and_then(|v| v.as_table()).into_iter().flatten() {
         match (k.as_str(), v) {
             ("fullscreen", toml::Value::Boolean(b)) => display.fullscreen = *b,
+            ("skip_loading", toml::Value::Boolean(b)) => display.skip_loading = *b,
             ("resolution", toml::Value::String(r)) if r == "auto" => display.resolution = None,
             ("resolution", toml::Value::String(r)) => match r.split_once('x').and_then(|(w, h)| Some((w.trim().parse().ok()?, h.trim().parse().ok()?))) {
                 Some((w, h)) if w >= 320 && h >= 240 => display.resolution = Some((w, h)),
@@ -126,7 +131,7 @@ pub fn save(c: &Config, path: &Path) -> std::io::Result<()> {
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
     }
-    let mut text = format!("{HEADER}\n{DISPLAY}resolution = \"{res}\"\nfullscreen = {}\n\n{BINDINGS}", c.display.fullscreen);
+    let mut text = format!("{HEADER}\n{DISPLAY}resolution = \"{res}\"\nfullscreen = {}\nskip_loading = {}\n\n{BINDINGS}", c.display.fullscreen, c.display.skip_loading);
     c.bindings.write(&mut text);
     text += &format!("\n{FIXES}difficulty_label = {}\n", c.fixes.difficulty_label);
     std::fs::write(path, text)
@@ -190,11 +195,11 @@ mod tests {
     fn settings_override_defaults_and_unknown_ones_are_reported() {
         let d = dir("edit");
         let path = d.join("config.toml");
-        std::fs::write(&path, "[display]\nresolution = \"1280x960\"\nfullscreen = false\n[fixes]\ndifficulty_label = false\nwings = true\n[bindings]\nstart = [\"Return\", \"Pad y\"]\nfly = [\"F9\"]\nexit = [\"Escape\", \"Nope\"]\n").unwrap();
+        std::fs::write(&path, "[display]\nresolution = \"1280x960\"\nfullscreen = false\nskip_loading = false\n[fixes]\ndifficulty_label = false\nwings = true\n[bindings]\nstart = [\"Return\", \"Pad y\"]\nfly = [\"F9\"]\nexit = [\"Escape\", \"Nope\"]\n").unwrap();
         let (mut c, warnings) = load(&path);
         assert_eq!(warnings.len(), 3, "{warnings:?}");
         assert!(!c.fixes.difficulty_label);
-        assert_eq!(c.display, Display { resolution: Some((1280, 960)), fullscreen: false });
+        assert_eq!(c.display, Display { resolution: Some((1280, 960)), fullscreen: false, skip_loading: false });
         assert_eq!(c.bindings.press(key("Return"), true, false), [(58, true, false)]);
         assert_eq!(c.bindings.press(key("F1"), true, false), [], "F1 no longer starts a game");
         assert_eq!(c.bindings.press(key("PageDown"), true, false), [(78, true, false)], "defaults kept");

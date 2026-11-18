@@ -59,7 +59,7 @@ pub(crate) fn before_flip(rt: &mut Runtime, _front: u32, _back: u32) {
 
 /// After `Flip`: show the new front buffer.
 pub(crate) fn after_flip(rt: &mut Runtime, front: u32) {
-    if backend(rt) {
+    if backend(rt) && !crate::overlay::hide_loading_frame(rt) {
         gpu::present(rt, front);
     }
     capture::maybe_capture(rt, front);
