@@ -342,7 +342,9 @@ fn bound_input(rt: &mut crate::Runtime, input: crate::bindings::Input, down: boo
 
 /// Translate pending SDL events into window messages.
 pub fn pump() {
-    if !with_rt(|rt| rt.user.sdl_ready && rt.user.window.is_some() && !rt.user.headless) {
+    // While the settings overlay is open it reads the events itself (overlay::tick);
+    // the paused game's input poll (GetAsyncKeyState) must not take them.
+    if !with_rt(|rt| rt.user.sdl_ready && rt.user.window.is_some() && !rt.user.headless && !rt.overlay.open) {
         return;
     }
     // SAFETY: SDL_Event is plain data; SDL fills it.
@@ -546,7 +548,11 @@ pub(crate) fn import(cpu: &mut Cpu, name: &str) -> bool {
         "PeekMessageA" => {
             let (pmsg, hwnd, lo, hi, remove) = (arg(cpu, 0), arg(cpu, 1), arg(cpu, 2), arg(cpu, 3), arg(cpu, 4));
             if hwnd != 0 || lo != 0 || hi != 0 { fatal("PeekMessageA with a filter is not emulated"); }
-            pump();
+            if with_rt(|rt| rt.overlay.open) {
+                with_rt(crate::overlay::tick);
+            } else {
+                pump();
+            }
             deliver_focus(cpu);
             crate::overlay::deliver(cpu);
             let m = with_rt(|rt| {

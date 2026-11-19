@@ -24,9 +24,7 @@ unsafe extern "C" fn pull(userdata: *mut c_void, stream: *mut SDL_AudioStream, a
     let t0 = std::time::Instant::now();
     if let Ok(mut m) = mixer.lock() {
         let waited = t0.elapsed();
-        if !m.paused {
-            m.render(&mut buf);
-        }
+        m.render(&mut buf);
         if m.output_muted {
             buf.fill(0.0);
         }

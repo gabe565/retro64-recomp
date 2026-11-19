@@ -111,7 +111,7 @@ pause = ["P", "Pad start"]
 
 The action names are `left`, `right`, `up`, `down`, `fire`, `start`, `high_scores`, `difficulty`, `pause`, `exit`, `music_up`, `music_down`, `sound_up`, `sound_down`, `screenshot` and `frame_time`. The settings overlay's Controls page edits them too.
 
-**Settings overlay (F10 or controller Back, rebindable as `settings`):** freezes the game and its sound until closed. It changes the difficulty and the music and sound volumes on any screen, sets the resolution (from the next start) and fullscreen, shows the game's FPS counter, skips the "LOADING" screen between screens (on by default), swaps the title logo for the free version's plain "BUGATRON" (recreated from the Gold logo), opens the high scores (from any screen; a game in progress ends, unrecorded), quits, and edits the key and button bindings, saving them to `config.toml`.
+**Settings overlay (F10 or controller Back, rebindable as `settings`):** pauses the game as P does, with the music still playing, so volume changes can be heard. It changes the difficulty and the music and sound volumes on any screen, sets the resolution (from the next start) and fullscreen, shows the game's FPS counter, skips the "LOADING" screen between screens (on by default), swaps the title logo for the free version's plain "BUGATRON" (recreated from the Gold logo), opens the high scores (from any screen; a game in progress ends, unrecorded), quits, and edits the key and button bindings, saving them to `config.toml`.
 
 ### Single-file build for testing
 

@@ -1,9 +1,11 @@
 //! The settings overlay: a menu drawn by the runtime over the game, opened with
 //! the "Open settings" binding (F10 or a controller's Back button by default).
 //!
-//! While it is open the game is frozen: the guest thread stays inside the `Flip`
-//! that presented the last frame (`run`), so no virtual time passes, and the
-//! audio mixer is paused. Closing it resumes exactly where the game stopped.
+//! While it is open the game is paused with its own pause (the P key's flag,
+//! 0x8429c8, restored on close): it stops updating and drawing, and the music plays
+//! on, so volume changes can be heard as they are made. A paused game still calls
+//! `PeekMessageA` in a loop, which runs the overlay (`tick`): input, then the overlay
+//! drawn over the last frame, then a refresh's wait.
 //!
 //! The difficulty is set directly (0x4370e4, read by gameplay every frame), and the
 //! title screen's "F3: DIFFICULTY - NORMAL" text is updated as the game's own F3
@@ -59,6 +61,10 @@ const CAMERA_Y: u32 = 0x81d674;
 const ENTER_FROM: f32 = 12.0;
 /// Fade time (ticks of 2000) by which every screen tested has slid out of view.
 const SKIP_AT: f32 = 1450.0;
+/// Nonzero while the game is paused (its P key, 0x4122f7): the main loop's frame
+/// function returns at once (0x40ba8c), so nothing updates or is drawn; the music
+/// plays on.
+const PAUSED: u32 = 0x8429c8;
 /// Labels as the F3 handler writes them (0x437e60..), six letters each.
 const DIFFICULTIES: [(f32, &[u8; 6]); 3] = [(4.0, b"NORMAL"), (1.0, b"HARD  "), (8.0, b"EASY  ")];
 
@@ -120,6 +126,12 @@ pub struct Overlay {
     capture: bool,
     /// The volumes changed: apply them through the game once it resumes.
     apply_volumes: bool,
+    /// The game's pause flag before the overlay opened.
+    was_paused: bool,
+    /// The last frame shown, which the overlay is drawn over.
+    last_front: Option<u32>,
+    /// The overlay as drawn (RGBA8, the frame's size).
+    image: Vec<u8>,
     font: Option<HashMap<char, [u8; 256]>>,
     dirty: bool,
 }
@@ -149,18 +161,33 @@ fn current_difficulty(rt: &Runtime) -> usize {
 
 /// Ask for the overlay at the next flip (F10 or controller Back, from `user::pump`).
 pub fn request(rt: &mut Runtime) {
-    if !rt.user.headless && !rt.user.ignore_host_input && rt.gpu.is_some() {
-        rt.overlay.open = true;
+    if rt.overlay.open || rt.user.headless || rt.user.ignore_host_input || rt.gpu.is_none() || rt.overlay.last_front.is_none() {
+        return;
     }
+    // Release whatever the player was holding, so nothing sticks while paused.
+    for (sc, down, repeat) in rt.user.bindings.release_all() {
+        crate::user::key_input_rt(rt, sc, down, repeat, false);
+    }
+    if rt.overlay.font.is_none() {
+        rt.overlay.font = Some(load_font(rt));
+    }
+    // The game's own pause (its P key): it stops updating and drawing; the music plays on.
+    rt.overlay.was_paused = rt.mem.r32(PAUSED) != 0;
+    rt.mem.w32(PAUSED, 1);
+    let o = &mut rt.overlay;
+    o.open = true;
+    o.page = Some(Page::Main);
+    o.sel = 0;
+    o.capture = false;
+    o.dirty = true;
+    o.image.clear();
 }
 
 /// After every flip: run the overlay if it was requested.
 pub(crate) fn after_flip(rt: &mut Runtime, front: u32) {
+    rt.overlay.last_front = Some(front);
     skip_loading(rt);
     fix_difficulty_label(rt);
-    if rt.overlay.open {
-        run(rt, front);
-    }
 }
 
 /// From `PeekMessageA`, where game code may run: apply volumes changed in the
@@ -173,36 +200,37 @@ pub(crate) fn deliver(cpu: &mut crate::Cpu) {
     }
 }
 
-/// The overlay's modal loop: show it over frame `front` until it is closed.
-fn run(rt: &mut Runtime, front: u32) {
-    // Release whatever the player was holding, so nothing sticks while frozen.
-    for (sc, down, repeat) in rt.user.bindings.release_all() {
-        crate::user::key_input_rt(rt, sc, down, repeat, false);
-    }
-    rt.fmod.mixer().paused = true;
-    if rt.overlay.font.is_none() {
-        rt.overlay.font = Some(load_font(rt));
-    }
-    let o = &mut rt.overlay;
-    o.page = Some(Page::Main);
-    o.sel = 0;
-    o.capture = false;
-    o.dirty = true;
-    let (w, h) = { let s = rt.com.surface(front); (s.w, s.h) };
-    let mut image = Vec::new();
-    while rt.overlay.open {
-        poll_events(rt);
-        let changed = std::mem::take(&mut rt.overlay.dirty);
-        if changed || image.len() != (w * h * 4) as usize {
-            image = render(rt, w, h);
+/// From `PeekMessageA` while the overlay is open (the game is paused and calls it in
+/// a loop): handle input, draw the overlay over the last frame, and wait a refresh.
+pub(crate) fn tick(rt: &mut Runtime) {
+    poll_events(rt);
+    let Some(front) = rt.overlay.last_front else { return close(rt) };
+    if rt.overlay.open {
+        let (w, h) = { let s = rt.com.surface(front); (s.w, s.h) };
+        let changed = std::mem::take(&mut rt.overlay.dirty) || rt.overlay.image.len() != (w * h * 4) as usize;
+        if changed {
+            rt.overlay.image = render(rt, w, h);
         }
+        let image = std::mem::take(&mut rt.overlay.image);
         crate::render::gpu::present_overlay(rt, front, &image, changed);
+        rt.overlay.image = image;
         std::thread::sleep(std::time::Duration::from_millis(16));
     }
-    rt.fmod.mixer().paused = false;
-    // No catch-up burst: the frozen time is not owed to the simulation.
+    if !rt.overlay.open {
+        close(rt);
+    }
+}
+
+/// The overlay closed: restore the game's pause as it was, and show the game again.
+fn close(rt: &mut Runtime) {
+    rt.overlay.open = false;
+    rt.mem.w32(PAUSED, rt.overlay.was_paused as u32);
+    // The time spent in the menu is not owed to the simulation (no catch-up burst).
     if let Some(c) = rt.clock.cadence.as_mut() {
         c.forgive_lag(std::time::Duration::ZERO);
+    }
+    if let Some(front) = rt.overlay.last_front {
+        crate::render::gpu::present(rt, front);
     }
 }
 
