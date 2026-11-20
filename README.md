@@ -160,7 +160,7 @@ Comparisons against the original game use Frida in a Windows VM; see `tools/frid
 | `crates/recomp` | The static recompiler: x86 → C |
 | `crates/runtime` | The portable runtime: memory model, Win32, DirectDraw/Direct3D on SDL3 GPU, FMOD on SDL3 audio and libxmp |
 | `crates/game` | The `bugatron` program: translates `Bug3D.exe` at build time and runs it, with Bugatron's profile (keys, addresses) |
-| `crates/zball` | The `zball` program, the same for Z-Ball Gold's `Z-Ball.exe` (early: runs and plays; no settings overlay yet) |
+| `crates/zball` | The `zball` program, the same for Z-Ball Gold's `Z-Ball.exe` (its settings overlay has no high scores or loading-screen skip yet) |
 | `crates/launcher`, `crates/build`, `crates/unpack` | Shared by the game programs: the command line, the build-time translation, reading installers and zips |
 | `crates/runtime-tests`, `crates/x86-*` | Runtime tests and the x86 semantics suite, with its hardware oracle |
 | `crates/xmp-sys`, `third_party/libxmp-lite` | XM music playback (vendored libxmp-lite, MIT) |

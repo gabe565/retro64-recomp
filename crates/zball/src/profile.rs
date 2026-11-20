@@ -1,21 +1,26 @@
 //! Z-Ball Gold's profile for the runtime (bugatron_runtime::game). Z-Ball runs on
-//! the same engine as Bugatron, but its addresses differ and are not yet mapped:
-//! until they are, the profile has its keys only, and the settings overlay, which
-//! needs the game's pause flag, is not available.
+//! an earlier version of Bugatron's engine: the same key table, pause, volume and
+//! text code at other addresses, found by matching it with Bugatron's.
+//!
+//! Its screens are a linked list (current screen 0x721b68) rather than Bugatron's
+//! fade-out and loading states, so the runtime's screen features (high scores from
+//! the overlay, skipping the loading screen) are not available for it.
 
 use bugatron_runtime::bindings::{sc, Action};
-use bugatron_runtime::game::Game;
+use bugatron_runtime::game::{Difficulty, Font, Game, Volumes};
 
 pub const ZBALL: Game = Game {
     name: "Z-Ball",
     exe_name: "Z-Ball.exe",
     install_dir: "C:\\Z-Ball",
     save_folder: "zball",
-    // The keyboard controls in its README and on its title screen. The paddle, on
-    // the right edge, follows the mouse vertically; Up and Down move it too.
+    // The keys the input poll reads (table 0x437bb8, as Bugatron's 0x437f9c less
+    // Space; flags at 0x743258..). The paddle, on the right edge, follows the mouse
+    // vertically; Up and Down move it too. Left and Right are read but do nothing.
     actions: &[
         Action { id: "up", label: "Move up", key: sc::UP, defaults: &["Up"] },
         Action { id: "down", label: "Move down", key: sc::DOWN, defaults: &["Down"] },
+        Action { id: "launch", label: "Launch ball", key: sc::LCTRL, defaults: &["Left Ctrl", "Right Ctrl"] },
         Action { id: "start", label: "Start game", key: sc::F1, defaults: &["F1"] },
         Action { id: "high_scores", label: "High scores", key: sc::F2, defaults: &["F2"] },
         Action { id: "difficulty", label: "Difficulty", key: sc::F3, defaults: &["F3"] },
@@ -26,6 +31,32 @@ pub const ZBALL: Game = Game {
         Action { id: "sound_up", label: "Sound volume up", key: sc::HOME, defaults: &["Home", "]"] },
         Action { id: "sound_down", label: "Sound volume down", key: sc::END, defaults: &["End", "["] },
         Action { id: "screenshot", label: "Screenshot", key: sc::F12, defaults: &["F12"] },
+        Action { id: "frame_time", label: "Show FPS", key: sc::F11, defaults: &["F11"] },
     ],
-    ..Game::NONE
+    bindings_note: "",
+    // The title font, as Bugatron's ('/' and ':' are named "^" and "`").
+    font: Some(Font { pattern: "Fonts\\nj{}.bmp", renamed: &[('/', "^"), (':', "`")] }),
+    // The P key's flag: the frame function (0x40f050) returns at once, so nothing
+    // updates or is drawn; the music plays on.
+    pause: Some(0x756958),
+    screens: None,
+    // F3 (0x40dee0, in 0x40de40) cycles Normal → Hard → Easy: the ball speed 0x4370f0 is the
+    // base 0x4370ec (0.0095) times 1, 1.5 (0x4352dc) or 0.66 (0x4353d8), the
+    // float products below. It copies the name to 0x8a1090, which the title
+    // screen's "F2 ... F3: DIFFICULTY - NORMAL" line shows (rewritten every frame,
+    // so unlike Bugatron's it stays right).
+    difficulty: Some(Difficulty {
+        value: 0x4370f0,
+        levels: &[(f32::from_bits(0x3c1ba5e3), "NORMAL"), (f32::from_bits(0x3c6978d4), "HARD"), (f32::from_bits(0x3bcd7493), "EASY")],
+        labels: &[b"NORMAL", b"HARD  ", b"EASY  "],
+        label_string: Some(0x8a1090),
+        title_label: None,
+    }),
+    // Defaults 55 and 80, changed in steps of 10 (1..=100) by Page Up/Down and
+    // Home/End (in the screen function 0x40de40), each change applied by
+    // 0x4160b0(music, sound, 0) while sound is on.
+    volumes: Some(Volumes { music: 0x4370b8, sound: 0x4370bc, apply: 0x4160b0, music_offset: 0, sound_on: 0x437e40 }),
+    // Toggled by F11: FPS, polygons, and logic and render times in milliseconds.
+    fps_flag: Some(0x756924),
+    logo: None,
 };
