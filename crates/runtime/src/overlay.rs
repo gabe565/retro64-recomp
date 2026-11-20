@@ -35,6 +35,8 @@ const LETTER_COUNT: u32 = 0x55b9c;
 /// steps of 10 by Page Up/Down and Home/End (0x413377..), each change applied by
 /// `APPLY_VOLUMES(music - 1, sound, 0)` (cdecl floats) while sound is on (`SOUND_ON`).
 const MUSIC_VOLUME: u32 = 0x4370a8;
+/// The overlay's volume step (finer than the game's 10).
+const VOLUME_STEP: i32 = 5;
 const SOUND_VOLUME: u32 = 0x4370ac;
 const APPLY_VOLUMES: u32 = 0x417210;
 const SOUND_ON: u32 = 0x438144;
@@ -319,7 +321,8 @@ fn input(rt: &mut Runtime, i: Input) {
         Nav::Left | Nav::Right if matches!(item, Item::Music | Item::Sound) => {
             let at = if item == Item::Music { MUSIC_VOLUME } else { SOUND_VOLUME };
             let v = rt.mem.r32(at) as i32;
-            let v = if matches!(n, Nav::Right) { (v / 10 + 1) * 10 } else { (v + 9) / 10 * 10 - 10 };
+            // To the next multiple of VOLUME_STEP up or down (the game's keys step by 10).
+            let v = if matches!(n, Nav::Right) { (v / VOLUME_STEP + 1) * VOLUME_STEP } else { (v + VOLUME_STEP - 1) / VOLUME_STEP * VOLUME_STEP - VOLUME_STEP };
             rt.mem.w32(at, v.clamp(0, 100) as u32);
             rt.overlay.apply_volumes = true;
         }
