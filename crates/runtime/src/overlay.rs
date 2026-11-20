@@ -524,6 +524,12 @@ fn set_fullscreen(rt: &mut Runtime, on: bool) {
     crate::config::save_from(rt);
 }
 
+/// A volume as the overlay shows it: the game's keys go down to 1, not 0, which
+/// is silent (the music is applied as volume − 1), so 1 shows as 0.
+fn shown_volume(v: u32) -> u32 {
+    if v <= 1 { 0 } else { v }
+}
+
 /// Change the bindings and save them to `config.toml`.
 fn set_bindings(rt: &mut Runtime, inputs: Vec<Vec<Input>>) {
     rt.user.bindings.set(inputs);
@@ -734,8 +740,8 @@ fn render(rt: &Runtime, w: u32, h: u32) -> Vec<u8> {
                 let name = String::from_utf8_lossy(DIFFICULTIES[current_difficulty(rt)].1).trim().to_string();
                 ("DIFFICULTY".to_string(), format!("< {name} >"), true)
             }
-            Item::Music => ("MUSIC VOLUME".to_string(), format!("< {} >", rt.mem.r32(MUSIC_VOLUME)), true),
-            Item::Sound => ("SOUND VOLUME".to_string(), format!("< {} >", rt.mem.r32(SOUND_VOLUME)), true),
+            Item::Music => ("MUSIC VOLUME".to_string(), format!("< {} >", shown_volume(rt.mem.r32(MUSIC_VOLUME))), true),
+            Item::Sound => ("SOUND VOLUME".to_string(), format!("< {} >", shown_volume(rt.mem.r32(SOUND_VOLUME))), true),
             Item::Resolution => {
                 let r = rt.display.resolution.map_or("AUTO".to_string(), |(rw, rh)| format!("{rw}X{rh}"));
                 // Takes effect at the next start: mark a choice that differs from now.
