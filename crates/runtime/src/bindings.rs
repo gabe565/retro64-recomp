@@ -34,6 +34,7 @@ pub mod sc {
     pub const F1: i32 = 58;
     pub const F2: i32 = 59;
     pub const F3: i32 = 60;
+    pub const F11: i32 = 68;
     pub const F12: i32 = 69;
     pub const INSERT: i32 = 73;
     pub const HOME: i32 = 74;

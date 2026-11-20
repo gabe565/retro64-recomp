@@ -272,13 +272,14 @@ mod tests {
         difficulty: Some(Difficulty {
             value: 0,
             levels: &[(4.0, "NORMAL")],
+            labels: &[b"NORMAL"],
+            label_string: None,
             title_label: Some(TitleLabel {
                 title_menu: 0,
                 text_list: 0,
                 letter_size: 164,
                 letter_count: 0,
                 starts_with: *b"F2",
-                labels: &[b"NORMAL"],
                 fix_comment: "The title shows the difficulty actually set.",
             }),
         }),

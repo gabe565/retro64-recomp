@@ -77,7 +77,14 @@ pub struct Difficulty {
     /// (value, name shown in the overlay).
     pub value: u32,
     pub levels: &'static [(f32, &'static str)],
-    /// The title screen's text naming the difficulty, if it has one.
+    /// The level names as the game writes them on its title screen (one per
+    /// level, in `levels` order; equal lengths).
+    pub labels: &'static [&'static [u8]],
+    /// Where the game keeps the current label as a string (NUL-terminated), which
+    /// it copies onto the title screen itself (Z-Ball).
+    pub label_string: Option<u32>,
+    /// The title screen's text naming the difficulty, which only the game's
+    /// difficulty key updates (Bugatron).
     pub title_label: Option<TitleLabel>,
 }
 
@@ -92,10 +99,8 @@ pub struct TitleLabel {
     /// count's offset in a text object.
     pub letter_size: u32,
     pub letter_count: u32,
-    /// The text object's first two letters, and the labels as the game writes them
-    /// (one per difficulty level, in `Difficulty::levels` order; equal lengths).
+    /// The text object's first two letters (its last letters are the label).
     pub starts_with: [u8; 2],
-    pub labels: &'static [&'static [u8]],
     /// The `config.toml` comment of the fix (`[fixes] difficulty_label`): what the
     /// original shows instead.
     pub fix_comment: &'static str,
@@ -105,9 +110,10 @@ pub struct TitleLabel {
 pub struct Volumes {
     pub music: u32,
     pub sound: u32,
-    /// The game's function that applies them: `apply(music - 1, sound, 0)`, cdecl
-    /// floats, called only while sound is on (`sound_on` nonzero).
+    /// The game's function that applies them: `apply(music + music_offset, sound,
+    /// 0)`, cdecl floats, called only while sound is on (`sound_on` nonzero).
     pub apply: u32,
+    pub music_offset: i32,
     pub sound_on: u32,
 }
 

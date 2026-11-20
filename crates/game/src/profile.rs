@@ -61,6 +61,8 @@ pub const BUGATRON: Game = Game {
     difficulty: Some(Difficulty {
         value: 0x4370e4,
         levels: &[(4.0, "NORMAL"), (1.0, "HARD"), (8.0, "EASY")],
+        labels: &[b"NORMAL", b"HARD  ", b"EASY  "],
+        label_string: None,
         title_label: Some(TitleLabel {
             title_menu: 0x8429d0,
             text_list: 0x84223c,
@@ -68,13 +70,13 @@ pub const BUGATRON: Game = Game {
             letter_count: 0x55b9c,
             // The title's second line, "F2: ... F3: DIFFICULTY - NORMAL".
             starts_with: *b"F2",
-            labels: &[b"NORMAL", b"HARD  ", b"EASY  "],
             fix_comment: "The title screen shows the difficulty actually set. The original says NORMAL again whenever \
                           the title is rebuilt (after a game or the high scores), whatever the difficulty.",
         }),
     }),
     // Defaults 90 and 25, changed in steps of 10 by Page Up/Down and Home/End (0x413377..).
-    volumes: Some(Volumes { music: 0x4370a8, sound: 0x4370ac, apply: 0x417210, sound_on: 0x438144 }),
+    // The music is applied as volume - 1, so 1 is silent.
+    volumes: Some(Volumes { music: 0x4370a8, sound: 0x4370ac, apply: 0x417210, music_offset: -1, sound_on: 0x438144 }),
     // Toggled by Delete (0x412df8): FPS and render and logic times in milliseconds.
     fps_flag: Some(0x8429b8),
     logo: Some(Logo {

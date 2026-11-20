@@ -181,10 +181,10 @@ pub(crate) fn deliver(cpu: &mut crate::Cpu) {
     let apply = crate::with_rt(|rt| {
         let v = rt.game.volumes.as_ref()?;
         (std::mem::take(&mut rt.overlay.apply_volumes) && rt.mem.r32(v.sound_on) != 0)
-            .then(|| (v.apply, rt.mem.r32(v.music) as i32, rt.mem.r32(v.sound) as i32))
+            .then(|| (v.apply, rt.mem.r32(v.music) as i32 + v.music_offset, rt.mem.r32(v.sound) as i32))
     });
     if let Some((apply, music, sound)) = apply {
-        crate::call_guest(cpu, apply, &[((music - 1) as f32).to_bits(), (sound as f32).to_bits(), 0]);
+        crate::call_guest(cpu, apply, &[(music as f32).to_bits(), (sound as f32).to_bits(), 0]);
     }
 }
 
@@ -448,10 +448,16 @@ fn in_screen(rt: &Runtime) -> bool {
     rt.game.screens.as_ref().is_some_and(|s| rt.mem.r32(s.state) == s.running)
 }
 
-/// Set the difficulty and the title screen's label.
+/// Set the difficulty and the title screen's label, as the game's difficulty key
+/// does.
 fn set_difficulty(rt: &mut Runtime, level: usize) {
     let Some(d) = &rt.game.difficulty else { return };
     rt.mem.w32(d.value, d.levels[level].0.to_bits());
+    if let (Some(at), Some(label)) = (d.label_string, d.labels.get(level)) {
+        for (i, &c) in label.iter().chain([&0]).enumerate() {
+            rt.mem.w8(at + i as u32, c);
+        }
+    }
     write_difficulty_label(rt, level);
 }
 
@@ -472,8 +478,8 @@ pub(crate) fn fix_difficulty_label(rt: &mut Runtime) {
 /// (for Bugatron, 0x413143): the last letters of every text object that starts
 /// with `starts_with` and ends in one of the labels.
 fn write_difficulty_label(rt: &mut Runtime, level: usize) {
-    let Some(t) = rt.game.difficulty.as_ref().and_then(|d| d.title_label.as_ref()) else { return };
-    let Some(label) = t.labels.get(level) else { return };
+    let Some(d) = &rt.game.difficulty else { return };
+    let (Some(t), Some(label)) = (&d.title_label, d.labels.get(level)) else { return };
     let len = label.len() as u32;
     let mut obj = rt.mem.r32(t.text_list);
     while obj != 0 {
@@ -481,7 +487,7 @@ fn write_difficulty_label(rt: &mut Runtime, level: usize) {
             let n = rt.mem.r32(obj + t.letter_count);
             // Letters are numbered from 1: the label is letters n + 1 - len ..= n.
             let at = |k: u32| obj + t.letter_size * (n + 1 - len + k);
-            if (len + 2..1000).contains(&n) && t.labels.iter().any(|l| (0..len).all(|k| rt.mem.r8(at(k)) == l[k as usize])) {
+            if (len + 2..1000).contains(&n) && d.labels.iter().any(|l| (0..len).all(|k| rt.mem.r8(at(k)) == l[k as usize])) {
                 for (k, &c) in label.iter().enumerate() {
                     rt.mem.w8(at(k as u32), c);
                 }
