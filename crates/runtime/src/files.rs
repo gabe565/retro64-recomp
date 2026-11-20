@@ -1,6 +1,6 @@
 //! Win32 file handles over the host file system.
 //!
-//! Guest paths (relative, or under `C:\Bugatron\`) resolve case-insensitively
+//! Guest paths (relative, or under the install folder, `Files::install_dir`) resolve case-insensitively
 //! against two directories:
 //! - `save_dir`: files the game creates or modifies (prefs, high scores);
 //! - `data_dir`: the user's original game files, opened read-only.
@@ -21,7 +21,9 @@ pub const INVALID_HANDLE_VALUE: u32 = 0xffff_ffff;
 pub const ERROR_FILE_NOT_FOUND: u32 = 2;
 pub const ERROR_PATH_NOT_FOUND: u32 = 3;
 /// Guest path of the game directory.
-pub const GAME_DIR: &str = "C:\\Bugatron";
+/// The folder the game sees itself installed in, unless its profile says otherwise
+/// (`Files::install_dir`).
+pub const GAME_DIR: &str = "C:\\Game";
 pub const ERROR_ACCESS_DENIED: u32 = 5;
 pub const ERROR_FILE_EXISTS: u32 = 80;
 
@@ -49,7 +51,7 @@ pub fn default_save_dir() -> Option<PathBuf> {
 pub type Pack = &'static [(&'static str, &'static [u8])];
 
 /// A runtime edit of a game file's bytes (None: not the expected file).
-type Edit = fn(&[u8]) -> Option<Vec<u8>>;
+pub type Edit = fn(&[u8]) -> Option<Vec<u8>>;
 
 enum Handle {
     Disk(File),
@@ -63,10 +65,12 @@ enum DataFile {
     Pack(&'static [u8]),
 }
 
-#[derive(Default)]
 pub struct Files {
-    /// Serve the title logo without "GOLD" (config `[display] logo`).
-    pub plain_logo: bool,
+    /// The folder the game sees itself installed in (its profile's `install_dir`).
+    pub install_dir: &'static str,
+    /// An edit applied to one game file when the game reads it: (path components,
+    /// edit). Set while an alternative asset is chosen (the title logo).
+    pub edit: Option<(&'static [&'static str], Edit)>,
     pub data_dir: PathBuf,
     /// Game files built into the program; used instead of `data_dir` when set.
     pub pack: Option<Pack>,
@@ -77,6 +81,22 @@ pub struct Files {
     pub cwd: GuestPath,
     /// Open FindFirstFile searches: handle → remaining entries.
     searches: HashMap<u32, Vec<FindEntry>>,
+}
+
+impl Default for Files {
+    fn default() -> Files {
+        Files {
+            install_dir: GAME_DIR,
+            edit: None,
+            data_dir: PathBuf::new(),
+            pack: None,
+            save_dir: PathBuf::new(),
+            open: HashMap::new(),
+            next: 0,
+            cwd: GuestPath::default(),
+            searches: HashMap::new(),
+        }
+    }
 }
 
 /// One `WIN32_FIND_DATAA` result.
@@ -104,17 +124,17 @@ pub fn wildcard_match(pattern: &str, name: &str) -> bool {
 }
 
 /// A path relative to the game directory, as components. Windows path rules (both
-/// separators, `.`, `..`, the current directory, the `C:\\Bugatron` prefix) are
+/// separators, `.`, `..`, the current directory, the install folder prefix) are
 /// applied once, by [`GuestPath::parse`]; host paths are then built per component.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct GuestPath(Vec<String>);
 
 impl GuestPath {
     /// Resolve `name` against `cwd`. Paths outside the game directory are rejected.
-    pub fn parse(cwd: &GuestPath, name: &str) -> Result<GuestPath, String> {
+    pub fn parse(install_dir: &str, cwd: &GuestPath, name: &str) -> Result<GuestPath, String> {
         let n = name.replace('/', "\\");
         let lower = n.to_ascii_lowercase();
-        let game = GAME_DIR.to_ascii_lowercase();
+        let game = install_dir.to_ascii_lowercase();
         let (mut parts, rest): (Vec<String>, &str) = if lower == game {
             (Vec::new(), "")
         } else if lower.starts_with(&(game.clone() + "\\")) {
@@ -269,15 +289,14 @@ impl Files {
     }
 
     /// CreateFileA. Returns a handle or a Win32 error code.
-    /// A runtime edit of a game file read at `rel`: the plain "BUGATRON" title logo
-    /// (`plain_logo`; assets.rs).
+    /// The runtime edit of the game file read at `rel`, if any (`edit`).
     fn substitute(&self, rel: &[String]) -> Option<Edit> {
-        let is = |want: &[&str]| rel.len() == want.len() && rel.iter().zip(want).all(|(a, b)| a.eq_ignore_ascii_case(b));
-        (self.plain_logo && is(&["m", "junk2.bmp"])).then_some(crate::assets::plain_logo as Edit)
+        let (want, edit) = self.edit?;
+        (rel.len() == want.len() && rel.iter().zip(want).all(|(a, b)| a.eq_ignore_ascii_case(b))).then_some(edit)
     }
 
     pub fn create(&mut self, name: &str, access: u32, disposition: u32) -> Result<u32, u32> {
-        let rel = GuestPath::parse(&self.cwd, name).map_err(|e| {
+        let rel = GuestPath::parse(self.install_dir, &self.cwd, name).map_err(|e| {
             eprintln!("[files] {e}");
             ERROR_ACCESS_DENIED
         })?;
@@ -343,7 +362,7 @@ impl Files {
 
     /// SetCurrentDirectoryA: the directory must exist in the game or save directory.
     pub fn set_cwd(&mut self, path: &str) -> Result<(), u32> {
-        let rel = GuestPath::parse(&self.cwd, path).map_err(|_| ERROR_PATH_NOT_FOUND)?;
+        let rel = GuestPath::parse(self.install_dir, &self.cwd, path).map_err(|_| ERROR_PATH_NOT_FOUND)?;
         let in_save = resolve_ci(&self.save_dir, rel.parts()).is_some_and(|p| p.is_dir());
         if !self.data_dir_exists(rel.parts()) && !in_save {
             return Err(ERROR_PATH_NOT_FOUND);
@@ -354,13 +373,14 @@ impl Files {
 
     /// The guest current directory as an absolute guest path.
     pub fn cwd_path(&self) -> String {
-        if self.cwd.parts().is_empty() { GAME_DIR.to_string() } else { format!("{GAME_DIR}\\{}", self.cwd.to_windows()) }
+        let dir = self.install_dir;
+        if self.cwd.parts().is_empty() { dir.to_string() } else { format!("{dir}\\{}", self.cwd.to_windows()) }
     }
 
     /// FindFirstFileA: entries of the game and save directories matching the
     /// pattern's file part, in NTFS order (case-insensitive). Returns a search handle.
     pub fn find_first(&mut self, pattern: &str) -> Result<(u32, FindEntry), u32> {
-        let rel = GuestPath::parse(&self.cwd, pattern).map_err(|_| ERROR_PATH_NOT_FOUND)?;
+        let rel = GuestPath::parse(self.install_dir, &self.cwd, pattern).map_err(|_| ERROR_PATH_NOT_FOUND)?;
         let (dir, pat) = rel.split_last();
         let mut found: Vec<FindEntry> = Vec::new();
         let mut any_dir = false;

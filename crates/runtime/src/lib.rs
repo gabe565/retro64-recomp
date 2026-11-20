@@ -1,4 +1,4 @@
-//! Portable runtime for statically recompiled Bugatron code.
+//! Portable runtime for statically recompiled Retro64 games (Bugatron first).
 //!
 //! Responsibilities (proof-of-concept scope):
 //! - reserve the 4 GiB guest address space and load the user's executable at
@@ -15,7 +15,6 @@
 // its live `Cpu` pointer; they cannot be `unsafe fn` and remain FFI-safe.
 #![allow(clippy::not_unsafe_ptr_arg_deref)]
 
-pub mod assets;
 pub mod audio;
 pub mod bindings;
 pub mod clock;
@@ -25,6 +24,7 @@ pub mod ddraw;
 pub mod dialog;
 pub mod display;
 pub mod files;
+pub mod game;
 pub mod gamepad;
 pub mod input_script;
 pub mod fmod;
@@ -129,6 +129,8 @@ pub struct Runtime {
     pub audio_record_path: Option<std::path::PathBuf>,
     /// Called after every Flip with the flip count (diagnostics, scripted input).
     pub frame_hook: Option<Box<dyn FnMut(&mut Runtime, u64)>>,
+    /// The game being run: its names, keys and addresses (game.rs; `set_game`).
+    pub game: &'static game::Game,
     /// The settings overlay (overlay.rs).
     pub overlay: overlay::Overlay,
     /// Fixes for bugs in the original (config.toml `[fixes]`).
@@ -210,7 +212,7 @@ impl Runtime {
             clock: Clock { qpc_frequency: 24_000_000, monitor_frequency: 60, ..Default::default() },
             diag: Diagnostics::default(),
             command_line: 0,
-            module_path: "C:\\Bugatron\\Bug3D.exe".into(),
+            module_path: String::new(),
             files: Default::default(),
             env_block: 0,
             exit_hook: None,
@@ -225,15 +227,26 @@ impl Runtime {
             capture_frames: Vec::new(),
             capture_dir: std::path::PathBuf::from("."),
             frame_hook: None,
+            game: &game::Game::NONE,
             overlay: Default::default(),
             fixes: Default::default(),
             display: Default::default(),
             video_mode: None,
             audio_record_path: None,
         };
-        rt.command_line = rt.alloc_cstr("\"C:\\Bugatron\\Bug3D.exe\"");
+        rt.set_game(&game::Game::NONE);
         rt.env_block = rt.heap_alloc(16, true);
         Ok(rt)
+    }
+
+    /// Run as `game`: its install path and command line, its keys (with their
+    /// default bindings) and the features its profile supports.
+    pub fn set_game(&mut self, game: &'static game::Game) {
+        self.game = game;
+        self.module_path = format!("{}\\{}", game.install_dir, game.exe_name);
+        self.command_line = self.alloc_cstr(&format!("\"{}\"", self.module_path));
+        self.files.install_dir = game.install_dir;
+        self.user.bindings = bindings::Bindings::new(game.actions);
     }
 
     /// A runtime with no executable image: guest memory, stack, TEB and heap only.
@@ -272,6 +285,7 @@ impl Runtime {
             capture_frames: Vec::new(),
             capture_dir: std::path::PathBuf::from("."),
             frame_hook: None,
+            game: &game::Game::NONE,
             overlay: Default::default(),
             fixes: Default::default(),
             display: Default::default(),

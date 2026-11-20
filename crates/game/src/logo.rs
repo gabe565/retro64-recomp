@@ -1,5 +1,5 @@
-//! Runtime edits of original game assets, made in memory when the game reads them
-//! (files.rs `substitute`); the files themselves are never changed.
+//! The title logo without "GOLD", made in memory when the game reads its logo
+//! (the runtime's `Files::edit`); the file itself is never changed.
 
 /// The title logo without "GOLD", from Gold's `m/junk2.bmp` (512×512, 24-bit): the
 /// "BUGATRON" lettering is stretched to rows 43–466 (of 512), where the free

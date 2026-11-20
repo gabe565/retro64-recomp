@@ -10,6 +10,8 @@
 //! folder, `bugatron_runtime::files::default_save_dir`);
 //! the game directory is only read.
 
+mod logo;
+mod profile;
 mod source;
 mod unpack;
 
@@ -171,6 +173,7 @@ fn main() {
         std::process::exit(2);
     }
     let mut rt = Runtime::load(&image).expect("load Bug3D.exe");
+    rt.set_game(&profile::BUGATRON);
     rt.user.ignore_host_input = scripted;
     rt.user.host_fullscreen = !windowed && !scripted;
     rt.user.run_in_background = args.run_in_background;

@@ -72,7 +72,7 @@ fn missing_file_and_create_new_errors() {
 fn writes_are_copy_on_write_into_the_save_directory() {
     let mut cpu = setup();
     let (data, save) = dirs("cow");
-    let name = put_str(0, "C:\\Bugatron\\prefs");
+    let name = put_str(0, "C:\\Game\\prefs");
     let h = call_import(&mut cpu, "kernel32.dll", "CreateFileA", &[name, GENERIC_READ | GENERIC_WRITE, 0, 0, OPEN_ALWAYS, 0, 0]);
     assert_ne!(h, INVALID);
     // Existing content was copied; overwrite the second dword.
@@ -100,7 +100,7 @@ fn current_directory_and_relative_paths() {
     assert_eq!(call_import(&mut cpu, "kernel32.dll", "SetCurrentDirectoryA", &[gfx]), 1);
     let buf = SCRATCH + 0x100;
     let n = call_import(&mut cpu, "kernel32.dll", "GetCurrentDirectoryA", &[64, buf]);
-    assert_eq!(String::from_utf8(read(buf, n as usize)).unwrap(), "C:\\Bugatron\\GRAPHICS");
+    assert_eq!(String::from_utf8(read(buf, n as usize)).unwrap(), "C:\\Game\\GRAPHICS");
     let name = put_str(0x40, "title.bmp");
     let h = call_import(&mut cpu, "kernel32.dll", "CreateFileA", &[name, GENERIC_READ, 0, 0, OPEN_EXISTING, 0, 0]);
     assert_ne!(h, INVALID, "relative to the current directory");
