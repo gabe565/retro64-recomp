@@ -89,6 +89,8 @@ pub struct User {
     pub screen: (i32, i32),
     /// Cursor position in guest screen coordinates.
     cursor: (i32, i32),
+    /// ShowCursor's display count (0 at start, as with a mouse installed).
+    cursor_count: i32,
     /// Sub-pixel remainder of host mouse motion not yet applied to the cursor.
     cursor_frac: (f32, f32),
     sdl_ready: bool,
@@ -482,6 +484,16 @@ pub(crate) fn import(cpu: &mut Cpu, name: &str) -> bool {
         "LoadIconA" => ret(cpu, ICON_HANDLE, 2),
         "LoadCursorA" => ret(cpu, CURSOR_HANDLE, 2),
         "SetCursor" => ret(cpu, 0, 1), // the game passes NULL (hide); the host cursor is managed by the presenter
+        "ShowCursor" => {
+            // (BOOL show) → the new display count. Only the count is kept: the host
+            // cursor is managed by the presenter, as for SetCursor.
+            let show = arg(cpu, 0) != 0;
+            let n = with_rt(|rt| {
+                rt.user.cursor_count += if show { 1 } else { -1 };
+                rt.user.cursor_count
+            });
+            ret(cpu, n as u32, 1);
+        }
         "RegisterClassA" => {
             // WNDCLASSA: style, lpfnWndProc, cbClsExtra, cbWndExtra, hInstance, hIcon, hCursor, hbrBackground, lpszMenuName, lpszClassName
             let wc = arg(cpu, 0);

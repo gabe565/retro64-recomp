@@ -42,6 +42,7 @@ pub(crate) mod guid {
         [a[0], a[1], a[2], a[3], b[0], b[1], c[0], c[1], d4[0], d4[1], d4[2], d4[3], d4[4], d4[5], d4[6], d4[7]]
     }
     pub const IID_IDIRECTDRAW4: [u8; 16] = g(0x9c59509a, 0x39bd, 0x11d1, [0x8c, 0x4a, 0x00, 0xc0, 0x4f, 0xd9, 0x30, 0xc5]);
+    pub const IID_IDIRECTDRAW7: [u8; 16] = g(0x15e65ec0, 0x3b9c, 0x11d2, [0xb9, 0x2f, 0x00, 0x60, 0x97, 0x97, 0xea, 0x5b]);
     pub const IID_IDIRECT3D3: [u8; 16] = g(0xbb223240, 0xe72b, 0x11d0, [0xa9, 0xb4, 0x00, 0xaa, 0x00, 0xc0, 0x99, 0x3e]);
     pub const IID_IDIRECT3DRGBDEVICE: [u8; 16] = g(0xa4665c60, 0x2673, 0x11cf, [0xa3, 0x1a, 0x00, 0xaa, 0x00, 0xb9, 0x33, 0x56]);
     pub const IID_IDIRECT3DHALDEVICE: [u8; 16] = g(0x84e63de0, 0x46aa, 0x11cf, [0x81, 0x6f, 0x00, 0x00, 0xc0, 0x20, 0x15, 0x6e]);
@@ -340,6 +341,22 @@ pub(crate) fn import(cpu: &mut Cpu, name: &str) -> bool {
                 rt.mem.w32(out, dd);
             });
             ret(cpu, DD_OK, 3);
+        }
+        "DirectDrawCreateEx" => {
+            // (GUID* driver, LPVOID* out, REFIID iid, IUnknown* outer). Z-Ball checks for
+            // DirectX 7 with it: SetCooperativeLevel(NULL, DDSCL_NORMAL), then Release.
+            // IDirectDraw7's slots match IDirectDraw4's up to the two it adds at the
+            // end, so the IDirectDraw4 object serves.
+            let (drv, out, iid) = (arg(cpu, 0), arg(cpu, 1), arg(cpu, 2));
+            let id: [u8; 16] = with_rt(|rt| std::array::from_fn(|i| rt.mem.r8(iid + i as u32)));
+            if drv != 0 || id != guid::IID_IDIRECTDRAW7 {
+                fatal("DirectDrawCreateEx: only IDirectDraw7 on the primary display driver (NULL GUID) is emulated");
+            }
+            with_rt(|rt| {
+                let dd = rt.new_com(iface::DIRECTDRAW4, Kind::DirectDraw);
+                rt.mem.w32(out, dd);
+            });
+            ret(cpu, DD_OK, 4);
         }
         _ => return false,
     }

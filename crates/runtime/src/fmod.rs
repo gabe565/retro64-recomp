@@ -1,7 +1,9 @@
-//! FMOD 3.61 (`fmod.dll`): the 13 functions the game imports, on the software
-//! mixer (audio/mixer.rs) and SDL3 audio (audio/device.rs).
+//! FMOD 3.x (`fmod.dll`): the functions the games import, on the software mixer
+//! (audio/mixer.rs) and SDL3 audio (audio/device.rs). Bugatron uses FMOD 3.61;
+//! Z-Ball an older build with a few older or extra calls (`Sample_SetLoopMode`,
+//! `StopSound`, `GetCurrentSample`, `FMUSIC_StopAllSongs`).
 //!
-//! How the game uses FMOD (0x416b40–0x417320):
+//! How Bugatron uses FMOD (0x416b40–0x417320):
 //! - `FSOUND_SetMaxHardwareChannels(0)` (software mixing only), then
 //!   `FSOUND_Init(44100, 32, 0)`, falling back to 22050 and then 16 channels;
 //!   if all fail, sound is disabled (0x438144 = 0);
@@ -67,6 +69,8 @@ fn read_game_file(rt: &mut Runtime, name: &str) -> Option<Vec<u8>> {
 }
 
 const FSOUND_FREE: u32 = 0xffff_ffff;
+/// Every channel, for `FSOUND_StopSound`.
+const FSOUND_ALL: u32 = 0xffff_fffd;
 const FSOUND_LOADMEMORY: u32 = 0x8000;
 
 /// Returns (value, argument dwords popped), or None if `name` is not an FMOD import.
@@ -149,6 +153,30 @@ pub(crate) fn call(rt: &mut Runtime, name: &str, arg: &dyn Fn(u32) -> u32) -> Op
             let ok = rt.fmod.mixer().set_mode(arg(0), arg(1));
             (ok as u32, 2)
         }
+        // FMOD before 3.5's name for the loop bits of Sample_SetMode (same values).
+        "_FSOUND_Sample_SetLoopMode@8" => {
+            let ok = rt.fmod.mixer().set_mode(arg(0), arg(1) & crate::audio::mixer::LOOP_MASK);
+            (ok as u32, 2)
+        }
+        // (channel): stop it; FSOUND_ALL stops every channel. False for a channel
+        // index out of range.
+        "_FSOUND_StopSound@4" => {
+            let mut m = rt.fmod.mixer();
+            let c = arg(0);
+            let ok = if c == FSOUND_ALL {
+                m.channels.iter_mut().for_each(|c| *c = None);
+                true
+            } else {
+                m.channels.get_mut(c as usize).map(|c| *c = None).is_some()
+            };
+            (ok as u32, 1)
+        }
+        // (channel): the sample playing on it, or 0 (none, or it has ended).
+        "_FSOUND_GetCurrentSample@4" => {
+            let m = rt.fmod.mixer();
+            let s = m.channels.get(arg(0) as usize).and_then(|c| c.as_ref()).map_or(0, |c| c.sample);
+            (s, 1)
+        }
         "_FSOUND_PlaySound@8" => {
             let (channel, s) = (arg(0), arg(1));
             if channel != FSOUND_FREE {
@@ -200,6 +228,10 @@ pub(crate) fn call(rt: &mut Runtime, name: &str, arg: &dyn Fn(u32) -> u32) -> Op
                 None => false,
             };
             (ok as u32, 1)
+        }
+        "_FMUSIC_StopAllSongs@0" => {
+            rt.fmod.mixer().songs.values_mut().for_each(|s| s.playing = false);
+            (0, 0)
         }
         "_FMUSIC_SetPaused@8" => {
             let mut m = rt.fmod.mixer();

@@ -26,7 +26,7 @@ use std::sync::Arc;
 pub const FSOUND_LOOP_OFF: u32 = 0x1;
 pub const FSOUND_LOOP_NORMAL: u32 = 0x2;
 pub const FSOUND_LOOP_BIDI: u32 = 0x4;
-const LOOP_MASK: u32 = FSOUND_LOOP_OFF | FSOUND_LOOP_NORMAL | FSOUND_LOOP_BIDI;
+pub(crate) const LOOP_MASK: u32 = FSOUND_LOOP_OFF | FSOUND_LOOP_NORMAL | FSOUND_LOOP_BIDI;
 
 /// Interleaved 16-bit stereo music, e.g. libxmp.
 pub trait MusicSource: Send {
