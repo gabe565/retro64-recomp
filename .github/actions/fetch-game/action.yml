@@ -1,0 +1,67 @@
+name: Fetch a game
+description: >
+  Download a game's zip into reference/ from a private URL, checked against its
+  SHA-256, and keep it in the Actions cache encrypted with the URL and token as the
+  passphrase: pull requests from forks can restore this repository's caches, but
+  get no secrets to decrypt them. The game is never published as an artifact.
+inputs:
+  url:
+    description: The download URL (a secret).
+    required: true
+  token:
+    description: A Bearer token for the URL, if it needs one (a secret).
+    required: false
+    default: ""
+  sha256:
+    description: The zip's SHA-256.
+    required: true
+  file:
+    description: The zip's name under reference/ (where the game's build looks for it).
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Restore (encrypted cache)
+      id: cache
+      uses: actions/cache/restore@v6
+      with:
+        path: ${{ inputs.file }}.enc
+        key: game-${{ inputs.sha256 }}-v1
+        enableCrossOsArchive: true
+
+    - name: Fetch
+      shell: bash
+      env:
+        GAME_URL: ${{ inputs.url }}
+        GAME_TOKEN: ${{ inputs.token }}
+        GAME_KEY: ${{ inputs.url }}${{ inputs.token }}
+        GAME_SHA256: ${{ inputs.sha256 }}
+        FILE: ${{ inputs.file }}
+      run: |
+        mkdir -p reference
+        zip="reference/$FILE"
+        # macOS's /usr/bin/openssl is LibreSSL; use the runner's OpenSSL 3.
+        openssl=openssl
+        if [ "$RUNNER_OS" = macOS ]; then openssl="$(brew --prefix openssl@3)/bin/openssl"; fi
+        crypt() { "$openssl" enc "$@" -aes-256-cbc -pbkdf2 -iter 200000 -md sha256 -pass env:GAME_KEY; }
+        if command -v sha256sum >/dev/null; then sum=(sha256sum); else sum=(shasum -a 256); fi
+        verify() { echo "$GAME_SHA256  $zip" | "${sum[@]}" -c - >/dev/null 2>&1; }
+        if [ -f "$FILE.enc" ] && crypt -d -in "$FILE.enc" -out "$zip" 2>/dev/null && verify; then
+          echo "$FILE: restored from the encrypted cache"
+        else
+          auth=()
+          if [ -n "$GAME_TOKEN" ]; then auth=(-H "Authorization: Bearer $GAME_TOKEN"); fi
+          curl -fsSL "${auth[@]}" -o "$zip" "$GAME_URL"
+          verify || { echo "$FILE: downloaded file does not match SHA-256 $GAME_SHA256"; exit 1; }
+          crypt -salt -in "$zip" -out "$FILE.enc"
+          echo "$FILE: downloaded"
+        fi
+
+    - name: Save (encrypted cache)
+      if: steps.cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: ${{ inputs.file }}.enc
+        key: game-${{ inputs.sha256 }}-v1
+        enableCrossOsArchive: true
+      continue-on-error: true  # the jobs race to save the same entry

@@ -147,7 +147,11 @@ Comparisons against the original game use Frida in a Windows VM; see `tools/frid
 
 **CI** ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)) runs on Linux (Debian 13, Vulkan on Mesa lavapipe), macOS and Windows (Direct3D 12 on WARP). Each job runs one of two sets:
 - **Game-free tests** run on every push and pull request.
-- **The full suite plus a short scripted play session** runs when the repository secret `BUGATRON_GAME_URL` points to a private copy of `Bugatron_Win_EN_Gold_120.zip`. Set `BUGATRON_GAME_TOKEN` too if that URL needs a Bearer token. The download is checked against the hash above. Between runs it's kept in the Actions cache encrypted with those secrets, because pull requests from forks can restore a public repository's caches (but get no secrets to decrypt them). The game is never published as an artifact.
+- **Each game's tests and a short scripted play session** run when its repository secret points to a private copy of its zip:
+  - `BUGATRON_GAME_URL`: `Bugatron_Win_EN_Gold_120.zip`, checked against the hash above;
+  - `ZBALL_GAME_URL`: `Z-Ball_Win_EN_Full-Rip.zip` (SHA-256 `2b733a874bcf16d2a301c27e64438739402e36c7216cb6a7aa8d0638381ebcad`).
+
+  Set `BUGATRON_GAME_TOKEN` or `ZBALL_GAME_TOKEN` too if the URL needs a Bearer token. Between runs each download is kept in the Actions cache encrypted with its secrets, because pull requests from forks can restore a public repository's caches (but get no secrets to decrypt them). The games are never published as artifacts.
 
 ## Repository layout
 

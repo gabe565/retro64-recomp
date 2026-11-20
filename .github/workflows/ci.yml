@@ -10,8 +10,9 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
-  # SHA-256 of Bugatron_Win_EN_Gold_120.zip (README.md).
-  GAME_SHA256: f3ee37e54c998eb8167c997f95b9dd4c81c482633c454bb2d4d5ba2f52e894f9
+  # SHA-256 of each game's zip (README.md).
+  BUGATRON_SHA256: f3ee37e54c998eb8167c997f95b9dd4c81c482633c454bb2d4d5ba2f52e894f9
+  ZBALL_SHA256: 2b733a874bcf16d2a301c27e64438739402e36c7216cb6a7aa8d0638381ebcad
 
 jobs:
   test:
@@ -38,10 +39,11 @@ jobs:
             features: --features bugatron-runtime/sdl3-from-source
             require_gpu: "1"
     env:
-      # The game is provided only to this repository's own runs: secrets are not
+      # The games are provided only to this repository's own runs: secrets are not
       # passed to pull requests from forks, which then run the game-free tests.
-      GAME_URL: ${{ secrets.BUGATRON_GAME_URL }}
-      GAME_TOKEN: ${{ secrets.BUGATRON_GAME_TOKEN }}
+      # Each game is tested when its URL is set.
+      BUGATRON_URL: ${{ secrets.BUGATRON_GAME_URL }}
+      ZBALL_URL: ${{ secrets.ZBALL_GAME_URL }}
       BUGATRON_REQUIRE_GPU: ${{ matrix.require_gpu }}
       SDL_AUDIO_DRIVER: dummy
     defaults:
@@ -74,63 +76,47 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      # The game is cached encrypted with the secrets as the passphrase: pull requests
-      # from forks can restore this repository's caches, but cannot decrypt them.
-      - name: Restore the game (encrypted cache)
-        id: game-cache
-        if: env.GAME_URL != ''
-        uses: actions/cache/restore@v6
+      - name: Fetch Bugatron
+        if: env.BUGATRON_URL != ''
+        uses: ./.github/actions/fetch-game
         with:
-          path: game.zip.enc
-          key: game-${{ env.GAME_SHA256 }}-v1
-          enableCrossOsArchive: true
+          url: ${{ secrets.BUGATRON_GAME_URL }}
+          token: ${{ secrets.BUGATRON_GAME_TOKEN }}
+          sha256: ${{ env.BUGATRON_SHA256 }}
+          file: Bugatron_Win_EN_Gold_120.zip
 
-      - name: Fetch the game
-        if: env.GAME_URL != ''
-        env:
-          GAME_KEY: ${{ secrets.BUGATRON_GAME_URL }}${{ secrets.BUGATRON_GAME_TOKEN }}
+      - name: Fetch Z-Ball
+        if: env.ZBALL_URL != ''
+        uses: ./.github/actions/fetch-game
+        with:
+          url: ${{ secrets.ZBALL_GAME_URL }}
+          token: ${{ secrets.ZBALL_GAME_TOKEN }}
+          sha256: ${{ env.ZBALL_SHA256 }}
+          file: Z-Ball_Win_EN_Full-Rip.zip
+
+      # Everything, less the crates of games without a copy (they need it to build).
+      - name: Test
         run: |
-          mkdir -p reference
-          zip=reference/Bugatron_Win_EN_Gold_120.zip
-          # macOS's /usr/bin/openssl is LibreSSL; use the runner's OpenSSL 3.
-          openssl=openssl
-          if [ "$RUNNER_OS" = macOS ]; then openssl="$(brew --prefix openssl@3)/bin/openssl"; fi
-          crypt() { "$openssl" enc "$@" -aes-256-cbc -pbkdf2 -iter 200000 -md sha256 -pass env:GAME_KEY; }
-          if command -v sha256sum >/dev/null; then sum=(sha256sum); else sum=(shasum -a 256); fi
-          verify() { echo "$GAME_SHA256  $zip" | "${sum[@]}" -c - >/dev/null 2>&1; }
-          if [ -f game.zip.enc ] && crypt -d -in game.zip.enc -out "$zip" 2>/dev/null && verify; then
-            echo "restored from the encrypted cache"
-          else
-            auth=()
-            if [ -n "$GAME_TOKEN" ]; then auth=(-H "Authorization: Bearer $GAME_TOKEN"); fi
-            curl -fsSL "${auth[@]}" -o "$zip" "$GAME_URL"
-            verify || { echo "downloaded file does not match SHA-256 $GAME_SHA256"; exit 1; }
-            crypt -salt -in "$zip" -out game.zip.enc
-            echo "downloaded"
-          fi
+          skip=()
+          if [ -z "$BUGATRON_URL" ]; then skip+=(--exclude bugatron --exclude bugatron-poc); fi
+          if [ -z "$ZBALL_URL" ]; then skip+=(--exclude zball); fi
+          ${{ matrix.run }} cargo test --release --workspace "${skip[@]}" ${{ matrix.features }}
 
-      - name: Save the game (encrypted cache)
-        if: env.GAME_URL != '' && steps.game-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v6
-        with:
-          path: game.zip.enc
-          key: game-${{ env.GAME_SHA256 }}-v1
-          enableCrossOsArchive: true
-        continue-on-error: true  # the three jobs race to save the same entry
-
-      - name: Test (game-free)
-        if: env.GAME_URL == ''
-        run: ${{ matrix.run }} cargo test --release --workspace --exclude bugatron --exclude bugatron-poc --exclude zball ${{ matrix.features }}
-
-      - name: Test (full)
-        if: env.GAME_URL != ''
-        run: ${{ matrix.run }} cargo test --release --workspace --exclude zball ${{ matrix.features }}
-
-      # A short scripted session: start a game (F1), steer, fire. Fails on any
-      # unimplemented import or method, guest fault, or panic.
-      - name: Play a scripted session
-        if: env.GAME_URL != ''
+      # Short scripted sessions. Each fails on any unimplemented import or method,
+      # guest fault, or panic.
+      # Bugatron: start a game (F1), steer, fire.
+      - name: Play Bugatron
+        if: env.BUGATRON_URL != ''
         run: >
           ${{ matrix.run }} cargo run --release -p bugatron ${{ matrix.features }} --
           --video-mode 640x480x32 --save target/ci-save --frames 1500
           --input "600:F1,800:click@70x120,1000:CTRL+,1000:LEFT+,1100:LEFT-,1150:RIGHT+,1250:RIGHT-"
+
+      # Z-Ball: start (F1), pick the first level set (F1), move the paddle with the
+      # mouse, launch the ball (click), and with the Up key.
+      - name: Play Z-Ball
+        if: env.ZBALL_URL != ''
+        run: >
+          ${{ matrix.run }} cargo run --release -p zball ${{ matrix.features }} --
+          --video-mode 640x480x32 --save target/ci-save-zball --frames 2500
+          --input "700:F1,1300:F1,1900:move@600x100,2000:click@600x100,2100:move@600x300,2200:UP+,2300:UP-"
