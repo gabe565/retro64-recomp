@@ -17,6 +17,8 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 pub const BUG3D_GOLD_120A_SHA256: &str = "be581a63bccfc7dcc78a5c55cacc02e9f7aab9e5398540d2cc86a7aba758919e";
+/// Z-Ball Gold's `Z-Ball.exe` (March 2002).
+pub const ZBALL_GOLD_SHA256: &str = "599539b2cbf0b2235921b5ee486be9af4502c715eeb750c1aeed807d2e6f841c";
 
 #[derive(Debug, Deserialize)]
 pub struct HintFunction {

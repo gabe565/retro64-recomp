@@ -120,11 +120,11 @@ jobs:
 
       - name: Test (game-free)
         if: env.GAME_URL == ''
-        run: ${{ matrix.run }} cargo test --release --workspace --exclude bugatron --exclude bugatron-poc ${{ matrix.features }}
+        run: ${{ matrix.run }} cargo test --release --workspace --exclude bugatron --exclude bugatron-poc --exclude zball ${{ matrix.features }}
 
       - name: Test (full)
         if: env.GAME_URL != ''
-        run: ${{ matrix.run }} cargo test --release --workspace ${{ matrix.features }}
+        run: ${{ matrix.run }} cargo test --release --workspace --exclude zball ${{ matrix.features }}
 
       # A short scripted session: start a game (F1), steer, fire. Fails on any
       # unimplemented import or method, guest fault, or panic.

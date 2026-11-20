@@ -1,4 +1,5 @@
-//! Target-specific configuration for Bugatron Gold v1.20a (`Bug3D.exe`).
+//! Target-specific configuration for Bugatron Gold v1.20a (`Bug3D.exe`) and
+//! Z-Ball Gold (`Z-Ball.exe`).
 //!
 //! Everything here is backed by evidence recorded in `docs/`.
 
@@ -19,4 +20,11 @@ pub fn gold_120a_exception_traps() -> BTreeMap<u32, String> {
         m.insert(addr, format!("exception dispatch path reached: {what}"));
     }
     m
+}
+
+/// Z-Ball Gold's copies of the same exception-dispatch sites: the same MSVC runtime
+/// code, 0x18c lower (matched byte for byte, apart from one address operand in the
+/// frame handler).
+pub fn zball_gold_exception_traps() -> BTreeMap<u32, String> {
+    gold_120a_exception_traps().into_iter().map(|(a, what)| (a - 0x18c, what.replace("(0x42a740)", "(0x42a5b4)").replace("(0x42a774)", "(0x42a5e8)").replace("(0x42a77b)", "(0x42a5ef)").replace("(0x42a936)", "(0x42a7aa)"))).collect()
 }

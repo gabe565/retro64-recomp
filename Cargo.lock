@@ -1457,6 +1457,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "zball"
+version = "1.0.0"
+dependencies = [
+ "bugatron-build",
+ "bugatron-launcher",
+ "bugatron-recomp",
+ "bugatron-runtime",
+]
+
+[[package]]
 name = "zerocopy"
 version = "0.8.63"
 source = "registry+https://github.com/rust-lang/crates.io-index"

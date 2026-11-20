@@ -1,0 +1,20 @@
+[package]
+name = "zball"
+description = "Z-Ball Gold, statically recompiled: the full game on the portable runtime"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+bugatron-runtime.workspace = true
+bugatron-launcher.workspace = true
+
+[build-dependencies]
+bugatron-build.workspace = true
+bugatron-recomp.workspace = true
+
+[features]
+# Build the whole game folder into the binary, for a single-file test build. The
+# binary then contains the original game files: keep it for your own use.
+embed-game = []
