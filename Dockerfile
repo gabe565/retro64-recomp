@@ -3,7 +3,7 @@
 # with nothing but Docker installed (README.md, "Building with Docker"):
 #
 #   docker build --build-context game=path/to/folder-with-the-zip \
-#     --output bugatron https://github.com/gabe565/bugatron-recomp.git
+#     --output bugatron https://github.com/gabe565/retro64-recomp.git
 #
 # --target linux or --target windows builds just one. The game folder holds the
 # downloaded zip, the installer or the installed game. Nothing is kept as an image:

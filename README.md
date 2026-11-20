@@ -44,7 +44,7 @@ With only [Docker](https://docs.docker.com/get-docker/) installed, this builds L
 
 ```sh
 docker build --build-context game=path/to/that/folder --output bugatron \
-  https://github.com/gabe565/bugatron-recomp.git
+  https://github.com/gabe565/retro64-recomp.git
 ```
 
 - The binaries land in `./bugatron`: `bugatron-linux-x64/bugatron` (glibc 2.38 or newer, so the Steam Deck and current distributions) and `bugatron-windows-x64/` (`bugatron.exe` with `SDL3.dll`, also zipped). Add `--target linux` or `--target windows` to build just one.
