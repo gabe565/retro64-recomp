@@ -9,6 +9,7 @@ pub const BUGATRON: Game = Game {
     name: "Bugatron",
     exe_name: "Bug3D.exe",
     install_dir: "C:\\Bugatron",
+    save_folder: "bugatron",
     // The keys the input poll reads (table 0x437f9c, read by 0x411f70).
     actions: &[
         Action { id: "left", label: "Move left", key: sc::LEFT, defaults: &["Left"] },

@@ -13,8 +13,7 @@ serde_json.workspace = true
 crc32fast.workspace = true
 
 [build-dependencies]
-inno.workspace = true
-zip.workspace = true
+bugatron-unpack.workspace = true
 bugatron-recomp.workspace = true
 serde_json.workspace = true
 cc.workspace = true

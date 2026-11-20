@@ -8,19 +8,14 @@ publish.workspace = true
 
 [dependencies]
 bugatron-runtime.workspace = true
-clap.workspace = true
-inno.workspace = true
-zip.workspace = true
+bugatron-launcher.workspace = true
+
+[dev-dependencies]
 sha2.workspace = true
-serde.workspace = true
-serde_json.workspace = true
 
 [build-dependencies]
-inno.workspace = true
-zip.workspace = true
+bugatron-build.workspace = true
 bugatron-recomp.workspace = true
-serde_json.workspace = true
-cc.workspace = true
 
 [features]
 # Build the whole game folder (Bug3D.exe and its assets, from the folder of the

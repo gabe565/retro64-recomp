@@ -1,7 +1,8 @@
-//! Unpacking Bugatron Gold from what the user has: `Bug3D.exe` itself, the original
-//! Inno Setup installer (`buggold_120.exe`), or the download zip holding either.
-//! Shared by the program (source.rs) and its build script (build.rs, via `#[path]`),
-//! so it depends only on the `inno` and `zip` crates.
+//! Unpacking a game from what the user has: its executable itself, its original
+//! Inno Setup installer, or a zip holding either (or the game folder). Shared by
+//! the launcher and the games' build scripts, so it depends only on the `inno` and
+//! `zip` crates. `exe` is the executable's file name (`Bug3D.exe`), matched
+//! case-insensitively.
 
 use std::io::{Cursor, Read};
 
@@ -10,19 +11,19 @@ pub type Files = Vec<(String, Vec<u8>)>;
 
 /// What `bytes` holds.
 pub enum Unpacked {
-    /// Bug3D.exe on its own (its folder holds the other files).
+    /// The executable on its own (its folder holds the other files).
     Exe(Vec<u8>),
-    /// The whole game folder, Bug3D.exe included.
+    /// The whole game folder, the executable included.
     Folder(Files),
 }
 
-/// Bug3D.exe, an installer, or a zip holding either; `label` names it in errors.
-pub fn unpack(bytes: Vec<u8>, label: &str) -> Result<Unpacked, String> {
+/// The executable `exe`, an installer, or a zip holding either; `label` names it in errors.
+pub fn unpack(bytes: Vec<u8>, label: &str, exe: &str) -> Result<Unpacked, String> {
     if bytes.starts_with(b"PK\x03\x04") {
-        return from_zip(&bytes, label).map(Unpacked::Folder);
+        return from_zip(&bytes, label, exe).map(Unpacked::Folder);
     }
     if !bytes.starts_with(b"MZ") {
-        return Err(format!("{label} is neither Bug3D.exe, the Bugatron Gold installer, nor a zip"));
+        return Err(format!("{label} is neither {exe}, the game's installer, nor a zip"));
     }
     match from_installer(&bytes, label) {
         Some(files) => files.map(Unpacked::Folder),
@@ -46,8 +47,8 @@ fn from_installer(bytes: &[u8], label: &str) -> Option<Result<Files, String>> {
     Some(Ok(files))
 }
 
-/// A zip holding the installer, or a game folder with Bug3D.exe.
-fn from_zip(bytes: &[u8], label: &str) -> Result<Files, String> {
+/// A zip holding the installer, or a game folder with the executable.
+fn from_zip(bytes: &[u8], label: &str, exe: &str) -> Result<Files, String> {
     let bad = |e: zip::result::ZipError| format!("{label}: {e}");
     let mut zip = zip::ZipArchive::new(Cursor::new(bytes)).map_err(bad)?;
     let mut files = Vec::new();
@@ -64,22 +65,21 @@ fn from_zip(bytes: &[u8], label: &str) -> Result<Files, String> {
     // The download holds only the installer.
     for (name, data) in &files {
         let lower = name.to_ascii_lowercase();
-        if lower.ends_with(".exe") && !lower.ends_with("bug3d.exe") {
+        if lower.ends_with(".exe") && !lower.ends_with(&exe.to_ascii_lowercase()) {
             if let Some(r) = from_installer(data, &format!("{label}: {name}")) {
                 return r;
             }
         }
     }
-    // Otherwise a zipped game folder: files relative to the folder holding Bug3D.exe.
+    // Otherwise a zipped game folder: files relative to the folder holding the executable.
     let root = files
         .iter()
-        .find_map(|(n, _)| n.rsplit('/').next().is_some_and(|b| b.eq_ignore_ascii_case("Bug3D.exe")).then(|| n[..n.len() - "Bug3D.exe".len()].to_string()))
-        .ok_or_else(|| format!("{label} holds neither the Bugatron Gold installer nor Bug3D.exe"))?;
+        .find_map(|(n, _)| n.rsplit('/').next().is_some_and(|b| b.eq_ignore_ascii_case(exe)).then(|| n[..n.len() - exe.len()].to_string()))
+        .ok_or_else(|| format!("{label} holds neither the game's installer nor {exe}"))?;
     Ok(files.into_iter().filter_map(|(n, d)| Some((n.strip_prefix(&root)?.to_string(), d))).collect())
 }
 
-/// Bug3D.exe in a game folder (used by build.rs).
-#[allow(dead_code)]
-pub fn exe_of(files: &Files) -> Option<&[u8]> {
-    files.iter().find(|(p, _)| p.eq_ignore_ascii_case("Bug3D.exe")).map(|(_, d)| &d[..])
+/// The executable `exe` in a game folder.
+pub fn exe_of<'a>(files: &'a Files, exe: &str) -> Option<&'a [u8]> {
+    files.iter().find(|(p, _)| p.eq_ignore_ascii_case(exe)).map(|(_, d)| &d[..])
 }

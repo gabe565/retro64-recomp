@@ -1,0 +1,11 @@
+[package]
+name = "bugatron-unpack"
+description = "Reads a Retro64 game from its executable, Inno Setup installer, or zip"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+inno.workspace = true
+zip.workspace = true

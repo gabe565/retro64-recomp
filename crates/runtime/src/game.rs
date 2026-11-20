@@ -14,6 +14,8 @@ pub struct Game {
     /// The executable's file name and the folder the game sees itself installed in.
     pub exe_name: &'static str,
     pub install_dir: &'static str,
+    /// The per-user save folder's name (files.rs `default_save_dir`).
+    pub save_folder: &'static str,
     /// The keys the game reads, with their default bindings (bindings.rs). The
     /// runtime adds its own action to open the settings overlay.
     pub actions: &'static [Action],
@@ -129,6 +131,7 @@ impl Game {
         name: "Game",
         exe_name: "game.exe",
         install_dir: crate::files::GAME_DIR,
+        save_folder: "game",
         actions: &[],
         bindings_note: "",
         font: None,

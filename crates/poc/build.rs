@@ -5,12 +5,8 @@
 //!                   by SHA-256) [default: as crates/game/build.rs]
 //!   BUGATRON_HINTS  path to the recompiler hints [default: hints/gold-1.20a.json]
 
-#[path = "../game/src/unpack.rs"]
-#[allow(dead_code)]
-mod unpack;
-
 use bugatron_recomp::{recompile, Hints, Options, BUG3D_GOLD_120A_SHA256};
-use unpack::{unpack, Unpacked};
+use bugatron_unpack::{exe_of, unpack, Unpacked};
 use std::collections::BTreeSet;
 use std::path::PathBuf;
 
@@ -36,9 +32,9 @@ fn main() {
 
     let bytes = std::fs::read(&exe_path).unwrap_or_else(|e| panic!(
         "cannot read {} ({e}). Put Bugatron_Win_EN_Gold_120.zip in reference/, or set BUGATRON_EXE.", exe_path.display()));
-    let exe = match unpack(bytes, &exe_path.display().to_string()).unwrap_or_else(|e| panic!("{e}")) {
+    let exe = match unpack(bytes, &exe_path.display().to_string(), "Bug3D.exe").unwrap_or_else(|e| panic!("{e}")) {
         Unpacked::Exe(b) => b,
-        Unpacked::Folder(files) => unpack::exe_of(&files).expect("Bug3D.exe in the installer").to_vec(),
+        Unpacked::Folder(files) => exe_of(&files, "Bug3D.exe").expect("Bug3D.exe in the installer").to_vec(),
     };
     let sha = bugatron_recomp::sha256_hex(&exe);
     assert_eq!(sha, BUG3D_GOLD_120A_SHA256, "BUGATRON_EXE is not Bugatron Gold v1.20a");

@@ -29,14 +29,16 @@ pub const ERROR_FILE_EXISTS: u32 = 80;
 
 const GENERIC_WRITE: u32 = 0x4000_0000;
 
-/// The per-user folder for saves: `~/Library/Application Support/bugatron/` on macOS,
+/// The per-user folder for a game's saves (its profile's `save_folder`, here
+/// `bugatron`): `~/Library/Application Support/bugatron/` on macOS,
 /// `~/.local/share/bugatron/` on Linux, `%APPDATA%\\bugatron\\` on Windows
-/// (SDL_GetPrefPath, which creates it). Bugatron releases share their save formats,
+/// (SDL_GetPrefPath, which creates it). A game's releases share their save formats,
 /// so the folder is not per version.
-pub fn default_save_dir() -> Option<PathBuf> {
+pub fn default_save_dir(folder: &str) -> Option<PathBuf> {
+    let folder = std::ffi::CString::new(folder).ok()?;
     // SAFETY: NUL-terminated strings; SDL allocates the result, freed with SDL_free.
     unsafe {
-        let p = sdl3_sys::filesystem::SDL_GetPrefPath(c"".as_ptr(), c"bugatron".as_ptr());
+        let p = sdl3_sys::filesystem::SDL_GetPrefPath(c"".as_ptr(), folder.as_ptr());
         if p.is_null() {
             return None;
         }

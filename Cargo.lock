@@ -113,15 +113,32 @@ dependencies = [
 name = "bugatron"
 version = "1.0.0"
 dependencies = [
+ "bugatron-build",
+ "bugatron-launcher",
  "bugatron-recomp",
  "bugatron-runtime",
- "cc",
- "clap",
- "inno",
- "serde",
- "serde_json",
  "sha2 0.10.9",
- "zip",
+]
+
+[[package]]
+name = "bugatron-build"
+version = "1.0.0"
+dependencies = [
+ "bugatron-pe",
+ "bugatron-recomp",
+ "bugatron-unpack",
+ "cc",
+ "serde_json",
+]
+
+[[package]]
+name = "bugatron-launcher"
+version = "1.0.0"
+dependencies = [
+ "bugatron-runtime",
+ "bugatron-unpack",
+ "clap",
+ "sha2 0.10.9",
 ]
 
 [[package]]
@@ -134,12 +151,11 @@ version = "1.0.0"
 dependencies = [
  "bugatron-recomp",
  "bugatron-runtime",
+ "bugatron-unpack",
  "cc",
  "crc32fast",
- "inno",
  "serde",
  "serde_json",
- "zip",
 ]
 
 [[package]]
@@ -181,6 +197,14 @@ dependencies = [
  "bugatron-x86-cases",
  "bugatron-xmp-sys",
  "cc",
+]
+
+[[package]]
+name = "bugatron-unpack"
+version = "1.0.0"
+dependencies = [
+ "inno",
+ "zip",
 ]
 
 [[package]]
