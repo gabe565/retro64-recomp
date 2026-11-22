@@ -122,7 +122,7 @@ jobs:
         if: env.BUGATRON_URL != ''
         run: >
           ${{ matrix.run }} cargo run --release -p bugatron ${{ matrix.features }} --
-          --video-mode 640x480x32 --save target/ci-save --frames 1500
+          --unpaced --video-mode 640x480x32 --save target/ci-save --frames 1500
           --input "600:F1,800:click@70x120,1000:CTRL+,1000:LEFT+,1100:LEFT-,1150:RIGHT+,1250:RIGHT-"
 
       # Z-Ball: start (F1), pick the first level set (F1), move the paddle with the
@@ -131,7 +131,7 @@ jobs:
         if: env.ZBALL_URL != ''
         run: >
           ${{ matrix.run }} cargo run --release -p zball ${{ matrix.features }} --
-          --video-mode 640x480x32 --save target/ci-save-zball --frames 2500
+          --unpaced --video-mode 640x480x32 --save target/ci-save-zball --frames 2500
           --input "700:F1,1300:F1,1900:move@600x100,2000:click@600x100,2100:move@600x300,2200:UP+,2300:UP-"
 
       # Bugatron Worlds (free trial): past the trial screen (Maybe later), Start
@@ -140,5 +140,5 @@ jobs:
         if: env.BUGATRON_WORLDS_URL != ''
         run: >
           ${{ matrix.run }} cargo run --release -p bugatron-worlds ${{ matrix.features }} --
-          --save target/ci-save-worlds --frames 4500
+          --unpaced --save target/ci-save-worlds --frames 4500
           --input "350:click@620x540,1100:click@400x443,1500:click@140x180,2100:click@735x578,2500:click@735x578,2900:click@735x578,3600:CTRL+,3600:LEFT+,3800:LEFT-,3900:RIGHT+,4200:RIGHT-,4400:CTRL-"

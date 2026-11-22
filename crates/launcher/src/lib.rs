@@ -79,6 +79,10 @@ struct Args {
     #[arg(long, value_name = "WxHxBPP", value_parser = display::parse_mode, help_heading = "Display")]
     video_mode: Option<(u32, u32, u32)>,
 
+    /// Run as fast as the machine allows instead of in real time; the game's time is
+    /// virtual, so it plays the same (for scripted runs and tests)
+    #[arg(long, help_heading = "Testing")]
+    unpaced: bool,
     /// Stop after N vertical blanks and print import/COM call counts
     #[arg(long, value_name = "N", help_heading = "Testing")]
     frames: Option<u64>,
@@ -243,7 +247,7 @@ pub fn run(t: &Title) -> ! {
         rt.user.host_fullscreen &= rt.display.fullscreen;
     }
     rt.clock.cadence = Some(bugatron_runtime::clock::Cadence::new());
-    rt.clock.pace = true;
+    rt.clock.pace = !args.unpaced;
     rt.clock.stop_after_vblanks = frames;
     rt.capture_frames = dumps;
     rt.capture_dir = dump_dir;

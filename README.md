@@ -108,7 +108,7 @@ In each folder, the files are tried in the order of the tables above: `Bug3D.exe
 | `--mute` | Run without sound: no audio device is opened. `--record-audio` still records the mix |
 | `--video-mode WxHxBPP` | For example `1600x1200x32` or `640x480x16`. The default is the largest 4:3 mode that fits your display. Games that show a setup dialog get this mode as the answer (the runtime fills the dialog in; it is never shown) |
 
-`--help` lists everything, including the testing options (`--input`, `--frames`, `--dump-frames`, `--record-audio`).
+`--help` lists everything, including the testing options (`--input`, `--frames`, `--dump-frames`, `--record-audio`, and `--unpaced`, which runs as fast as the machine allows: game time is virtual, so a scripted run plays the same).
 
 In Bugatron and Z-Ball, **F10** (or a controller's **Back** button) opens the [settings overlay](#settings-overlay). In every game, **Alt+Enter** (or **Ctrl+Cmd+F** on macOS) toggles fullscreen.
 
