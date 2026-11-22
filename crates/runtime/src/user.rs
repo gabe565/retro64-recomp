@@ -81,6 +81,10 @@ pub struct Window {
 pub struct User {
     classes: HashMap<String, u32>,
     pub window: Option<Window>,
+    /// The host window of a destroyed game window, hidden, for the next one: the
+    /// GPU device stays claimed for it (Bugatron Worlds recreates its window to
+    /// change video settings).
+    retired: Option<*mut SDL_Window>,
     queue: VecDeque<Msg>,
     quit: Option<u32>,
     /// Async key state by virtual-key code: (down, pressed since last query).
@@ -686,8 +690,14 @@ fn create_window(cpu: &mut Cpu) {
     let (x, y) = (cw(a[4]).unwrap_or(0), cw(a[5]).unwrap_or(0));
     let (w, h) = (cw(a[6]).unwrap_or(640), cw(a[7]).unwrap_or(480));
     ensure_sdl();
+    let retired = with_rt(|rt| rt.user.retired.take());
     let sdl = if with_rt(|rt| rt.user.headless) {
         std::ptr::null_mut()
+    } else if let Some(sdl) = retired {
+        let t = CString::new(title.clone()).unwrap_or_default();
+        // SAFETY: the retired window is alive (destroy keeps it); title is NUL-terminated.
+        unsafe { SDL_SetWindowTitle(sdl, t.as_ptr()) };
+        sdl
     } else {
         let t = CString::new(title.clone()).unwrap_or_default();
         // Host window: hidden until ShowWindow; the presenter scales the guest screen into it.
@@ -751,8 +761,11 @@ fn destroy(cpu: &mut Cpu, hwnd: u32) {
     with_rt(|rt| {
         if let Some(w) = rt.user.window.take() {
             if !w.sdl.is_null() {
-                // SAFETY: valid window, destroyed once.
-                unsafe { SDL_DestroyWindow(w.sdl) };
+                // Hidden and kept for a next window rather than destroyed: the GPU
+                // device is claimed for it, and the process exits soon otherwise.
+                // SAFETY: valid window.
+                unsafe { SDL_HideWindow(w.sdl) };
+                rt.user.retired = Some(w.sdl);
             }
         }
     });

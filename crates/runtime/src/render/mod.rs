@@ -74,6 +74,27 @@ pub(crate) fn after_flip(rt: &mut Runtime, front: u32) {
 }
 
 /// A surface's pixel storage is going away.
+/// A surface is about to be destroyed: render the recorded commands that draw to
+/// it or read it first, as Direct3D has already carried them out by then (its
+/// driver keeps the surface until they are done). Without a backend they are
+/// dropped. Bugatron Worlds releases everything mid-frame when it restarts
+/// itself to change video settings.
+pub(crate) fn before_surface_destroyed(rt: &mut Runtime, obj: u32) {
+    use crate::ddraw::d3d::Command;
+    let uses = |c: &Command| match c {
+        Command::Clear { target, zbuffer, .. } => *target == obj || *zbuffer == Some(obj),
+        Command::Draw(d) => d.target == obj || d.zbuffer == Some(obj) || d.textures.iter().flatten().any(|&(s, _)| s == obj),
+    };
+    if !rt.com.d3d.commands.iter().any(uses) {
+        return;
+    }
+    if backend(rt) {
+        gpu::flush(rt);
+    } else {
+        rt.com.d3d.commands.retain(|c| !uses(c));
+    }
+}
+
 pub(crate) fn surface_destroyed(rt: &mut Runtime, obj: u32, bits: u32) {
     if rt.gpu.is_some() {
         gpu::surface_destroyed(rt, obj, bits);
