@@ -4,8 +4,9 @@
 //! is.
 //!
 //! Worlds is a later version of Bugatron's engine (Visual C++ 2003, its images
-//! through DevIL and its files in smash.wad). It always runs at 800x600, choosing
-//! that mode itself; its setup dialog only appears when the mode is missing.
+//! through DevIL and its files in smash.wad). It starts at 800x600, or the mode
+//! saved in its prefs; Options > Video Prefs restarts it (in the same process)
+//! with its setup dialog, which the runtime answers with the chosen mode.
 
 use bugatron_runtime::bindings::{sc, Action};
 use bugatron_runtime::game::Game;
