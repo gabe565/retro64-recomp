@@ -190,6 +190,12 @@ pub fn run(t: &Title) -> ! {
         .about(format!("{}, statically recompiled.", t.title))
         .mut_arg("exe", |a| a.env(t.exe_env).help(exe_help));
     let args = Args::from_arg_matches(&cmd.get_matches()).unwrap_or_else(|e| e.exit());
+    if args.offscreen {
+        // SDL turns SIGINT/SIGTERM into a quit event, which a run without a window
+        // never reads: keep the default signal behaviour (Ctrl-C, kill) instead.
+        // Set before SDL starts.
+        std::env::set_var("SDL_NO_SIGNAL_HANDLERS", "1");
+    }
     let exe_name = t.game.exe_name;
     // The game: --exe (or its environment variable), else the embedded copy, else found on disk.
     let game = match args.exe {
