@@ -107,13 +107,27 @@ jobs:
           file: bugatron_worlds.exe
 
       # Everything, less the crates of games without a copy (they need it to build).
+      # Scenario frame hashes this platform lacks are recorded (SCENARIO_UPDATE)
+      # and uploaded below; recorded ones are checked.
       - name: Test
+        env:
+          SCENARIO_UPDATE: "1"
         run: |
           skip=()
           if [ -z "$BUGATRON_URL" ]; then skip+=(--exclude bugatron --exclude bugatron-poc); fi
           if [ -z "$ZBALL_URL" ]; then skip+=(--exclude zball); fi
           if [ -z "$BUGATRON_WORLDS_URL" ]; then skip+=(--exclude bugatron-worlds); fi
           ${{ matrix.run }} cargo test --release --workspace "${skip[@]}" ${{ matrix.features }}
+
+      # Hashes only (frames hold the games' artwork; their hashes don't): commit
+      # the ones a platform recorded.
+      - name: Upload scenario frame hashes
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frame-hashes-${{ matrix.name }}
+          path: crates/*/tests/frames.json
+          if-no-files-found: ignore
 
       # Short scripted sessions. Each fails on any unimplemented import or method,
       # guest fault, or panic.

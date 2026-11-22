@@ -202,7 +202,7 @@ The tests cover:
 - the runtime's Win32, DirectDraw, Direct3D and FMOD behaviour;
 - rendering, through the real GPU backend.
 
-Each game crate also has **scripted scenarios** (`tests/scenarios.rs`, run by `cargo test -p bugatron`, `-p zball` or `-p bugatron-worlds`). They play the game muted and unpaced with scripted input, the settings overlay included, and check that it exits cleanly, along with game memory (`--peek`), frame sizes, recorded audio, and frame hashes. Frames hold the games' artwork, so only their SHA-256 is committed, per OS, in `tests/frames.json`; a missing hash is printed, and `SCENARIO_UPDATE=1` records it.
+Each game crate also has **scripted scenarios** (`tests/scenarios.rs`, run by `cargo test -p bugatron`, `-p zball` or `-p bugatron-worlds`). They play the game muted and unpaced with scripted input, the settings overlay included, and check that it exits cleanly, along with game memory (`--peek`), frame sizes, recorded audio, and frame hashes. Frames hold the games' artwork, so only their SHA-256 is committed, per OS, in `tests/frames.json`; a missing hash is printed, and `SCENARIO_UPDATE=1` records it. CI records the hashes its platforms lack and uploads them as the `frame-hashes-<os>` artifacts, to commit.
 
 Comparisons against the original game use Frida in a Windows VM; see `tools/frida/` and [docs/testing/](docs/testing/).
 
