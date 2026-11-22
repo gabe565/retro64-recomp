@@ -638,7 +638,36 @@ fn qpc(rt: &mut Runtime, cpu: &mut Cpu) {
     let freq = rt.clock.qpc_frequency;
     let v = match (rt.clock.qpc_queue.pop_front(), rt.clock.cadence.as_mut()) {
         (Some(v), _) => v,
-        (None, Some(c)) => c.read_qpc(freq),
+        (None, Some(c)) => {
+            let mut v = c.read_qpc(freq);
+            // The game's frame wait (game.rs FrameWait): read on to the value that
+            // ends it, as its loop would (each pass a read and a Sleep(0), which
+            // takes no virtual time).
+            if let Some(w) = rt.game.frame_wait.as_ref().filter(|w| rt.mem.r32(cpu.esp) == w.site) {
+                let u64_at = |a: u32| rt.mem.r32(a) as u64 | (rt.mem.r32(a + 4) as u64) << 32;
+                let (end, period) = (u64_at(w.last).wrapping_add(u64_at(w.period)), u64_at(w.period));
+                // As the loop compares: high halves signed, low halves unsigned.
+                let le = |a: u64, b: u64| ((a >> 32) as i32, a as u32) <= ((b >> 32) as i32, b as u32);
+                if le(v, end) && !le(v, period) {
+                    let passes = if (end as i64) >= 0 && end < u64::MAX >> 1 {
+                        // The usual case: the counter is past `period` and rises, so
+                        // the loop ends at the first value above `end`.
+                        let (next, skipped) = c.read_qpc_past(freq, end);
+                        v = next;
+                        skipped + 1
+                    } else {
+                        let mut passes = 0u64;
+                        while le(v, end) && !le(v, period) && passes < 100_000_000 {
+                            v = c.read_qpc(freq);
+                            passes += 1;
+                        }
+                        passes
+                    };
+                    rt.clock.sleeps += passes;
+                }
+            }
+            v
+        }
         (None, None) => {
             rt.clock.qpc_underflow = true;
             0

@@ -40,6 +40,8 @@ pub const ZBALL: Game = Game {
     // updates or is drawn; the music plays on.
     pause: Some(0x756958),
     screens: None,
+    // Its frames wait with Sleep, which takes virtual time without spinning.
+    frame_wait: None,
     // One node per screen, built from CONFIG.XML.lev (0x419430): the intro, the
     // title, the menus and every level of every set, then "LEVEL SET COMPLETED!"
     // and last the high scores (name entry when there is a new one). The main loop

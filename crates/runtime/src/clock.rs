@@ -87,6 +87,21 @@ impl Cadence {
         v
     }
 
+    /// Read the counter as `read_qpc` would until a value above `end`, and return
+    /// that value and the number of reads before it: in closed form, as each read
+    /// advances the clock by the same step (a game's frame wait, game.rs FrameWait).
+    pub fn read_qpc_past(&mut self, freq: u64, end: u64) -> (u64, u64) {
+        let freq = freq.max(1) as u128;
+        let second = NS * UNITS_PER_NS;
+        let step = second.div_ceil(freq);
+        // The earliest time whose tick count is above `end`.
+        let target = ((end as u128 + 1) * second).div_ceil(freq);
+        let skipped = if self.t >= target { 0 } else { (target - self.t).div_ceil(step) };
+        self.t += skipped * step;
+        self.qpc_reads += skipped as u64;
+        (self.read_qpc(freq as u64), skipped as u64)
+    }
+
     fn note_read(&mut self) {
         self.reads_since_wait = self.reads_since_wait.saturating_add(1);
         if self.reads_since_wait < STALL_READS {

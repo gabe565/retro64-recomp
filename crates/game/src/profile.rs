@@ -3,7 +3,7 @@
 //! Addresses are documented in docs/ (function-map, initial-investigation).
 
 use bugatron_runtime::bindings::{sc, Action};
-use bugatron_runtime::game::{Difficulty, Font, Game, Logo, Screens, TitleLabel, Volumes};
+use bugatron_runtime::game::{Difficulty, Font, FrameWait, Game, Logo, Screens, TitleLabel, Volumes};
 
 pub const BUGATRON: Game = Game {
     name: "Bugatron",
@@ -59,6 +59,9 @@ pub const BUGATRON: Game = Game {
         enter_from: 12.0,
     }),
     // F3 cycles Normal → Hard → Easy, writing the labels at 0x437e60...
+    // The frame wait at the end of 0x41c180: QPC (returning to 0x41c30b), Sleep(0),
+    // against the last frame's counter 0x98de28 and the period 0x98de40.
+    frame_wait: Some(FrameWait { site: 0x41c30b, last: 0x98de28, period: 0x98de40 }),
     screen_list: None,
     difficulty: Some(Difficulty {
         value: 0x4370e4,

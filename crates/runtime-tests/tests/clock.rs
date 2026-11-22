@@ -149,3 +149,30 @@ fn busy_wait_without_sleep_falls_back_to_host_time() {
     c.vblank();
     assert_eq!(c.ticks(600) % 10, 0, "the next wait returns to a refresh boundary");
 }
+
+/// The frame wait's closed form gives the value and clock that reading in a loop
+/// gives (game.rs FrameWait).
+#[test]
+fn reading_past_a_value_matches_reading_in_a_loop() {
+    for freq in [24_000_000u64, 3_579_545, 1_193_182, 1000] {
+        for (start_reads, ahead) in [(0u64, 0u64), (1, 1), (5, 399_999), (1234, 400_000), (99, 12_345_678)] {
+            let mut looped = Cadence::new();
+            let mut closed = Cadence::new();
+            for _ in 0..start_reads {
+                looped.read_qpc(freq);
+                closed.read_qpc(freq);
+            }
+            let end = looped.ticks(freq) + ahead;
+            let mut v = looped.read_qpc(freq);
+            let mut reads = 1;
+            while v <= end {
+                v = looped.read_qpc(freq);
+                reads += 1;
+            }
+            let first = closed.read_qpc(freq);
+            let (w, skipped) = if first <= end { closed.read_qpc_past(freq, end) } else { (first, 0) };
+            let closed_reads = if first <= end { skipped + 2 } else { 1 };
+            assert_eq!((w, closed_reads, closed.ticks(freq)), (v, reads, looped.ticks(freq)), "freq {freq}, start {start_reads}, ahead {ahead}");
+        }
+    }
+}

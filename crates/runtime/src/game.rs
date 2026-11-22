@@ -33,6 +33,7 @@ pub struct Game {
     /// The game's pause flag (nonzero: paused). The overlay pauses the game with it.
     pub pause: Option<u32>,
     pub screens: Option<Screens>,
+    pub frame_wait: Option<FrameWait>,
     pub screen_list: Option<ScreenList>,
     pub difficulty: Option<Difficulty>,
     pub volumes: Option<Volumes>,
@@ -74,6 +75,20 @@ pub struct Screens {
     /// the next screen's camera starts, past the sign (overlay.rs `skip_loading`).
     pub skip_at: f32,
     pub enter_from: f32,
+}
+
+/// A frame wait that spins on QueryPerformanceCounter (with Sleep(0)) until the
+/// frame's time has passed: `now = QPC(); Sleep(0);` while `now <= last + period`
+/// and `now > period` (u64s; their high halves compared signed). The runtime
+/// reads on until then itself (imports.rs `qpc`), so the game reads the counter
+/// once per frame instead of tens of thousands of times; virtual time and what
+/// the game sees are the same.
+pub struct FrameWait {
+    /// The return address of the loop's QueryPerformanceCounter call.
+    pub site: u32,
+    /// The previous frame's counter and the frame period (u64s).
+    pub last: u32,
+    pub period: u32,
 }
 
 /// A game whose screens are a list it walks (Z-Ball), for high scores from the
@@ -169,6 +184,7 @@ impl Game {
         font: None,
         pause: None,
         screens: None,
+        frame_wait: None,
         screen_list: None,
         difficulty: None,
         volumes: None,
