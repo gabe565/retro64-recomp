@@ -1,0 +1,11 @@
+[package]
+name = "bugatron-scenario"
+description = "Scripted play scenarios for the game programs' tests"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+sha2.workspace = true
+serde_json.workspace = true

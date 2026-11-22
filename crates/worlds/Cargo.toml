@@ -10,6 +10,9 @@ publish.workspace = true
 bugatron-runtime.workspace = true
 bugatron-launcher.workspace = true
 
+[dev-dependencies]
+bugatron-scenario.workspace = true
+
 [build-dependencies]
 bugatron-build.workspace = true
 bugatron-recomp.workspace = true

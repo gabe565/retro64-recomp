@@ -117,6 +117,7 @@ dependencies = [
  "bugatron-launcher",
  "bugatron-recomp",
  "bugatron-runtime",
+ "bugatron-scenario",
  "sha2 0.10.9",
 ]
 
@@ -201,6 +202,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "bugatron-scenario"
+version = "1.0.0"
+dependencies = [
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "bugatron-unpack"
 version = "1.0.0"
 dependencies = [
@@ -216,6 +225,7 @@ dependencies = [
  "bugatron-launcher",
  "bugatron-recomp",
  "bugatron-runtime",
+ "bugatron-scenario",
 ]
 
 [[package]]
@@ -1507,6 +1517,7 @@ dependencies = [
  "bugatron-launcher",
  "bugatron-recomp",
  "bugatron-runtime",
+ "bugatron-scenario",
 ]
 
 [[package]]
