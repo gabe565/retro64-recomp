@@ -21,6 +21,7 @@ pub mod clock;
 pub mod config;
 pub mod cpu;
 pub mod ddraw;
+pub mod devil;
 pub mod dialog;
 pub mod display;
 pub mod files;
@@ -116,6 +117,8 @@ pub struct Runtime {
     pub(crate) dialog: Option<dialog::Dialog>,
     pub user: user::User,
     pub fmod: fmod::Fmod,
+    /// DevIL (`devil.dll`) images (Bugatron Worlds).
+    pub devil: devil::Devil,
     pub(crate) gpu: Option<render::gpu::Gpu>,
     pub(crate) gpu_unavailable: bool,
     /// Render on an offscreen GPU device without a window (tests).
@@ -221,6 +224,7 @@ impl Runtime {
             dialog: None,
             user: user::User::new((1024, 768)),
             fmod: Default::default(),
+            devil: Default::default(),
             gpu: None,
             gpu_unavailable: false,
             offscreen_gpu: false,
@@ -279,6 +283,7 @@ impl Runtime {
             dialog: None,
             user: user::User::new((1024, 768)),
             fmod: Default::default(),
+            devil: Default::default(),
             gpu: None,
             gpu_unavailable: false,
             offscreen_gpu: false,

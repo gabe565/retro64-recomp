@@ -4,4 +4,5 @@
 
 pub mod device;
 pub mod mixer;
+pub mod ogg;
 pub mod wav;

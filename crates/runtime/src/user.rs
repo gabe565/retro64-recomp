@@ -537,6 +537,19 @@ pub(crate) fn import(cpu: &mut Cpu, name: &str) -> bool {
             let v = match i { 0 => w, 1 => h, _ => fatal(&format!("GetSystemMetrics({i}) not emulated")) };
             ret(cpu, v as u32, 1);
         }
+        // The window as the guest sees it: its client area fills it, at the position
+        // ClientToScreen uses.
+        "GetWindowRect" => {
+            let (hwnd, r) = (arg(cpu, 0), arg(cpu, 1));
+            if hwnd != MAIN_HWND { fatal("GetWindowRect on unknown window"); }
+            with_rt(|rt| {
+                let w = rt.user.window.as_ref().unwrap();
+                for (i, v) in [w.x, w.y, w.x + w.w as i32, w.y + w.h as i32].into_iter().enumerate() { rt.mem.w32(r + 4 * i as u32, v as u32); }
+            });
+            ret(cpu, 1, 2);
+        }
+        // Minimise (Bugatron Worlds, when its Direct3D device is lost): nothing to do.
+        "CloseWindow" => ret(cpu, 1, 1),
         "GetClientRect" => {
             let (hwnd, r) = (arg(cpu, 0), arg(cpu, 1));
             if hwnd != MAIN_HWND { fatal("GetClientRect on unknown window"); }

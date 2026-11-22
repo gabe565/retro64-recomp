@@ -1,7 +1,9 @@
 //! FMOD 3.x (`fmod.dll`): the functions the games import, on the software mixer
 //! (audio/mixer.rs) and SDL3 audio (audio/device.rs). Bugatron uses FMOD 3.61;
 //! Z-Ball an older build with a few older or extra calls (`Sample_SetLoopMode`,
-//! `StopSound`, `GetCurrentSample`, `FMUSIC_StopAllSongs`).
+//! `StopSound`, `GetCurrentSample`, `FMUSIC_StopAllSongs`); Bugatron Worlds a
+//! newer one that loads sounds (Ogg Vorbis) and songs from memory
+//! (`Sample_Load@20`, `FMUSIC_LoadSongEx`) and sets channel volumes.
 //!
 //! How Bugatron uses FMOD (0x416b40–0x417320):
 //! - `FSOUND_SetMaxHardwareChannels(0)` (software mixing only), then
@@ -21,7 +23,6 @@
 
 use crate::audio::device::Device;
 use crate::audio::mixer::{Mixer, Sample, Song};
-use crate::audio::wav;
 use crate::{fatal, Runtime};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -73,6 +74,60 @@ const FSOUND_FREE: u32 = 0xffff_ffff;
 const FSOUND_ALL: u32 = 0xffff_fffd;
 const FSOUND_LOADMEMORY: u32 = 0x8000;
 
+/// A sample or song's bytes: a file, or with FSOUND_LOADMEMORY guest memory
+/// (`length` bytes at `name_or_data`). `offset` skips into either.
+fn sample_bytes(rt: &mut Runtime, name_or_data: u32, mode: u32, offset: u32, length: u32) -> Option<(Vec<u8>, String)> {
+    if mode & FSOUND_LOADMEMORY != 0 {
+        let d = rt.mem.slice(name_or_data.wrapping_add(offset), length as usize).to_vec();
+        Some((d, format!("memory {name_or_data:#x}+{length}")))
+    } else {
+        let file = rt.mem.cstr(name_or_data);
+        let d = read_game_file(rt, &file)?;
+        let start = (offset as usize).min(d.len());
+        let end = if length == 0 { d.len() } else { (start + length as usize).min(d.len()) };
+        Some((d[start..end].to_vec(), file))
+    }
+}
+
+/// Load a sample (FSOUND_Sample_Load); its handle, or 0.
+fn load_sample(rt: &mut Runtime, name_or_data: u32, mode: u32, offset: u32, length: u32) -> u32 {
+    let Some((data, name)) = sample_bytes(rt, name_or_data, mode, offset, length) else { return 0 };
+    match crate::audio::ogg::decode_sample(&data) {
+        Ok(pcm) => {
+            let h = new_handle(rt);
+            let mut s = Sample::new(pcm);
+            if mode & 0x7 != 0 {
+                s.mode = mode & 0x7;
+            }
+            rt.fmod.mixer().samples.insert(h, Arc::new(s));
+            rt.fmod.names.insert(h, name);
+            h
+        }
+        Err(e) => {
+            eprintln!("[fmod] {name}: {e}");
+            0
+        }
+    }
+}
+
+/// Load a song (FMUSIC_LoadSong/LoadSongEx); its handle, or 0.
+fn load_song(rt: &mut Runtime, name_or_data: u32, mode: u32, offset: u32, length: u32) -> u32 {
+    let Some((data, name)) = sample_bytes(rt, name_or_data, mode, offset, length) else { return 0 };
+    let rate = rt.fmod.mixer().rate;
+    match bugatron_xmp_sys::Player::load(&data, rate) {
+        Ok(p) => {
+            let h = new_handle(rt);
+            rt.fmod.mixer().songs.insert(h, Song { source: Box::new(p), playing: false, paused: false, volume: 256 });
+            rt.fmod.names.insert(h, name);
+            h
+        }
+        Err(e) => {
+            eprintln!("[fmod] {name}: {e}");
+            0
+        }
+    }
+}
+
 /// Returns (value, argument dwords popped), or None if `name` is not an FMOD import.
 pub(crate) fn call(rt: &mut Runtime, name: &str, arg: &dyn Fn(u32) -> u32) -> Option<(u32, u32)> {
     let r = match name {
@@ -116,30 +171,23 @@ pub(crate) fn call(rt: &mut Runtime, name: &str, arg: &dyn Fn(u32) -> u32) -> Op
             rt.fmod.mixer().sfx_volume = arg(0).min(255);
             (0, 1)
         }
-        "_FSOUND_Sample_Load@16" => {
-            let (p, mode) = (arg(1), arg(2));
-            if mode & FSOUND_LOADMEMORY != 0 {
-                fatal("FSOUND_Sample_Load from memory is not emulated (the game loads files)");
-            }
-            let file = rt.mem.cstr(p);
-            let decoded = read_game_file(rt, &file).map(|d| wav::decode(&d));
-            match decoded {
-                Some(Ok(pcm)) => {
-                    let h = new_handle(rt);
-                    let mut s = Sample::new(pcm);
-                    if mode & 0x7 != 0 {
-                        s.mode = mode & 0x7;
-                    }
-                    rt.fmod.mixer().samples.insert(h, Arc::new(s));
-                    rt.fmod.names.insert(h, file);
-                    (h, 4)
-                }
-                Some(Err(e)) => {
-                    eprintln!("[fmod] {file}: {e}");
-                    (0, 4)
-                }
-                None => (0, 4),
-            }
+        // FMOD 3.6: (index, name_or_data, mode, memlength).
+        "_FSOUND_Sample_Load@16" => (load_sample(rt, arg(1), arg(2), 0, arg(3)), 4),
+        // FMOD 3.7: (index, name_or_data, mode, offset, length).
+        "_FSOUND_Sample_Load@20" => (load_sample(rt, arg(1), arg(2), arg(3), arg(4)), 5),
+        // (pool, poollen, alloc, realloc, free): FMOD's memory is the host's here.
+        "_FSOUND_SetMemorySystem@20" => (1, 5),
+        // (channel, volume 0..255): FSOUND_ALL sets every channel.
+        "_FSOUND_SetVolume@8" => {
+            let mut m = rt.fmod.mixer();
+            let (c, v) = (arg(0), arg(1).min(255));
+            let ok = if c == FSOUND_ALL {
+                m.channels.iter_mut().flatten().for_each(|c| c.volume = v);
+                true
+            } else {
+                m.channels.get_mut(c as usize).and_then(|c| c.as_mut()).map(|c| c.volume = v).is_some()
+            };
+            (ok as u32, 2)
         }
         "_FSOUND_Sample_Free@4" => {
             let h = arg(0);
@@ -185,23 +233,13 @@ pub(crate) fn call(rt: &mut Runtime, name: &str, arg: &dyn Fn(u32) -> u32) -> Op
             let r = rt.fmod.mixer().play(s);
             (r.map_or(0xffff_ffff, |c| c as u32), 2)
         }
-        "_FMUSIC_LoadSong@4" => {
-            let file = rt.mem.cstr(arg(0));
-            let rate = rt.fmod.mixer().rate;
-            let player = read_game_file(rt, &file).map(|d| bugatron_xmp_sys::Player::load(&d, rate));
-            match player {
-                Some(Ok(p)) => {
-                    let h = new_handle(rt);
-                    rt.fmod.mixer().songs.insert(h, Song { source: Box::new(p), playing: false, paused: false, volume: 256 });
-                    rt.fmod.names.insert(h, file);
-                    (h, 1)
-                }
-                Some(Err(e)) => {
-                    eprintln!("[fmod] {file}: {e}");
-                    (0, 1)
-                }
-                None => (0, 1),
-            }
+        "_FMUSIC_LoadSong@4" => (load_song(rt, arg(0), 0, 0, 0), 1),
+        // (name_or_data, offset, length, mode, samplelist, samplelistnum).
+        "_FMUSIC_LoadSongEx@24" => (load_song(rt, arg(0), arg(3), arg(1), arg(2)), 6),
+        "_FMUSIC_StopSong@4" => {
+            let mut m = rt.fmod.mixer();
+            let ok = m.songs.get_mut(&arg(0)).map(|s| s.playing = false).is_some();
+            (ok as u32, 1)
         }
         "_FMUSIC_FreeSong@4" => {
             let h = arg(0);

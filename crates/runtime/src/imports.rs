@@ -4,7 +4,13 @@
 //! the executable's import table resolves to a stub that stops the run with the
 //! function's name, so the implemented surface grows from evidence.
 
-use crate::{fatal, with_rt, Cpu, Runtime};
+use crate::{fatal, with_rt, Cpu, Runtime, STACK_LOW, STACK_TOP};
+
+/// The first `n` stack arguments of a call, for a DLL that takes up to `n`;
+/// those past the top of the guest stack (a call with fewer) read as 0.
+fn call_args(rt: &Runtime, cpu: &Cpu, n: u32) -> Vec<u32> {
+    (0..n).map(|i| if cpu.esp + 8 + 4 * i <= STACK_TOP { arg(rt, cpu, i) } else { 0 }).collect()
+}
 
 /// stdcall argument `i` (0-based) of the import being called.
 fn arg(rt: &Runtime, cpu: &Cpu, i: u32) -> u32 {
@@ -91,8 +97,15 @@ fn dispatch_inner(cpu: &mut Cpu, dll: &str, name: &str) {
 fn call(rt: &mut Runtime, cpu: &mut Cpu, dll: &str, name: &str) {
     macro_rules! a { ($i:expr) => { arg(rt, cpu, $i) }; }
     if dll.eq_ignore_ascii_case("fmod.dll") {
-        let args: Vec<u32> = (0..4).map(|i| arg(rt, cpu, i)).collect();
+        let args = call_args(rt, cpu, 6);
         if let Some((v, n)) = crate::fmod::call(rt, name, &|i| args[i as usize]) {
+            ret(cpu, v, n);
+            return;
+        }
+    }
+    if dll.eq_ignore_ascii_case("devil.dll") {
+        let args = call_args(rt, cpu, 3);
+        if let Some((v, n)) = crate::devil::call(rt, name, &|i| args[i as usize]) {
             ret(cpu, v, n);
             return;
         }
@@ -100,6 +113,20 @@ fn call(rt: &mut Runtime, cpu: &mut Cpu, dll: &str, name: &str) {
     match (dll, name) {
         // ---- process / module -------------------------------------------------
         ("kernel32.dll", "GetVersion") => ret(cpu, 0x0a28_0105, 0), // Windows XP SP-era 5.1.2600
+        ("kernel32.dll", "GetVersionExA") => {
+            // OSVERSIONINFOA (or ...EXA): the same Windows XP 5.1.2600 as GetVersion.
+            let p = a!(0);
+            let size = rt.mem.r32(p);
+            if size < 148 {
+                ret(cpu, 0, 1);
+            } else {
+                rt.mem.slice_mut(p + 4, size as usize - 4).fill(0);
+                for (i, v) in [5, 1, 2600, 2 /* VER_PLATFORM_WIN32_NT */].into_iter().enumerate() {
+                    rt.mem.w32(p + 4 + 4 * i as u32, v);
+                }
+                ret(cpu, 1, 1);
+            }
+        }
         ("kernel32.dll", "GetCommandLineA") => ret(cpu, rt.command_line, 0),
         ("kernel32.dll", "GetStartupInfoA") => {
             let p = a!(0);
@@ -137,6 +164,47 @@ fn call(rt: &mut Runtime, cpu: &mut Cpu, dll: &str, name: &str) {
             ret(cpu, 0, 2)
         }
         ("kernel32.dll", "GetCurrentThreadId") => ret(cpu, 1, 0),
+        ("kernel32.dll", "GetCurrentProcessId") => ret(cpu, 1, 0), // as the TEB
+        ("kernel32.dll", "GetTickCount") => ret(cpu, rt.clock_ms(), 0),
+        ("kernel32.dll", "GetSystemTimeAsFileTime") => {
+            // Virtual time from 2006-09-13 00:00 UTC (Bugatron Worlds' build date), so
+            // scripted runs repeat; the Visual C++ 2003 runtime seeds its stack cookie
+            // with it. FILETIME: 100 ns since 1601.
+            const START: u64 = (1_158_105_600 + 11_644_473_600) * 10_000_000;
+            let t = START + rt.clock_ms() as u64 * 10_000;
+            let p = a!(0);
+            rt.mem.w32(p, t as u32);
+            rt.mem.w32(p + 4, (t >> 32) as u32);
+            ret(cpu, 0, 1);
+        }
+        ("kernel32.dll", "GetSystemInfo") => {
+            // SYSTEM_INFO: one x86 Pentium II-class processor (level 6), 4 KiB pages.
+            let p = a!(0);
+            rt.mem.slice_mut(p, 36).fill(0);
+            for (o, v) in [(4, 0x1000), (8, 0x1_0000), (12, 0x7ffe_ffff), (16, 1), (20, 1), (24, 586), (28, 0x1_0000)] {
+                rt.mem.w32(p + o, v);
+            }
+            rt.mem.w16(p + 32, 6);
+            ret(cpu, 0, 1);
+        }
+        ("kernel32.dll", "GetLocaleInfoA") => {
+            // (lcid, type, buf, len): only LOCALE_IDEFAULTANSICODEPAGE is asked for
+            // (by the C runtime's locale setup); the ANSI code page is 1252, as GetACP.
+            let (ty, buf, len) = (a!(1), a!(2), a!(3));
+            if ty & 0xffff != 0x1004 {
+                fatal(&format!("GetLocaleInfoA: locale data {ty:#x} not emulated"));
+            }
+            let v = b"1252\0";
+            if len == 0 {
+                ret(cpu, v.len() as u32, 4);
+            } else if (len as usize) < v.len() {
+                rt.last_error = 122; // ERROR_INSUFFICIENT_BUFFER
+                ret(cpu, 0, 4);
+            } else {
+                rt.mem.write(buf, v);
+                ret(cpu, v.len() as u32, 4);
+            }
+        }
         ("kernel32.dll", "GetCurrentProcess") => ret(cpu, 0xffff_ffff, 0),
         ("kernel32.dll", "GetCurrentThread") => ret(cpu, 0xffff_fffe, 0),
         ("kernel32.dll", "GetLastError") => ret(cpu, rt.last_error, 0),
@@ -294,6 +362,37 @@ fn call(rt: &mut Runtime, cpu: &mut Cpu, dll: &str, name: &str) {
             }
             ret(cpu, r, 4);
         }
+        ("kernel32.dll", "VirtualProtect") => {
+            // (addr, size, new, &old): memory is always readable and writable here.
+            let old = a!(3);
+            if old != 0 {
+                rt.mem.w32(old, 0x04); // PAGE_READWRITE
+            }
+            ret(cpu, 1, 4);
+        }
+        ("kernel32.dll", "VirtualQuery") => {
+            // (addr, MEMORY_BASIC_INFORMATION*, len): the executable image (MEM_IMAGE,
+            // as the C runtime's exception-handler check expects), the stack, or
+            // other committed memory.
+            let (addr, mbi, len) = (a!(0), a!(1), a!(2));
+            if len < 28 {
+                ret(cpu, 0, 3);
+            } else {
+                let image = (rt.pe.image_base, rt.pe.image_base + rt.pe.size_of_image);
+                let (base, end, ty, protect) = if (image.0..image.1).contains(&addr) {
+                    (image.0, image.1, 0x100_0000, 0x20) // MEM_IMAGE, PAGE_EXECUTE_READ
+                } else if (STACK_LOW..STACK_TOP).contains(&addr) {
+                    (STACK_LOW, STACK_TOP, 0x2_0000, 0x04) // MEM_PRIVATE, PAGE_READWRITE
+                } else {
+                    (addr & !0xfff, (addr & !0xfff) + 0x1000, 0x2_0000, 0x04)
+                };
+                let page = addr & !0xfff;
+                for (i, v) in [page, base, protect, end - page, 0x1000 /* MEM_COMMIT */, protect, ty].into_iter().enumerate() {
+                    rt.mem.w32(mbi + 4 * i as u32, v);
+                }
+                ret(cpu, 28, 3);
+            }
+        }
         ("kernel32.dll", "VirtualFree") => {
             let (addr, size, ty) = (a!(0), a!(1), a!(2));
             if ty & 0x4000 != 0 && size != 0 {
@@ -304,6 +403,7 @@ fn call(rt: &mut Runtime, cpu: &mut Cpu, dll: &str, name: &str) {
         }
         // ---- thread-local storage / sync ---------------------------------------
         ("kernel32.dll", "TlsAlloc") => { rt.tls.push(0); ret(cpu, rt.tls.len() as u32 - 1, 0); }
+        ("kernel32.dll", "TlsFree") => { let ok = (a!(0) as usize) < rt.tls.len(); ret(cpu, ok as u32, 1); }
         ("kernel32.dll", "TlsSetValue") => {
             let i = a!(0) as usize;
             if i < rt.tls.len() { rt.tls[i] = a!(1); ret(cpu, 1, 2) } else { ret(cpu, 0, 2) }
@@ -315,6 +415,12 @@ fn call(rt: &mut Runtime, cpu: &mut Cpu, dll: &str, name: &str) {
         }
         ("kernel32.dll", "InitializeCriticalSection") | ("kernel32.dll", "DeleteCriticalSection")
         | ("kernel32.dll", "EnterCriticalSection") | ("kernel32.dll", "LeaveCriticalSection") => ret(cpu, 0, 1),
+        ("kernel32.dll", "InterlockedExchange") => {
+            let (p, v) = (a!(0), a!(1));
+            let old = rt.mem.r32(p);
+            rt.mem.w32(p, v);
+            ret(cpu, old, 2);
+        }
         ("kernel32.dll", "InterlockedIncrement") | ("kernel32.dll", "InterlockedDecrement") => {
             let p = a!(0);
             let v = if name == "InterlockedIncrement" { rt.mem.r32(p).wrapping_add(1) } else { rt.mem.r32(p).wrapping_sub(1) };
