@@ -8,7 +8,10 @@
 //! - `move@XxY` moves the pointer, `click@XxY` clicks the left button (released
 //!   two flips later), in guest screen coordinates;
 //! - `rel@DXxDY` is host mouse motion of (DX, DY) points (may be negative);
-//! - `QUIT` asks the window to close, as the host's close button or Cmd-Q does.
+//! - `QUIT` asks the window to close, as the host's close button or Cmd-Q does;
+//! - `SETTINGS[KEY KEY ...]` opens the settings overlay and gives it those keys,
+//!   one per overlay tick (flips stop while it is open); it closes when they run
+//!   out, if they haven't closed it.
 //!
 //! The simulation is deterministic, so a script replays identically.
 
@@ -50,6 +53,8 @@ pub enum Input {
     Button(bool, (i32, i32)),
     /// The host asks the window to close (as SDL_EVENT_QUIT / the close button).
     Quit,
+    /// Open the settings overlay and give it these keys (SDL scancodes).
+    Settings(&'static [i32]),
 }
 
 /// Parse a script into (flip, event) pairs.
@@ -64,6 +69,9 @@ pub fn parse(spec: &str) -> Result<Vec<(u64, Input)>, String> {
         let f: u64 = frame.parse().map_err(|_| format!("bad frame in {item}"))?;
         if key == "QUIT" {
             ev.push((f, Input::Quit));
+        } else if let Some(keys) = key.strip_prefix("SETTINGS[").and_then(|k| k.strip_suffix(']')) {
+            let keys: Vec<i32> = keys.split_whitespace().map(scancode).collect::<Result<_, _>>()?;
+            ev.push((f, Input::Settings(Box::leak(keys.into_boxed_slice()))));
         } else if let Some(p) = key.strip_prefix("rel@") {
             ev.push((f, Input::Rel(point(p)?)));
         } else if let Some(p) = key.strip_prefix("move@") {
@@ -94,6 +102,7 @@ pub fn apply(rt: &mut Runtime, events: &[(u64, Input)], n: u64) {
             Input::Rel((dx, dy)) => user::mouse_motion_rt(rt, dx as f32, dy as f32),
             Input::Button(down, p) => user::mouse_button_rt(rt, 1, down, p),
             Input::Quit => user::close_requested_rt(rt),
+            Input::Settings(keys) => crate::overlay::open_scripted(rt, keys),
         }
     }
 }

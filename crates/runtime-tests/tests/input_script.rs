@@ -56,3 +56,11 @@ fn quit_posts_the_close_command_like_the_host_close_button() {
     assert_ne!(call_import(&mut cpu, "user32.dll", "PeekMessageA", &[m, 0, 0, 0, 1]), 0);
     assert_eq!((r32(m + 4), r32(m + 8)), (0x112, 0xf060), "WM_SYSCOMMAND(SC_CLOSE)");
 }
+
+#[test]
+fn settings_items_carry_their_keys() {
+    let ev = parse("600:SETTINGS[DOWN RIGHT ESC],700:F1").unwrap();
+    assert_eq!(ev[0], (600, Input::Settings(&[81, 79, 41])));
+    assert_eq!(ev[1].0, 700);
+    assert!(parse("1:SETTINGS[NOPE]").is_err());
+}

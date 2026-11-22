@@ -89,6 +89,8 @@ pub struct Overlay {
     go_to_high_scores: bool,
     /// The game's pause flag before the overlay opened.
     was_paused: bool,
+    /// Keys still to come from a script (`input_script`'s SETTINGS), one per tick.
+    script: std::collections::VecDeque<i32>,
     /// The last frame shown, which the overlay is drawn over.
     last_front: Option<u32>,
     /// The overlay as drawn (RGBA8, the frame's size).
@@ -148,8 +150,20 @@ fn current_difficulty(rt: &Runtime) -> usize {
 
 /// Ask for the overlay at the next flip (F10 or controller Back, from `user::pump`).
 pub fn request(rt: &mut Runtime) {
+    if !rt.user.ignore_host_input {
+        open(rt);
+    }
+}
+
+/// Open the overlay from a script, with the keys to give it (`input_script`).
+pub fn open_scripted(rt: &mut Runtime, keys: &[i32]) {
+    open(rt);
+    rt.overlay.script = keys.iter().copied().collect();
+}
+
+fn open(rt: &mut Runtime) {
     let Some(paused) = rt.game.pause.filter(|_| rt.game.font.is_some()) else { return };
-    if rt.overlay.open || rt.user.headless || rt.user.ignore_host_input || rt.gpu.is_none() || rt.overlay.last_front.is_none() {
+    if rt.overlay.open || rt.user.headless || rt.gpu.is_none() || rt.overlay.last_front.is_none() {
         return;
     }
     // Release whatever the player was holding, so nothing sticks while paused.
@@ -215,6 +229,13 @@ pub(crate) fn deliver(cpu: &mut crate::Cpu) {
 /// a loop): handle input, draw the overlay over the last frame, and wait a refresh.
 pub(crate) fn tick(rt: &mut Runtime) {
     poll_events(rt);
+    if rt.overlay.open && rt.user.ignore_host_input {
+        // A script's keys, one per tick; when they run out, close.
+        match rt.overlay.script.pop_front() {
+            Some(sc) => input(rt, Input::Key(sc)),
+            None => rt.overlay.open = false,
+        }
+    }
     let Some(front) = rt.overlay.last_front else { return close(rt) };
     if rt.overlay.open {
         let (w, h) = { let s = rt.com.surface(front); (s.w, s.h) };
@@ -265,11 +286,11 @@ fn poll_events(rt: &mut Runtime) {
             rt.user.gamepads.removed(unsafe { ev.gdevice.which });
         } else if ty == SDL_EVENT_KEY_DOWN.0 || ty == SDL_EVENT_KEY_UP.0 {
             let k = unsafe { ev.key };
-            if crate::user::runtime_shortcut_rt(rt, k.scancode.0, k.down, k.repeat, k.r#mod.0) || !k.down {
+            if rt.user.ignore_host_input || crate::user::runtime_shortcut_rt(rt, k.scancode.0, k.down, k.repeat, k.r#mod.0) || !k.down {
                 continue;
             }
             input(rt, Input::Key(k.scancode.0));
-        } else if ty == SDL_EVENT_GAMEPAD_BUTTON_DOWN.0 {
+        } else if ty == SDL_EVENT_GAMEPAD_BUTTON_DOWN.0 && !rt.user.ignore_host_input {
             input(rt, Input::Pad(unsafe { ev.gbutton.button } as i32));
         }
     }
