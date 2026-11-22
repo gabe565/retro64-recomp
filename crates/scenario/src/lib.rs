@@ -1,8 +1,8 @@
 //! Scripted play scenarios, run by each game crate's tests (`tests/scenarios.rs`).
 //!
-//! A scenario runs the game program with scripted input (`--input`), muted and
-//! unpaced (game time is virtual, so it plays the same as in real time), in a
-//! temporary save folder, and checks that it exits cleanly and that frames,
+//! A scenario runs the game program with scripted input (`--input`), muted,
+//! unpaced (game time is virtual, so it plays the same as in real time) and
+//! offscreen (no window), in a temporary save folder, and checks that it exits cleanly and that frames,
 //! game memory (`--peek`) and recorded audio are as expected.
 //!
 //! Frame hashes are kept per platform in the game crate's `tests/frames.json`
@@ -59,7 +59,7 @@ pub fn run(exe: &str, crate_dir: &str, s: &Scenario) {
         .collect();
     let audio = s.checks.iter().find_map(|c| if let Check::Audio(secs) = c { Some(*secs) } else { None });
     let mut cmd = Command::new(exe);
-    cmd.args(["--mute", "--unpaced", "--save"]).arg(dir.join("save"));
+    cmd.args(["--mute", "--unpaced", "--offscreen", "--save"]).arg(dir.join("save"));
     cmd.args(["--input", s.input, "--frames", &s.frames.to_string()]).args(s.args);
     if !flips.is_empty() {
         let list: Vec<String> = flips.iter().map(u64::to_string).collect();
