@@ -83,6 +83,10 @@ struct Args {
     /// virtual, so it plays the same (for scripted runs and tests)
     #[arg(long, help_heading = "Testing")]
     unpaced: bool,
+    /// Render without a window (--dump-frames still saves frames); with --unpaced,
+    /// nothing waits for the display
+    #[arg(long, help_heading = "Testing")]
+    offscreen: bool,
     /// Stop after N vertical blanks and print import/COM call counts
     #[arg(long, value_name = "N", help_heading = "Testing")]
     frames: Option<u64>,
@@ -266,6 +270,8 @@ pub fn run(t: &Title) -> ! {
     }
     rt.clock.cadence = Some(bugatron_runtime::clock::Cadence::new());
     rt.clock.pace = !args.unpaced;
+    rt.offscreen_gpu = args.offscreen;
+    rt.user.headless = args.offscreen;
     rt.clock.stop_after_vblanks = frames;
     rt.capture_frames = dumps;
     rt.capture_dir = dump_dir;

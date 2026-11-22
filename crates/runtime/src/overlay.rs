@@ -163,7 +163,7 @@ pub fn open_scripted(rt: &mut Runtime, keys: &[i32]) {
 
 fn open(rt: &mut Runtime) {
     let Some(paused) = rt.game.pause.filter(|_| rt.game.font.is_some()) else { return };
-    if rt.overlay.open || rt.user.headless || rt.gpu.is_none() || rt.overlay.last_front.is_none() {
+    if rt.overlay.open || rt.gpu.is_none() || rt.overlay.last_front.is_none() {
         return;
     }
     // Release whatever the player was holding, so nothing sticks while paused.
