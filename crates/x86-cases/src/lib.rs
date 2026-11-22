@@ -241,6 +241,16 @@ pub fn cases() -> Vec<Case> {
                     a.fld(qword_ptr(ebx + 8))?; a.fld(qword_ptr(ebx))?; a.fcompp()?; a.fnstsw(ax)?; a.sahf()?; a.setb(byte_ptr(ebx + 16))?; a.sete(byte_ptr(ebx + 17)) },
                flag_mask: CF | ZF, fsw_mask: 0x4500, ptr_regs: &[],
                expect: Expect { regs: &[], flags: Some(CF), mem: mem![(16, &[1, 0])] }, ..base.clone() },
+        // PUSHFD keeps the arithmetic flags and DF; POPFD restores them. (The ID bit,
+        // which the runtime keeps clear as on a CPU without CPUID, is not compared.)
+        // 1 - 2 sets CF, PF, AF and SF.
+        Case { name: "pushfd_popfd_flags", asm: |a| {
+                    a.mov(eax, 1)?; a.cmp(eax, 2)?; a.std()?; a.pushfd()?; a.pop(ecx)?; a.cld()?;
+                    a.and(ecx, (OSZAPC | 0x400) as i32)?; a.mov(dword_ptr(ebx), ecx)?;
+                    a.push(0xc43)?; a.popfd()?; a.seto(byte_ptr(ebx + 4))?; a.sete(byte_ptr(ebx + 5))?; a.setb(byte_ptr(ebx + 6))?;
+                    a.pushfd()?; a.pop(edx)?; a.cld()?; a.and(edx, 0x400) },
+               flag_mask: 0, ptr_regs: &[],
+               expect: Expect { regs: &[(R::Ecx, 0x495), (R::Edx, 0x400)], flags: None, mem: mem![(0, &[0x95, 0x04, 0, 0, 1, 1, 1])] }, ..base.clone() },
         Case { name: "x87_fxch_fchs_fabs_fsqrt", mem: mem![(0, f64b!(2.0)), (8, f64b!(-9.0))], asm: |a| {
                     a.fld(qword_ptr(ebx))?; a.fld(qword_ptr(ebx + 8))?; a.fxch(st0, st1)?; a.fsqrt()?; a.fstp(qword_ptr(ebx + 16))?;
                     a.fabs()?; a.fchs()?; a.fstp(qword_ptr(ebx + 24)) },

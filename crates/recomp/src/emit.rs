@@ -347,6 +347,8 @@ impl<'a> Ctx<'a> {
             Mnemonic::Cmc => self.line("flags_set_explicit(c, flags_get(c) ^ F_CF);"),
             Mnemonic::Sahf => self.line("op_sahf(c);"),
             Mnemonic::Lahf => self.line("op_lahf(c);"),
+            Mnemonic::Pushfd => self.line("op_pushfd(c);"),
+            Mnemonic::Popfd => self.line("op_popfd(c);"),
             Mnemonic::Leave => self.line("c->esp = c->ebp; c->ebp = pop32(c);"),
             Mnemonic::Bt | Mnemonic::Bts | Mnemonic::Btr | Mnemonic::Btc => {
                 if sz != 16 && sz != 32 { return false; }

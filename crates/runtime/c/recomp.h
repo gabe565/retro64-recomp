@@ -402,5 +402,19 @@ static inline void op_lahf(Cpu *c) {
     uint32_t f = flags_get(c) & (F_SF | F_ZF | F_AF | F_PF | F_CF);
     c->eax = set8hi(c->eax, f | 0x02u);
 }
+/* PUSHFD/POPFD: the arithmetic flags and DF, with IF set and bit 1 (always 1).
+ * The ID bit (21) never changes, as on a CPU without CPUID: the Visual C++ 2003
+ * runtime's SSE2 check (Bugatron Worlds) then skips CPUID and takes its x87 paths. */
+#define F_DF 0x400u
+#define F_IF 0x200u
+static inline void op_pushfd(Cpu *c) {
+    uint32_t f = flags_get(c) & (F_OF | F_SF | F_ZF | F_AF | F_PF | F_CF);
+    push32(c, f | (c->df ? F_DF : 0u) | F_IF | 0x02u);
+}
+static inline void op_popfd(Cpu *c) {
+    uint32_t v = pop32(c);
+    flags_set_explicit(c, v & (F_OF | F_SF | F_ZF | F_AF | F_PF | F_CF));
+    c->df = (v & F_DF) != 0;
+}
 
 #endif /* BUGATRON_RECOMP_H */
