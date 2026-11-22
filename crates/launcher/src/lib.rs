@@ -87,10 +87,15 @@ struct Args {
     #[arg(long, value_name = "N", help_heading = "Testing")]
     frames: Option<u64>,
     /// Scripted input at flip numbers, e.g. "600:F1,700:LEFT+,760:LEFT-": KEY tap, KEY+ hold,
-    /// KEY- release, move@XxY, click@XxY, rel@DXxDY, QUIT. Scripted runs stay windowed and
-    /// ignore the host keyboard and mouse
+    /// KEY- release, move@XxY, click@XxY, rel@DXxDY, QUIT, SETTINGS[KEY KEY ...] (the settings
+    /// overlay with those keys). Scripted runs stay windowed and ignore the host keyboard and
+    /// mouse
     #[arg(long, value_name = "SCRIPT", value_parser = |s: &str| input_script::parse(s).map(Script), help_heading = "Testing")]
     input: Option<Script>,
+    /// Print guest memory after flips, as `[peek] flip N ADDR = VALUE` (a u32), e.g.
+    /// "600:0x4370e4,900:0x4370e4"
+    #[arg(long, value_name = "FLIP:ADDR,...", value_delimiter = ',', value_parser = parse_peek, help_heading = "Testing")]
+    peek: Vec<(u64, u32)>,
     /// Save the screen after these flips as PNG
     #[arg(long, value_name = "A,B,...", value_delimiter = ',', help_heading = "Testing")]
     dump_frames: Vec<u64>,
@@ -100,6 +105,19 @@ struct Args {
     /// Record the FMOD mix (WAV) from the first song on, for SECONDS
     #[arg(long, num_args = 2, value_names = ["FILE", "SECONDS"], help_heading = "Testing")]
     record_audio: Option<Vec<String>>,
+}
+
+/// A `--peek` item: FLIP:ADDR, the address in hex (0x...) or decimal.
+fn parse_peek(s: &str) -> Result<(u64, u32), String> {
+    let (f, a) = s.split_once(':').ok_or_else(|| format!("expected FLIP:ADDR, got {s}"))?;
+    let flip = f.trim().parse().map_err(|_| format!("bad flip in {s}"))?;
+    let a = a.trim();
+    let addr = match a.strip_prefix("0x") {
+        Some(h) => u32::from_str_radix(h, 16),
+        None => a.parse(),
+    }
+    .map_err(|_| format!("bad address in {s}"))?;
+    Ok((flip, addr))
 }
 
 /// `name` in `dir`, matching the file name case-insensitively (Linux file systems are not).
@@ -271,8 +289,12 @@ pub fn run(t: &Title) -> ! {
         rt.video_mode = Some(display::mode_label(m));
     }
     let delta = t.delta.filter(|_| std::env::var("BUGATRON_TRACE").is_ok_and(|t| t.contains("delta")));
-    if delta.is_some() || !input.is_empty() {
+    let peek = args.peek;
+    if delta.is_some() || !input.is_empty() || !peek.is_empty() {
         rt.frame_hook = Some(Box::new(move |rt, n| {
+            for &(_, addr) in peek.iter().filter(|p| p.0 == n) {
+                eprintln!("[peek] flip {n} {addr:#x} = {:#x}", rt.mem.r32(addr));
+            }
             if let Some((delta, now)) = delta {
                 // The game's frame delta, written by its frame-timing function.
                 let (vt_ms, qpc) = rt.clock.cadence.as_ref().map(|c| (c.now_ns() / 1_000_000, c.qpc_reads)).unwrap_or((0, 0));
