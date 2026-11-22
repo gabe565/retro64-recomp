@@ -106,7 +106,7 @@ In each folder, the files are tried in the order of the tables above: `Bug3D.exe
 | `--windowed` | Start in a window. The game is fullscreen by default, as the original was |
 | `--run-in-background` | Keep running when another app has focus (the original paused) |
 | `--mute` | Run without sound: no audio device is opened. `--record-audio` still records the mix |
-| `--video-mode WxHxBPP` | For example `1600x1200x32` or `640x480x16`. The default is the largest 4:3 mode that fits your display. Bugatron Worlds starts at 800x600; its Options > Video Prefs switches to this mode, and the game keeps it for next time |
+| `--video-mode WxHxBPP` | For example `1600x1200x32` or `640x480x16`. The default is the largest 4:3 mode that fits your display. Games that show a setup dialog get this mode as the answer (the runtime fills the dialog in; it is never shown) |
 
 `--help` lists everything, including the testing options (`--input`, `--frames`, `--dump-frames`, `--record-audio`).
 

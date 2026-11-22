@@ -4,12 +4,27 @@
 //! is.
 //!
 //! Worlds is a later version of Bugatron's engine (Visual C++ 2003, its images
-//! through DevIL and its files in smash.wad). It starts at 800x600, or the mode
-//! saved in its prefs; Options > Video Prefs restarts it (in the same process)
-//! with its setup dialog, which the runtime answers with the chosen mode.
+//! through DevIL and its files in smash.wad). Its setup dialog, which the runtime
+//! answers with the chosen display mode, appears when the mode saved in its prefs
+//! is missing, and from Options > Video Prefs (which restarts it in the same
+//! process). On its first start, with no prefs, it picks the mode itself: 800x600,
+//! or 1280x1024 when a display driver's name has "radeon", "geforce" or "xabre"
+//! in it (0x406470). So the first start gets prefs whose mode is missing.
 
 use bugatron_runtime::bindings::{sc, Action};
 use bugatron_runtime::game::Game;
+
+/// The first start's prefs (see `first_run_saves`).
+const PREFS: [u8; 32] = {
+    let v: [u32; 8] = [0, 1, 31, 1_800_000, 0, 0, 90, 25];
+    let mut b = [0u8; 32];
+    let mut i = 0;
+    while i < 32 {
+        b[i] = (v[i / 4] >> (8 * (i % 4))) as u8;
+        i += 1;
+    }
+    b
+};
 
 /// Bugatron Worlds v1.01a, the free trial.
 pub const TRIAL: Game = Game {
@@ -17,6 +32,11 @@ pub const TRIAL: Game = Game {
     exe_name: "BugatronWorlds.exe",
     install_dir: "C:\\Bugatron Worlds",
     save_folder: "bugatron-worlds",
+    // prefs_bg.dll (read by 0x406470): driver, device and mode indices, trial time
+    // left (ms), two flags, music and sound volumes, as u32s. Mode 31 is an empty
+    // slot of the mode table, so the setup dialog appears; the rest is what the
+    // game uses without the file (a full trial, volumes 90 and 25).
+    first_run_saves: &[("prefs_bg.dll", &PREFS)],
     // The key table (0x43d0f8, read by the input poll 0x41b700) is Bugatron's, key
     // for key. Its menus are driven with the mouse; F2 opens the high scores. F3
     // and Delete are read as in Bugatron but not yet checked.
@@ -42,3 +62,14 @@ pub const TRIAL: Game = Game {
     bindings_note: "Space always fires and can't be rebound: high-score names use it.",
     ..Game::NONE
 };
+
+#[cfg(test)]
+mod tests {
+    use super::PREFS;
+
+    #[test]
+    fn first_run_prefs_ask_for_the_setup_dialog_with_a_full_trial() {
+        let v: Vec<u32> = PREFS.chunks(4).map(|b| u32::from_le_bytes(b.try_into().unwrap())).collect();
+        assert_eq!(v, [0, 1, 31, 1_800_000, 0, 0, 90, 25]);
+    }
+}

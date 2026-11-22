@@ -13,6 +13,7 @@ pub const ZBALL: Game = Game {
     exe_name: "Z-Ball.exe",
     install_dir: "C:\\Z-Ball",
     save_folder: "zball",
+    first_run_saves: &[],
     // The keys the input poll reads (table 0x437bb8, as Bugatron's 0x437f9c less
     // Space; flags at 0x743258..). The paddle, on the right edge, follows the mouse
     // vertically; Up and Down move it too. Left and Right are read but do nothing.

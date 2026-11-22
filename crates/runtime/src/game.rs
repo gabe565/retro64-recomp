@@ -16,6 +16,10 @@ pub struct Game {
     pub install_dir: &'static str,
     /// The per-user save folder's name (files.rs `default_save_dir`).
     pub save_folder: &'static str,
+    /// Files written to the save folder before the game's first start (when
+    /// missing; not in scripted runs): (name, contents). For a game whose own first
+    /// start would ignore the chosen display mode.
+    pub first_run_saves: &'static [(&'static str, &'static [u8])],
     /// The keys the game reads, with their default bindings (bindings.rs). The
     /// runtime adds its own action to open the settings overlay.
     pub actions: &'static [Action],
@@ -159,6 +163,7 @@ impl Game {
         exe_name: "game.exe",
         install_dir: crate::files::GAME_DIR,
         save_folder: "game",
+        first_run_saves: &[],
         actions: &[],
         bindings_note: "",
         font: None,

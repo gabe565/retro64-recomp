@@ -225,6 +225,17 @@ pub fn run(t: &Title) -> ! {
     rt.files.pack = pack;
     let save = save.or_else(|| bugatron_runtime::files::default_save_dir(t.game.save_folder)).unwrap_or_else(|| PathBuf::from("save"));
     eprintln!("saves: {}", save.display());
+    if !scripted {
+        for (name, data) in t.game.first_run_saves {
+            let p = save.join(name);
+            if !p.exists() {
+                let _ = std::fs::create_dir_all(&save);
+                if let Err(e) = std::fs::write(&p, data) {
+                    eprintln!("warning: {}: {e}", p.display());
+                }
+            }
+        }
+    }
     rt.files.save_dir = save;
     // config.toml (bindings, display, fixes); scripted runs keep the original behaviour.
     if !scripted {
