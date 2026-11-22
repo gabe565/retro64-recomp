@@ -58,6 +58,7 @@ pub const BUGATRON: Game = Game {
         enter_from: 12.0,
     }),
     // F3 cycles Normal → Hard → Easy, writing the labels at 0x437e60...
+    screen_list: None,
     difficulty: Some(Difficulty {
         value: 0x4370e4,
         levels: &[(4.0, "NORMAL"), (1.0, "HARD"), (8.0, "EASY")],

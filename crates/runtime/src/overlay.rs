@@ -84,6 +84,9 @@ pub struct Overlay {
     capture: bool,
     /// The volumes changed: apply them through the game once it resumes.
     apply_volumes: bool,
+    /// High scores were chosen: go there through the game once it resumes
+    /// (`ScreenList`).
+    go_to_high_scores: bool,
     /// The game's pause flag before the overlay opened.
     was_paused: bool,
     /// The last frame shown, which the overlay is drawn over.
@@ -110,7 +113,7 @@ fn items(rt: &Runtime) -> Vec<Item> {
 
 /// The main page's rows: those for the features the game's profile has.
 fn main_items(g: &Game) -> Vec<Item> {
-    let high_scores = g.screens.as_ref().is_some_and(|s| s.high_scores.is_some());
+    let high_scores = g.screens.as_ref().is_some_and(|s| s.high_scores.is_some()) || g.screen_list.is_some();
     [
         (Item::Resume, true),
         (Item::Difficulty, g.difficulty.is_some()),
@@ -176,8 +179,28 @@ pub(crate) fn after_flip(rt: &mut Runtime, front: u32) {
 }
 
 /// From `PeekMessageA`, where game code may run: apply volumes changed in the
-/// overlay with the game's own function, as its volume keys do.
+/// overlay with the game's own function, as its volume keys do, and start the way
+/// to the high scores (`ScreenList`).
 pub(crate) fn deliver(cpu: &mut crate::Cpu) {
+    let go = crate::with_rt(|rt| {
+        let l = rt.game.screen_list.as_ref()?;
+        std::mem::take(&mut rt.overlay.go_to_high_scores).then_some((l.current, l.last, l.fades, l.start_fade, l.fade_kind))
+    });
+    if let Some((current, last, fades, start_fade, kind)) = go {
+        // As the game's high scores key: the screen before the last, then the fade
+        // out of this one (its code calls start_fade, then sets the kind).
+        crate::with_rt(|rt| {
+            let last = rt.mem.r32(last);
+            let before = rt.mem.r32(last + 4);
+            rt.mem.w32(current, if before != 0 { before } else { last });
+        });
+        cpu.ecx = fades;
+        crate::call_guest(cpu, start_fade, &[]);
+        crate::with_rt(|rt| {
+            let fade = rt.mem.r32(fades);
+            rt.mem.w32(fade + 8, kind);
+        });
+    }
     let apply = crate::with_rt(|rt| {
         let v = rt.game.volumes.as_ref()?;
         (std::mem::take(&mut rt.overlay.apply_volumes) && rt.mem.r32(v.sound_on) != 0)
@@ -378,8 +401,13 @@ fn input(rt: &mut Runtime, i: Input) {
 /// Bugatron, main loop 0x40bc4d): the next screen's config name, the fade-out state
 /// with its camera history at its start value, and its start time. Gameplay is a
 /// screen too, so a game in progress is torn down by the game's own transition
-/// (and, as when quitting it, its score is not recorded).
+/// (and, as when quitting it, its score is not recorded). With a `ScreenList`, the
+/// game's code is called for it once it resumes (`deliver`).
 fn show_high_scores(rt: &mut Runtime) {
+    if rt.game.screen_list.is_some() {
+        rt.overlay.go_to_high_scores = true;
+        return;
+    }
     let Some(s) = &rt.game.screens else { return };
     let Some(name) = s.high_scores else { return };
     for (i, &b) in name.as_bytes().iter().chain([&0]).enumerate() {
@@ -445,6 +473,9 @@ pub(crate) fn hide_loading_frame(rt: &Runtime) -> bool {
 /// Whether a screen is running (a menu, the high scores or gameplay), not a
 /// transition between screens.
 fn in_screen(rt: &Runtime) -> bool {
+    if let Some(l) = &rt.game.screen_list {
+        return rt.mem.r32(l.state) == l.running && rt.mem.r32(l.fades) == 0;
+    }
     rt.game.screens.as_ref().is_some_and(|s| rt.mem.r32(s.state) == s.running)
 }
 

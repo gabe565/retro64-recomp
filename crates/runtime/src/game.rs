@@ -29,6 +29,7 @@ pub struct Game {
     /// The game's pause flag (nonzero: paused). The overlay pauses the game with it.
     pub pause: Option<u32>,
     pub screens: Option<Screens>,
+    pub screen_list: Option<ScreenList>,
     pub difficulty: Option<Difficulty>,
     pub volumes: Option<Volumes>,
     /// A flag that shows the game's performance counters (nonzero: shown).
@@ -69,6 +70,26 @@ pub struct Screens {
     /// the next screen's camera starts, past the sign (overlay.rs `skip_loading`).
     pub skip_at: f32,
     pub enter_from: f32,
+}
+
+/// A game whose screens are a list it walks (Z-Ball), for high scores from the
+/// overlay. When a screen's exit fade ends, the game moves `current` to the next
+/// screen and loads it; the last screen is the high scores. The game's own high
+/// scores key sets `current` to the screen before the last and starts the fade.
+pub struct ScreenList {
+    /// The current screen and the last (pointers to list nodes; a node's second
+    /// word is the previous node).
+    pub current: u32,
+    pub last: u32,
+    /// The main loop's state, `running` while a screen runs.
+    pub state: u32,
+    pub running: u32,
+    /// The list of fades in progress (its first word: 0 when there are none), the
+    /// game's function that starts one (thiscall, `this` = the list), and the
+    /// value it then stores at +8 of the new fade.
+    pub fades: u32,
+    pub start_fade: u32,
+    pub fade_kind: u32,
 }
 
 /// The difficulty setting.
@@ -143,6 +164,7 @@ impl Game {
         font: None,
         pause: None,
         screens: None,
+        screen_list: None,
         difficulty: None,
         volumes: None,
         fps_flag: None,
