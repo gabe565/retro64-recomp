@@ -2,12 +2,11 @@
 //! an earlier version of Bugatron's engine: the same key table, pause, volume and
 //! text code at other addresses, found by matching it with Bugatron's.
 //!
-//! Its screens are a linked list (current screen 0x721b68) rather than Bugatron's
-//! fade-out and loading states, so the runtime's screen features (high scores from
-//! the overlay, skipping the loading screen) are not available for it.
+//! Its screens are a list it walks rather than Bugatron's fade-out and loading
+//! states (`ScreenList`); it has no loading screen to skip.
 
 use bugatron_runtime::bindings::{sc, Action};
-use bugatron_runtime::game::{Difficulty, Font, Game, Volumes};
+use bugatron_runtime::game::{Difficulty, Font, Game, ScreenList, Volumes};
 
 pub const ZBALL: Game = Game {
     name: "Z-Ball",
@@ -40,6 +39,23 @@ pub const ZBALL: Game = Game {
     // updates or is drawn; the music plays on.
     pause: Some(0x756958),
     screens: None,
+    // One node per screen, built from CONFIG.XML.lev (0x419430): the intro, the
+    // title, the menus and every level of every set, then "LEVEL SET COMPLETED!"
+    // and last the high scores (name entry when there is a new one). The main loop
+    // (0x40f050) runs a screen in state 5; F2 on the title (0x40de40) sets the
+    // current node to the one before the last and starts the fade with the F1 flag
+    // (0x40e011: start_fade with ECX = the fade list, then kind 0x20). That needs
+    // the title or a menu; the overlay starts the fade itself, so it works in
+    // gameplay too, where the game ends as when it is lost.
+    screen_list: Some(ScreenList {
+        current: 0x721b68,
+        last: 0x721b70,
+        state: 0x756990,
+        running: 5,
+        fades: 0x756900,
+        start_fade: 0x405340,
+        fade_kind: 0x20,
+    }),
     // F3 (0x40dee0, in 0x40de40) cycles Normal → Hard → Easy: the ball speed 0x4370f0 is the
     // base 0x4370ec (0.0095) times 1, 1.5 (0x4352dc) or 0.66 (0x4353d8), the
     // float products below. It copies the name to 0x8a1090, which the title
