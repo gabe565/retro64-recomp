@@ -64,6 +64,11 @@ struct Args {
     #[arg(long, value_name = "DIR")]
     save: Option<PathBuf>,
 
+    /// Run without sound: no audio device is opened (the game's audio runs as usual,
+    /// unheard; --record-audio still records it)
+    #[arg(long)]
+    mute: bool,
+
     /// Start in a window instead of fullscreen (Alt+Enter or Ctrl+Cmd+F toggles)
     #[arg(long, help_heading = "Display")]
     windowed: bool,
@@ -210,6 +215,7 @@ pub fn run(t: &Title) -> ! {
     rt.user.ignore_host_input = scripted;
     rt.user.host_fullscreen = !windowed && !scripted;
     rt.user.run_in_background = args.run_in_background;
+    rt.fmod.output = !args.mute;
     match (&data, pack) {
         (Some(d), _) => eprintln!("game folder: {}", d.display()),
         (None, Some(p)) => eprintln!("game folder: in memory ({} files)", p.len()),

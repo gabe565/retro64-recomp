@@ -161,6 +161,9 @@ pub(crate) fn pace(rt: &mut crate::Runtime) {
 pub(crate) fn vblank_wait(rt: &mut crate::Runtime) {
     if let Some(c) = rt.clock.cadence.as_mut() {
         c.vblank();
+    }
+    crate::fmod::mix_unheard(rt);
+    if let Some(c) = rt.clock.cadence.as_mut() {
         if rt.clock.stop_after_vblanks.is_some_and(|n| c.vblanks >= n) {
             eprintln!("stopping after {} vertical blanks", c.vblanks);
             if let Some(p) = rt.audio_record_path.clone() {

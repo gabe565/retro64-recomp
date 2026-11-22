@@ -35,11 +35,14 @@ pub struct Fmod {
     device: Option<Device>,
     /// Sample and song handles → file names (diagnostics).
     pub names: HashMap<u32, String>,
+    /// Without an audio device (`output` off): the virtual time of FSOUND_Init and
+    /// the frames mixed since, so a recording still gets the mix (`mix_unheard`).
+    unheard: Option<(u128, u64)>,
 }
 
 impl Default for Fmod {
     fn default() -> Self {
-        Fmod { initialised: false, output: true, mixer: Arc::new(Mutex::new(Mixer::new(44100, 32))), device: None, names: HashMap::new() }
+        Fmod { initialised: false, output: true, mixer: Arc::new(Mutex::new(Mixer::new(44100, 32))), device: None, names: HashMap::new(), unheard: None }
     }
 }
 
@@ -151,6 +154,8 @@ pub(crate) fn call(rt: &mut Runtime, name: &str, arg: &dyn Fn(u32) -> u32) -> Op
                     }
                 }
                 rt.fmod.initialised = true;
+                let now = rt.clock.cadence.as_ref().map(|c| c.now_ns());
+                rt.fmod.unheard = now.filter(|_| rt.fmod.device.is_none()).map(|t| (t, 0));
                 (1, 3)
             }
         }
@@ -165,6 +170,7 @@ pub(crate) fn call(rt: &mut Runtime, name: &str, arg: &dyn Fn(u32) -> u32) -> Op
             }
             rt.fmod.mixer().stop_all();
             rt.fmod.initialised = false;
+            rt.fmod.unheard = None;
             (0, 0)
         }
         "_FSOUND_SetSFXMasterVolume@4" => {
@@ -289,6 +295,26 @@ pub(crate) fn call(rt: &mut Runtime, name: &str, arg: &dyn Fn(u32) -> u32) -> Op
         eprintln!("[fmod] flip {} {name}({}) = {:#x} {what}", rt.com.flips, a.join(", "), r.0);
     }
     Some(r)
+}
+
+/// Without an audio device, mix what is due by the virtual clock, unheard, while a
+/// recording is in progress (`--mute` with `--record-audio`); after every vertical
+/// blank. The device's callback does this otherwise.
+pub(crate) fn mix_unheard(rt: &mut Runtime) {
+    let Some((start, mixed)) = rt.fmod.unheard else { return };
+    let Some(now) = rt.clock.cadence.as_ref().map(|c| c.now_ns()) else { return };
+    let mut m = rt.fmod.mixer();
+    if m.recording.is_none() {
+        return;
+    }
+    let due = (now.saturating_sub(start) * m.rate as u128 / 1_000_000_000) as u64;
+    let n = due.saturating_sub(mixed);
+    if n > 0 {
+        let mut buf = vec![0f32; n as usize * 2];
+        m.render(&mut buf);
+    }
+    drop(m);
+    rt.fmod.unheard = Some((start, mixed + n));
 }
 
 /// Write the recorded output as a 16-bit stereo WAV.
