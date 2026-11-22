@@ -19,6 +19,8 @@ use std::collections::{BTreeMap, BTreeSet, VecDeque};
 pub const BUG3D_GOLD_120A_SHA256: &str = "be581a63bccfc7dcc78a5c55cacc02e9f7aab9e5398540d2cc86a7aba758919e";
 /// Z-Ball Gold's `Z-Ball.exe` (March 2002).
 pub const ZBALL_GOLD_SHA256: &str = "599539b2cbf0b2235921b5ee486be9af4502c715eeb750c1aeed807d2e6f841c";
+/// Bugatron Worlds v1.01a's `BugatronWorlds.exe`, the free trial (September 2006).
+pub const BUGATRON_WORLDS_TRIAL_SHA256: &str = "08ed700fe1f40804444683a08a20740cdb660bcc7ffcc08eb6f3e804f3ca0e17";
 
 #[derive(Debug, Deserialize)]
 pub struct HintFunction {

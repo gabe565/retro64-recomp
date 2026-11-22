@@ -13,6 +13,8 @@ env:
   # SHA-256 of each game's zip (README.md).
   BUGATRON_SHA256: f3ee37e54c998eb8167c997f95b9dd4c81c482633c454bb2d4d5ba2f52e894f9
   ZBALL_SHA256: 2b733a874bcf16d2a301c27e64438739402e36c7216cb6a7aa8d0638381ebcad
+  # The Bugatron Worlds free trial's installer.
+  BUGATRON_WORLDS_SHA256: fb5ee4a6a877f382dab311f6569e119562a50d28a652c3f29148a7a8aba97e7b
 
 jobs:
   test:
@@ -44,6 +46,7 @@ jobs:
       # Each game is tested when its URL is set.
       BUGATRON_URL: ${{ secrets.BUGATRON_GAME_URL }}
       ZBALL_URL: ${{ secrets.ZBALL_GAME_URL }}
+      BUGATRON_WORLDS_URL: ${{ secrets.BUGATRON_WORLDS_GAME_URL }}
       BUGATRON_REQUIRE_GPU: ${{ matrix.require_gpu }}
       SDL_AUDIO_DRIVER: dummy
     defaults:
@@ -94,12 +97,22 @@ jobs:
           sha256: ${{ env.ZBALL_SHA256 }}
           file: Z-Ball_Win_EN_Full-Rip.zip
 
+      - name: Fetch Bugatron Worlds
+        if: env.BUGATRON_WORLDS_URL != ''
+        uses: ./.github/actions/fetch-game
+        with:
+          url: ${{ secrets.BUGATRON_WORLDS_GAME_URL }}
+          token: ${{ secrets.BUGATRON_WORLDS_GAME_TOKEN }}
+          sha256: ${{ env.BUGATRON_WORLDS_SHA256 }}
+          file: bugatron_worlds.exe
+
       # Everything, less the crates of games without a copy (they need it to build).
       - name: Test
         run: |
           skip=()
           if [ -z "$BUGATRON_URL" ]; then skip+=(--exclude bugatron --exclude bugatron-poc); fi
           if [ -z "$ZBALL_URL" ]; then skip+=(--exclude zball); fi
+          if [ -z "$BUGATRON_WORLDS_URL" ]; then skip+=(--exclude bugatron-worlds); fi
           ${{ matrix.run }} cargo test --release --workspace "${skip[@]}" ${{ matrix.features }}
 
       # Short scripted sessions. Each fails on any unimplemented import or method,
@@ -120,3 +133,12 @@ jobs:
           ${{ matrix.run }} cargo run --release -p zball ${{ matrix.features }} --
           --video-mode 640x480x32 --save target/ci-save-zball --frames 2500
           --input "700:F1,1300:F1,1900:move@600x100,2000:click@600x100,2100:move@600x300,2200:UP+,2300:UP-"
+
+      # Bugatron Worlds (free trial): past the trial screen (Maybe later), Start
+      # Game, Level 1, through How to Play, then steer and fire.
+      - name: Play Bugatron Worlds
+        if: env.BUGATRON_WORLDS_URL != ''
+        run: >
+          ${{ matrix.run }} cargo run --release -p bugatron-worlds ${{ matrix.features }} --
+          --save target/ci-save-worlds --frames 4500
+          --input "350:click@620x540,1100:click@400x443,1500:click@140x180,2100:click@735x578,2500:click@735x578,2900:click@735x578,3600:CTRL+,3600:LEFT+,3800:LEFT-,3900:RIGHT+,4200:RIGHT-,4400:CTRL-"

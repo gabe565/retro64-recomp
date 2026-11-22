@@ -209,6 +209,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "bugatron-worlds"
+version = "1.0.0"
+dependencies = [
+ "bugatron-build",
+ "bugatron-launcher",
+ "bugatron-recomp",
+ "bugatron-runtime",
+]
+
+[[package]]
 name = "bugatron-x86-cases"
 version = "1.0.0"
 dependencies = [
