@@ -380,7 +380,7 @@ fn set_stage(d: &mut Device, stage: usize, t: usize, v: u32) {
     }
 }
 
-fn device<'a>(rt: &'a mut Runtime, this: u32) -> &'a mut Device {
+fn device(rt: &mut Runtime, this: u32) -> &mut Device {
     rt.com.d3d.devices.get_mut(&this).unwrap_or_else(|| fatal(&format!("not a device: {this:#x}")))
 }
 

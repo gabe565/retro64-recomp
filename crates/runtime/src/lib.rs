@@ -83,6 +83,9 @@ mod no_generated_code {
 
 pub type Override = Box<dyn FnMut(&mut Cpu)>;
 
+/// Called after every Flip with the flip count (`Runtime::frame_hook`).
+pub type FrameHook = Box<dyn FnMut(&mut Runtime, u64)>;
+
 /// Virtual time sources. Proof-of-concept: replay queues for exact differential tests.
 #[derive(Default)]
 pub struct Clock {
@@ -132,7 +135,7 @@ pub struct Runtime {
     /// Where to write the recorded FMOD output when the run stops (`--record-audio`).
     pub audio_record_path: Option<std::path::PathBuf>,
     /// Called after every Flip with the flip count (diagnostics, scripted input).
-    pub frame_hook: Option<Box<dyn FnMut(&mut Runtime, u64)>>,
+    pub frame_hook: Option<FrameHook>,
     /// The game being run: its names, keys and addresses (game.rs; `set_game`).
     pub game: &'static game::Game,
     /// The settings overlay (overlay.rs).

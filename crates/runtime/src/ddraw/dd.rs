@@ -51,7 +51,9 @@ pub(super) fn call(cpu: &mut Cpu, iface: u32, _this: u32, slot: u32) -> bool {
             let (cb, ctx) = (arg(cpu, 1), arg(cpu, 2));
             // Both devices of the reference driver, in its order (software first).
             let none = [0u8; 0xfc];
-            let devices: [(&[u8; 16], &str, &str, &[u8; 0xfc], &[u8; 0xfc]); 2] = [
+            // (GUID, description, name, HAL caps, HEL caps)
+            type DeviceInfo<'a> = (&'a [u8; 16], &'a str, &'a str, &'a [u8; 0xfc], &'a [u8; 0xfc]);
+            let devices: [DeviceInfo; 2] = [
                 (&guid::IID_IDIRECT3DRGBDEVICE, "Microsoft Direct3D RGB Software Emulation", "RGB Emulation", &none, &caps::RGB_DEVICE_DESC),
                 (&guid::IID_IDIRECT3DHALDEVICE, "Microsoft Direct3D Hardware acceleration through Direct3D HAL", "Direct3D HAL", &caps::HAL_DEVICE_DESC, &none),
             ];

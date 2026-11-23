@@ -123,7 +123,7 @@ pub fn run(exe: &str, crate_dir: &str, s: &Scenario) {
             Check::PeekSame(f, a, b) if peek(f, a) != peek(f, b) => fail(format!("{a:#x} and {b:#x} differ after flip {f}")),
             Check::Audio(_) => {
                 let wav = std::fs::read(dir.join("audio.wav")).unwrap_or_else(|_| fail("no audio recording".into()));
-                let peak = wav[44..].chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]]).unsigned_abs()).max().unwrap_or(0);
+                let peak = wav[44..].as_chunks::<2>().0.iter().map(|&b| i16::from_le_bytes(b).unsigned_abs()).max().unwrap_or(0);
                 if peak < 64 {
                     fail(format!("the recorded audio is silent (peak {peak})"));
                 }

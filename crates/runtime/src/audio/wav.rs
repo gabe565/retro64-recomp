@@ -53,7 +53,7 @@ pub fn decode(d: &[u8]) -> Result<Pcm, String> {
     }
     let frames: Vec<f32> = match bits {
         8 => data.iter().map(|&b| (b as f32 - 128.0) / 128.0).collect(),
-        16 => data.chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]]) as f32 / 32768.0).collect(),
+        16 => data.as_chunks::<2>().0.iter().map(|&c| i16::from_le_bytes(c) as f32 / 32768.0).collect(),
         b => return Err(format!("{b}-bit PCM")),
     };
     Ok(Pcm { channels, rate, frames, loop_points })

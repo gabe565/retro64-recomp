@@ -548,7 +548,7 @@ pub(crate) fn import(cpu: &mut Cpu, name: &str) -> bool {
             if hwnd != MAIN_HWND { fatal("GetWindowRect on unknown window"); }
             with_rt(|rt| {
                 let w = rt.user.window.as_ref().unwrap();
-                for (i, v) in [w.x, w.y, w.x + w.w as i32, w.y + w.h as i32].into_iter().enumerate() { rt.mem.w32(r + 4 * i as u32, v as u32); }
+                for (i, v) in [w.x, w.y, w.x + w.w, w.y + w.h].into_iter().enumerate() { rt.mem.w32(r + 4 * i as u32, v as u32); }
             });
             ret(cpu, 1, 2);
         }
@@ -586,8 +586,8 @@ pub(crate) fn import(cpu: &mut Cpu, name: &str) -> bool {
             crate::overlay::deliver(cpu);
             let m = with_rt(|rt| {
                 let m = rt.user.queue.front().copied().or_else(|| rt.user.quit.map(|c| Msg { hwnd: 0, message: WM_QUIT, wparam: c, lparam: 0 }));
-                if m.is_some() && remove & 1 != 0 {
-                    if rt.user.queue.pop_front().is_none() { rt.user.quit = None; }
+                if m.is_some() && remove & 1 != 0 && rt.user.queue.pop_front().is_none() {
+                    rt.user.quit = None;
                 }
                 m
             });

@@ -110,7 +110,7 @@ pub fn decode(d: &[u8]) -> Result<(u32, u32, Vec<u8>), String> {
             return Err(format!("BMP: {bpp}-bit, compression {comp}, height {h} not emulated"));
         }
         let h = h as u32;
-        let stride = ((w * bpp + 31) / 32 * 4) as usize;
+        let stride = ((w * bpp).div_ceil(32) * 4) as usize;
         let colors = if bpp == 8 { match u32_at(46)? { 0 => 256, n => n as usize } } else { 0 };
         let palette = d.get(14 + hsize..14 + hsize + 4 * colors).ok_or("BMP: truncated palette")?;
         let mut out = Vec::with_capacity((w * h * 4) as usize);

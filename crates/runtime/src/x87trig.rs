@@ -229,7 +229,7 @@ fn atan_series(t: &BigInt, frac: u32) -> BigInt {
     let mut n = 1u32;
     while !power.is_zero() {
         let term = &power / BigInt::from(n);
-        if (n / 2) % 2 == 0 { sum += term } else { sum -= term }
+        if (n / 2).is_multiple_of(2) { sum += term } else { sum -= term }
         power = mul_fixed(&power, &t2, frac);
         n += 2;
     }
@@ -600,8 +600,10 @@ mod tests {
         }
     }
 
-    /// Hardware values from an AMD Ryzen 7 9800X3D (FSTP m64, CW 0x027F).
+    /// Hardware values from an AMD Ryzen 7 9800X3D (FSTP m64, CW 0x027F): exact
+    /// measured bit patterns, not approximations of library constants.
     #[test]
+    #[allow(clippy::approx_constant)]
     fn matches_hardware_reference() {
         use std::f64::consts::*;
         let cases: &[(TrigOp, f64, f64)] = &[
@@ -691,9 +693,11 @@ mod tests {
         }
         assert_eq!(val(TrigOp::Sin, -0.0).to_bits(), (-0.0f64).to_bits());
         assert_eq!(val(TrigOp::Cos, 0.0), 1.0);
-        assert_eq!(x87_trig(TrigOp::Sin, 9.223372036854775808e18), TrigOutcome::OutOfRange);
-        assert_eq!(x87_trig(TrigOp::Cos, -9.223372036854775808e18), TrigOutcome::OutOfRange);
-        assert!(matches!(x87_trig(TrigOp::Sin, 9.2233720368547748e18), TrigOutcome::Value { .. }));
+        // 2⁶³ is out of range; the largest binary64 below it is in.
+        let two63 = 2f64.powi(63);
+        assert_eq!(x87_trig(TrigOp::Sin, two63), TrigOutcome::OutOfRange);
+        assert_eq!(x87_trig(TrigOp::Cos, -two63), TrigOutcome::OutOfRange);
+        assert!(matches!(x87_trig(TrigOp::Sin, two63 - 1024.0), TrigOutcome::Value { .. }));
         // C1 for tiny arguments (hardware: sin(1e-20) rounds up in magnitude).
         assert!(matches!(x87_trig(TrigOp::Sin, 1.0e-20), TrigOutcome::Value { c1: true, inexact: true, .. }));
         assert!(matches!(x87_trig(TrigOp::Tan, 1.0e-20), TrigOutcome::Value { c1: false, .. }));
