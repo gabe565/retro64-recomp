@@ -12,6 +12,21 @@
 
 pub mod source;
 
+// The game's generated code defines these in its binary. This crate's own test
+// binary has none; ELF and Mach-O linkers drop the runtime's unused references
+// to them, MSVC's and MinGW's do not (as in the runtime's tests).
+#[cfg(test)]
+mod no_generated_code {
+    #[no_mangle]
+    extern "C" fn recomp_lookup(_addr: u32) -> Option<unsafe extern "C" fn(*mut bugatron_runtime::Cpu)> {
+        None
+    }
+    #[no_mangle]
+    extern "C" fn recomp_function_count() -> u32 {
+        0
+    }
+}
+
 use bugatron_runtime::files::Pack;
 use bugatron_runtime::game::Game;
 use bugatron_runtime::{call_guest, display, input_script, with_rt, Runtime};
