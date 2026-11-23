@@ -16,7 +16,7 @@ fn base(fvf: u32, vertices: Vec<f32>) -> Draw {
         indices: None,
         render: dev.render, stages: dev.stages, light_state: dev.light_state,
         world: IDENTITY, view: IDENTITY, projection: IDENTITY,
-        lights: vec![], material: None, textures: vec![None; 8],
+        lights: vec![], material: None, textures: [None; 8],
     }
 }
 
@@ -120,7 +120,7 @@ fn directional_lighting_ambient_emissive_and_specular() {
 #[test]
 fn specular_can_be_disabled_by_state_or_light_flag() {
     let mut d = lit_draw([0.0, 0.0, -1.0]);
-    d.render[rs::SPECULARENABLE] = 0;
+    std::rc::Rc::make_mut(&mut d.render)[rs::SPECULARENABLE] = 0;
     assert_eq!(process(&d).unwrap().vertices[0].specular[..3], [0.0; 3]);
     let mut d = lit_draw([0.0, 0.0, -1.0]);
     d.lights[0].flags |= 0x2; // D3DLIGHT_NO_SPECULAR
@@ -162,7 +162,7 @@ fn flat_shading_uses_the_first_vertex_of_each_triangle() {
     }
     let mut d = base(0x1e2, v);
     d.primitive = 6;
-    d.render[rs::SHADEMODE] = 1;
+    std::rc::Rc::make_mut(&mut d.render)[rs::SHADEMODE] = 1;
     let m = process(&d).unwrap();
     assert_eq!(m.indices.len(), 6);
     for tri in m.indices.chunks(3) {

@@ -7,6 +7,7 @@
 //! and clears are recorded, with a snapshot of the state they depend on, into
 //! [`State::commands`] for the renderer (crate::render).
 
+use std::rc::Rc;
 use super::{arg, iface, qi_result, read_guid, ret, Kind, DDERR_INVALIDPARAMS, DD_OK};
 use crate::{call_guest_stdcall, fatal, with_rt, Cpu, Runtime};
 
@@ -133,8 +134,9 @@ pub struct ViewportObj {
 #[derive(Debug, Clone)]
 pub struct Device {
     pub target: u32,
-    pub render: Vec<u32>,
-    pub stages: Vec<[u32; tss::COUNT]>,
+    /// Shared with the draws recorded since they last changed (copied on write).
+    pub render: Rc<Vec<u32>>,
+    pub stages: Rc<Vec<[u32; tss::COUNT]>>,
     pub light_state: [u32; ls::COUNT],
     pub world: Matrix,
     pub view: Matrix,
@@ -192,7 +194,7 @@ impl Device {
         light_state[ls::FOGDENSITY] = 1.0f32.to_bits();
         light_state[ls::COLORVERTEX] = 1;
         Device {
-            target, render: r, stages, light_state, world: IDENTITY, view: IDENTITY, projection: IDENTITY,
+            target, render: Rc::new(r), stages: Rc::new(stages), light_state, world: IDENTITY, view: IDENTITY, projection: IDENTITY,
             viewports: Vec::new(), current_viewport: 0, textures: [0; tss::STAGES], in_scene: false, begun: None,
         }
     }
@@ -217,8 +219,9 @@ pub struct Draw {
     pub flags: u32,
     pub vertices: Vec<u8>,
     pub indices: Option<Vec<u16>>,
-    pub render: Vec<u32>,
-    pub stages: Vec<[u32; tss::COUNT]>,
+    /// Shared with the draws recorded since they last changed (copied on write).
+    pub render: Rc<Vec<u32>>,
+    pub stages: Rc<Vec<[u32; tss::COUNT]>>,
     pub light_state: [u32; ls::COUNT],
     pub world: Matrix,
     pub view: Matrix,
@@ -228,7 +231,7 @@ pub struct Draw {
     /// Material selected by `D3DLIGHTSTATE_MATERIAL` (if any).
     pub material: Option<Material>,
     /// Texture surface per stage and its generation when recorded.
-    pub textures: Vec<Option<(u32, u64)>>,
+    pub textures: [Option<(u32, u64)>; tss::STAGES],
 }
 
 #[derive(Default)]
@@ -339,10 +342,10 @@ fn snapshot(rt: &Runtime, dev: &Device, primitive: u32, fvf: u32, flags: u32, ve
     if tex_objs[0] == 0 && dev.render[rs::TEXTUREHANDLE] != 0 {
         tex_objs[0] = st.texture_handles.get(&dev.render[rs::TEXTUREHANDLE]).copied().unwrap_or(0);
     }
-    let textures = tex_objs.iter().map(|&t| {
+    let textures = tex_objs.map(|t| {
         let s = *st.textures.get(&t)?;
         Some((s, rt.com.surfaces.get(&s)?.generation))
-    }).collect();
+    });
     Draw {
         target: dev.target,
         zbuffer: zbuffer_of(rt, dev.target),
@@ -361,6 +364,20 @@ pub(super) fn create_device(rt: &mut Runtime, target: u32) -> u32 {
     let dev = rt.new_com(iface::DEVICE3, Kind::Device);
     rt.com.d3d.devices.insert(dev, Device::new(target, has_z));
     dev
+}
+
+/// Set a render state, copying the shared array only if the value changes.
+fn set_render(d: &mut Device, i: usize, v: u32) {
+    if d.render[i] != v {
+        Rc::make_mut(&mut d.render)[i] = v;
+    }
+}
+
+/// Set a texture stage state, likewise.
+fn set_stage(d: &mut Device, stage: usize, t: usize, v: u32) {
+    if d.stages[stage][t] != v {
+        Rc::make_mut(&mut d.stages)[stage][t] = v;
+    }
 }
 
 fn device<'a>(rt: &'a mut Runtime, this: u32) -> &'a mut Device {
@@ -523,24 +540,24 @@ pub(super) fn call(cpu: &mut Cpu, iface_id: u32, this: u32, slot: u32) -> bool {
                 if s >= rs::COUNT {
                     return DDERR_INVALIDPARAMS;
                 }
-                d.render[s] = v;
+                set_render(d, s, v);
                 // Legacy states mirror onto texture stage 0, as Direct3D 6 does.
                 match s {
-                    rs::TEXTUREMAG => d.stages[0][tss::MAGFILTER] = legacy_filter(v).0,
+                    rs::TEXTUREMAG => set_stage(d, 0, tss::MAGFILTER, legacy_filter(v).0),
                     rs::TEXTUREMIN => {
                         let (min, mip) = legacy_filter(v);
-                        d.stages[0][tss::MINFILTER] = min;
-                        d.stages[0][tss::MIPFILTER] = mip;
+                        set_stage(d, 0, tss::MINFILTER, min);
+                        set_stage(d, 0, tss::MIPFILTER, mip);
                     }
                     rs::TEXTUREADDRESS => {
-                        d.stages[0][tss::ADDRESS] = v;
-                        d.stages[0][tss::ADDRESSU] = v;
-                        d.stages[0][tss::ADDRESSV] = v;
-                        d.render[rs::TEXTUREADDRESSU] = v;
-                        d.render[rs::TEXTUREADDRESSV] = v;
+                        set_stage(d, 0, tss::ADDRESS, v);
+                        set_stage(d, 0, tss::ADDRESSU, v);
+                        set_stage(d, 0, tss::ADDRESSV, v);
+                        set_render(d, rs::TEXTUREADDRESSU, v);
+                        set_render(d, rs::TEXTUREADDRESSV, v);
                     }
-                    rs::TEXTUREADDRESSU => d.stages[0][tss::ADDRESSU] = v,
-                    rs::TEXTUREADDRESSV => d.stages[0][tss::ADDRESSV] = v,
+                    rs::TEXTUREADDRESSU => set_stage(d, 0, tss::ADDRESSU, v),
+                    rs::TEXTUREADDRESSV => set_stage(d, 0, tss::ADDRESSV, v),
                     rs::TEXTUREHANDLE => d.textures[0] = 0,
                     _ => {}
                 }
@@ -626,7 +643,7 @@ pub(super) fn call(cpu: &mut Cpu, iface_id: u32, this: u32, slot: u32) -> bool {
                 let d = device(rt, this);
                 d.textures[stage] = t;
                 if stage == 0 {
-                    d.render[rs::TEXTUREHANDLE] = 0;
+                    set_render(d, rs::TEXTUREHANDLE, 0);
                 }
                 DD_OK
             });
@@ -644,12 +661,14 @@ pub(super) fn call(cpu: &mut Cpu, iface_id: u32, this: u32, slot: u32) -> bool {
         // SetTextureStageState(this, stage, type, value)
         (iface::DEVICE3, 40) => {
             let (stage, t, v) = (arg(cpu, 1) as usize, arg(cpu, 2) as usize, arg(cpu, 3));
-            let r = with_rt(|rt| match device(rt, this).stages.get_mut(stage).and_then(|s| s.get_mut(t)) {
-                Some(x) => {
-                    *x = v;
+            let r = with_rt(|rt| {
+                let d = device(rt, this);
+                if stage < d.stages.len() && t < tss::COUNT {
+                    set_stage(d, stage, t, v);
                     DD_OK
+                } else {
+                    DDERR_INVALIDPARAMS
                 }
-                None => DDERR_INVALIDPARAMS,
             });
             ret(cpu, r, 4);
         }
