@@ -1,6 +1,6 @@
 [package]
-name = "bugatron-recomp"
-description = "Static recompiler: 32-bit x86 (Bugatron Gold v1.20a) to portable C"
+name = "retro64-recomp"
+description = "Static recompiler: the 32-bit x86 code of Retro64's games to portable C"
 edition.workspace = true
 version.workspace = true
 license.workspace = true
@@ -14,5 +14,5 @@ serde_json.workspace = true
 sha2.workspace = true
 
 [[bin]]
-name = "bugatron-recomp"
+name = "retro64-recomp"
 path = "src/main.rs"

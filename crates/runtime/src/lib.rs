@@ -506,7 +506,7 @@ pub extern "C" fn rt_bad_jump(_c: *mut Cpu, site: u32, target: u32) {
 }
 
 /// An instruction the recompiler replaced with an explicit trap (see
-/// `bugatron_recomp::targets`). Never approximated: execution stops.
+/// `retro64_recomp::targets`). Never approximated: execution stops.
 #[no_mangle]
 pub extern "C" fn rt_trap(_c: *mut Cpu, site: u32, reason: *const std::os::raw::c_char) {
     let s = unsafe { std::ffi::CStr::from_ptr(reason) }.to_string_lossy();

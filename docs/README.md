@@ -38,7 +38,7 @@ Original game files live in `reference/` (gitignored) and are never modified. Ex
 | Crate | Purpose |
 |---|---|
 | `pe` | Minimal PE32 reader |
-| `recomp` | Static recompiler (x86 → C) and the `bugatron-recomp` CLI |
+| `recomp` | Static recompiler (x86 → C) and the `retro64-recomp` CLI |
 | `runtime` | Rust runtime plus the C machine model (`c/recomp.h`) |
 | `x86-cases` | Instruction-semantics regression cases (iced-x86 assembly + expectations) |
 | `x86-tests` | `cargo test -p bugatron-x86-tests`: runs the cases through the recompiler and compares with expectations and oracle fixtures |

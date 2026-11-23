@@ -81,7 +81,7 @@ fn main() {
         assert!(bytes.len() < 0x100);
         snippets.push((va, bytes));
     }
-    let out = bugatron_recomp::recompile_snippets(&snippets, 64);
+    let out = retro64_recomp::recompile_snippets(&snippets, 64);
     assert_eq!(out.stats.unimplemented.values().sum::<usize>(), 0, "{:?}", out.stats.unimplemented);
     let gen = PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("gen");
     std::fs::create_dir_all(&gen).unwrap();

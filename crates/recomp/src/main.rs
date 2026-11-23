@@ -1,10 +1,12 @@
-//! `bugatron-recomp`: translate the user's Bug3D.exe into C.
+//! `retro64-recomp`: translate a game's executable (for example Bug3D.exe) into C.
+//! The game programs' build scripts do this themselves (bugatron-build); this tool
+//! is for looking at a translation by hand.
 //!
 //! Usage:
-//!   bugatron-recomp --exe Bug3D.exe --hints recomp_hints.json --out DIR
+//!   retro64-recomp --exe Bug3D.exe --hints recomp_hints.json --out DIR
 //!                   [--root 0xADDR]... [--override 0xADDR]... [--all] [--stats-only]
 
-use bugatron_recomp::{recompile, Hints, Options, BUG3D_GOLD_120A_SHA256};
+use retro64_recomp::{recompile, Hints, Options, BUG3D_GOLD_120A_SHA256};
 use std::path::PathBuf;
 
 fn parse_addr(s: &str) -> u32 {
@@ -28,15 +30,21 @@ fn main() {
             "--override" => { opts.overrides.insert(parse_addr(&args.next().expect("--override needs an address"))); }
             "--all" => opts.all_functions = true,
             "--data-refs" => opts.include_data_referenced = true,
-            "--gold-traps" => opts.traps = bugatron_recomp::targets::gold_120a_exception_traps(),
+            "--gold-traps" => opts.traps = retro64_recomp::targets::gold_120a_exception_traps(),
             "--stats-only" => stats_only = true,
             other => panic!("unknown argument {other}"),
         }
     }
     let exe = std::fs::read(exe.expect("--exe required")).expect("read exe");
-    let sha = bugatron_recomp::sha256_hex(&exe);
-    if sha != BUG3D_GOLD_120A_SHA256 {
-        eprintln!("warning: executable sha256 {sha} is not Bugatron Gold v1.20a");
+    let sha = retro64_recomp::sha256_hex(&exe);
+    let known = [
+        (BUG3D_GOLD_120A_SHA256, "Bugatron Gold v1.20a"),
+        (retro64_recomp::ZBALL_GOLD_SHA256, "Z-Ball Gold"),
+        (retro64_recomp::BUGATRON_WORLDS_TRIAL_SHA256, "Bugatron Worlds v1.01a (free trial)"),
+    ];
+    match known.iter().find(|(h, _)| *h == sha) {
+        Some((_, name)) => eprintln!("executable: {name}"),
+        None => eprintln!("warning: executable sha256 {sha} is not one of the known games"),
     }
     let hints: Hints = serde_json::from_slice(&std::fs::read(hints.expect("--hints required")).expect("read hints")).expect("parse hints");
     let result = recompile(&exe, &hints, &opts).unwrap_or_else(|e| { eprintln!("{e}"); std::process::exit(1) });

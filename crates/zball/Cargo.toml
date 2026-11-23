@@ -15,7 +15,7 @@ bugatron-scenario.workspace = true
 
 [build-dependencies]
 bugatron-build.workspace = true
-bugatron-recomp.workspace = true
+retro64-recomp.workspace = true
 
 [features]
 # Build the whole game folder into the binary, for a single-file test build. The

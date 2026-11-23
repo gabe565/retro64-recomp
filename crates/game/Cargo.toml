@@ -16,7 +16,7 @@ sha2.workspace = true
 
 [build-dependencies]
 bugatron-build.workspace = true
-bugatron-recomp.workspace = true
+retro64-recomp.workspace = true
 
 [features]
 # Build the whole game folder (Bug3D.exe and its assets, from the folder of the

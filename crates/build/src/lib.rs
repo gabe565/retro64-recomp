@@ -10,7 +10,7 @@
 //! `GAME_BUILT_FROM` (a last-resort place to find the game, for `cargo run`), and
 //! writes `OUT_DIR/pack.rs` (the `embed-game` feature's files; empty without it).
 
-use bugatron_recomp::{recompile, Hints, Options};
+use retro64_recomp::{recompile, Hints, Options};
 use bugatron_unpack::{exe_of, unpack, Unpacked};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -64,7 +64,7 @@ pub fn build(t: Target) {
             exe_of(files, t.exe_name).unwrap_or_else(|| panic!("{} does not contain {}", exe_path.display(), t.exe_name)).to_vec()
         }
     };
-    let sha = bugatron_recomp::sha256_hex(&exe);
+    let sha = retro64_recomp::sha256_hex(&exe);
     assert_eq!(sha, t.sha256, "{} is not {}", var("EXE"), t.title);
     // The binary checks the executable it is given at run time against the one it was built from.
     println!("cargo:rustc-env=GAME_EXE_SHA256={}", t.sha256);

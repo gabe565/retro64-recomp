@@ -115,9 +115,9 @@ version = "1.0.0"
 dependencies = [
  "bugatron-build",
  "bugatron-launcher",
- "bugatron-recomp",
  "bugatron-runtime",
  "bugatron-scenario",
+ "retro64-recomp",
  "sha2 0.10.9",
 ]
 
@@ -126,9 +126,9 @@ name = "bugatron-build"
 version = "1.0.0"
 dependencies = [
  "bugatron-pe",
- "bugatron-recomp",
  "bugatron-unpack",
  "cc",
+ "retro64-recomp",
  "serde_json",
 ]
 
@@ -145,17 +145,6 @@ dependencies = [
 [[package]]
 name = "bugatron-pe"
 version = "1.0.0"
-
-[[package]]
-name = "bugatron-recomp"
-version = "1.0.0"
-dependencies = [
- "bugatron-pe",
- "iced-x86",
- "serde",
- "serde_json",
- "sha2 0.10.9",
-]
 
 [[package]]
 name = "bugatron-runtime"
@@ -180,11 +169,11 @@ dependencies = [
 name = "bugatron-runtime-tests"
 version = "1.0.0"
 dependencies = [
- "bugatron-recomp",
  "bugatron-runtime",
  "bugatron-x86-cases",
  "bugatron-xmp-sys",
  "cc",
+ "retro64-recomp",
 ]
 
 [[package]]
@@ -209,9 +198,9 @@ version = "1.0.0"
 dependencies = [
  "bugatron-build",
  "bugatron-launcher",
- "bugatron-recomp",
  "bugatron-runtime",
  "bugatron-scenario",
+ "retro64-recomp",
 ]
 
 [[package]]
@@ -234,10 +223,10 @@ dependencies = [
 name = "bugatron-x86-tests"
 version = "1.0.0"
 dependencies = [
- "bugatron-recomp",
  "bugatron-runtime",
  "bugatron-x86-cases",
  "cc",
+ "retro64-recomp",
  "serde_json",
 ]
 
@@ -972,6 +961,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
 
 [[package]]
+name = "retro64-recomp"
+version = "1.0.0"
+dependencies = [
+ "bugatron-pe",
+ "iced-x86",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+]
+
+[[package]]
 name = "rpkg-config"
 version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1500,9 +1500,9 @@ version = "1.0.0"
 dependencies = [
  "bugatron-build",
  "bugatron-launcher",
- "bugatron-recomp",
  "bugatron-runtime",
  "bugatron-scenario",
+ "retro64-recomp",
 ]
 
 [[package]]

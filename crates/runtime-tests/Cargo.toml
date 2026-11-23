@@ -11,7 +11,7 @@ bugatron-runtime.workspace = true
 bugatron-xmp-sys.workspace = true
 
 [build-dependencies]
-bugatron-recomp.workspace = true
+retro64-recomp.workspace = true
 bugatron-x86-cases.workspace = true
 cc.workspace = true
 

@@ -10,7 +10,7 @@ publish = false
 
 [workspace.dependencies]
 bugatron-pe = { path = "crates/pe" }
-bugatron-recomp = { path = "crates/recomp" }
+retro64-recomp = { path = "crates/recomp" }
 bugatron-runtime = { path = "crates/runtime" }
 bugatron-launcher = { path = "crates/launcher" }
 bugatron-build = { path = "crates/build" }

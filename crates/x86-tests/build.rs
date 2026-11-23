@@ -19,7 +19,7 @@ fn main() {
         assert!((bytes.len() as u32) < CASE_STRIDE, "case {} too large", c.name);
         snippets.push((va, bytes));
     }
-    let out = bugatron_recomp::recompile_snippets(&snippets, 64);
+    let out = retro64_recomp::recompile_snippets(&snippets, 64);
     let unimpl: usize = out.stats.unimplemented.values().sum();
     assert_eq!(unimpl, 0, "unimplemented instructions in regression cases: {:?}", out.stats.unimplemented);
     let gen = PathBuf::from(std::env::var("OUT_DIR").unwrap()).join("gen");

@@ -7,7 +7,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
-bugatron-recomp.workspace = true
+retro64-recomp.workspace = true
 bugatron-unpack.workspace = true
 serde_json.workspace = true
 cc.workspace = true

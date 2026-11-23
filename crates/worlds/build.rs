@@ -13,7 +13,7 @@ fn main() {
     bugatron_build::build(bugatron_build::Target {
         title: "Bugatron Worlds v1.01a (free trial)",
         exe_name: "BugatronWorlds.exe",
-        sha256: bugatron_recomp::BUGATRON_WORLDS_TRIAL_SHA256,
+        sha256: retro64_recomp::BUGATRON_WORLDS_TRIAL_SHA256,
         env_prefix: "BUGATRON_WORLDS_",
         default_sources: &["reference/bugatron_worlds.exe"],
         hints: "hints/bugatron-worlds-trial.json",
