@@ -93,6 +93,10 @@ fn main() {
             build.file(&p);
         }
     }
+    // The flag readers' fast paths against flags_get (tests/flags.rs).
+    let check = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("c/flags_check.c");
+    println!("cargo:rerun-if-changed={}", check.display());
+    build.file(&check);
     build.include(&gen).include(&rt_c).std("c99").warnings(false);
     if build.get_compiler().is_like_msvc() {
         build.flag("/fp:precise");

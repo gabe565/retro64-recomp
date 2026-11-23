@@ -160,14 +160,36 @@ static inline uint32_t flags_get(Cpu *c) {
 }
 
 static inline void flags_set_explicit(Cpu *c, uint32_t f) { c->fl_kind = FK_EXPLICIT; c->fl_res = f; }
+/* Single flags and conditions: direct for the common kinds, each the same as
+ * flags_get's (the x86 semantics suite checks them); flags_get otherwise. */
+static inline int32_t sxsz(uint32_t v, uint32_t size) {
+    return size == 8 ? (int32_t)(int8_t)v : size == 16 ? (int32_t)(int16_t)v : (int32_t)v;
+}
 static inline uint32_t get_cf(Cpu *c) {
-    if (c->fl_kind == FK_SUB) return (c->fl_a & szmask(c->fl_size)) < (c->fl_b & szmask(c->fl_size));
-    if (c->fl_kind == FK_LOGIC) return 0;
-    return flags_get(c) & F_CF;
+    uint32_t m = szmask(c->fl_size);
+    switch (c->fl_kind) {
+    case FK_SUB: return (c->fl_a & m) < (c->fl_b & m);
+    case FK_ADD: return (c->fl_res & m) < (c->fl_a & m);
+    case FK_LOGIC: return 0;
+    case FK_INC: case FK_DEC: return c->fl_cin ? 1u : 0u;
+    case FK_EXPLICIT: return c->fl_res & F_CF;
+    default: return flags_get(c) & F_CF;
+    }
 }
 
 /* Condition codes (Jcc/SETcc). */
-static inline int cc_o (Cpu *c) { return (flags_get(c) & F_OF) != 0; }
+static inline int cc_o (Cpu *c) {
+    uint32_t m = szmask(c->fl_size), msb = szmsb(c->fl_size);
+    uint32_t a = c->fl_a & m, b = c->fl_b & m, r = c->fl_res & m;
+    switch (c->fl_kind) {
+    case FK_SUB: return (((a ^ b) & (a ^ r)) & msb) != 0;
+    case FK_ADD: return (((a ^ r) & (b ^ r)) & msb) != 0;
+    case FK_LOGIC: return 0;
+    case FK_INC: return r == msb;
+    case FK_DEC: return r == msb - 1u;
+    default: return (flags_get(c) & F_OF) != 0;
+    }
+}
 static inline int cc_b (Cpu *c) { return get_cf(c) != 0; }
 static inline int cc_e (Cpu *c) {
     if (c->fl_kind != FK_EXPLICIT) return (c->fl_res & szmask(c->fl_size)) == 0;
@@ -178,9 +200,28 @@ static inline int cc_s (Cpu *c) {
     if (c->fl_kind != FK_EXPLICIT) return (c->fl_res & szmsb(c->fl_size)) != 0;
     return (c->fl_res & F_SF) != 0;
 }
-static inline int cc_p (Cpu *c) { return (flags_get(c) & F_PF) != 0; }
-static inline int cc_l (Cpu *c) { uint32_t f = flags_get(c); return ((f & F_SF) != 0) != ((f & F_OF) != 0); }
-static inline int cc_le(Cpu *c) { uint32_t f = flags_get(c); return (f & F_ZF) || (((f & F_SF) != 0) != ((f & F_OF) != 0)); }
+static inline int cc_p (Cpu *c) {
+    /* Every lazy kind takes PF from the result's low byte. */
+    if (c->fl_kind != FK_EXPLICIT) return parity8(c->fl_res & szmask(c->fl_size)) != 0;
+    return (c->fl_res & F_PF) != 0;
+}
+/* SF != OF: after CMP/SUB, a signed a < b; after a logic op (OF = 0), SF. */
+static inline int cc_l (Cpu *c) {
+    uint32_t sz = c->fl_size, m = szmask(sz);
+    switch (c->fl_kind) {
+    case FK_SUB: return sxsz(c->fl_a & m, sz) < sxsz(c->fl_b & m, sz);
+    case FK_LOGIC: return (c->fl_res & szmsb(sz)) != 0;
+    default: { uint32_t f = flags_get(c); return ((f & F_SF) != 0) != ((f & F_OF) != 0); }
+    }
+}
+static inline int cc_le(Cpu *c) {
+    uint32_t sz = c->fl_size, m = szmask(sz);
+    switch (c->fl_kind) {
+    case FK_SUB: return sxsz(c->fl_a & m, sz) <= sxsz(c->fl_b & m, sz);
+    case FK_LOGIC: return (c->fl_res & m) == 0 || (c->fl_res & szmsb(sz)) != 0;
+    default: { uint32_t f = flags_get(c); return (f & F_ZF) || (((f & F_SF) != 0) != ((f & F_OF) != 0)); }
+    }
+}
 
 /* ---- integer helpers ------------------------------------------------------ */
 static inline uint32_t op_add(Cpu *c, uint32_t sz, uint32_t a, uint32_t b) {
