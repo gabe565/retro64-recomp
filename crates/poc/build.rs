@@ -66,7 +66,11 @@ fn main() {
         "{{\"data_referenced_roots\":[{}],\"functions\":{},\"instructions\":{},\"jump_tables\":{},\"indirect_calls\":{},\"indirect_tail_jumps\":{},\"decode_errors\":{},\"unimplemented\":{}}}",
         data_refs.join(","), s.functions, s.instructions, s.jump_tables, s.indirect_calls, s.tail_calls, s.decode_errors,
         s.unimplemented.values().sum::<usize>())).unwrap();
-    build.include(&gen).include(&rt_c).std("c99").warnings(false);
+    build.include(&gen).include(&rt_c).warnings(false);
+    // C99 (MSVC has no switch for it; its default mode compiles this code).
+    if !build.get_compiler().is_like_msvc() {
+        build.std("c99");
+    }
     // Preserve x86 floating-point semantics: no FMA contraction, no fast-math.
     let tool = build.get_compiler();
     if tool.is_like_msvc() {

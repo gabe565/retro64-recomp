@@ -32,7 +32,11 @@ fn main() {
             build.file(&p);
         }
     }
-    build.include(&gen).include(&rt_c).std("c99").warnings(false);
+    build.include(&gen).include(&rt_c).warnings(false);
+    // C99 (MSVC has no switch for it; its default mode compiles this code).
+    if !build.get_compiler().is_like_msvc() {
+        build.std("c99");
+    }
     if build.get_compiler().is_like_msvc() {
         build.flag("/fp:precise");
     } else {

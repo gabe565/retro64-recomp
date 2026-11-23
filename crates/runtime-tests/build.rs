@@ -97,7 +97,11 @@ fn main() {
     let check = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").unwrap()).join("c/flags_check.c");
     println!("cargo:rerun-if-changed={}", check.display());
     build.file(&check);
-    build.include(&gen).include(&rt_c).std("c99").warnings(false);
+    build.include(&gen).include(&rt_c).warnings(false);
+    // C99 (MSVC has no switch for it; its default mode compiles this code).
+    if !build.get_compiler().is_like_msvc() {
+        build.std("c99");
+    }
     if build.get_compiler().is_like_msvc() {
         build.flag("/fp:precise");
     } else {
