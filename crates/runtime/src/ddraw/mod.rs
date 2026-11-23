@@ -9,7 +9,7 @@
 //! runtime borrowed, so dispatch here happens outside `with_rt`.
 
 use crate::{call_guest_stdcall, fatal, with_rt, Cpu, Runtime};
-use std::collections::HashMap;
+use crate::fastmap::FastMap;
 
 pub mod caps;
 pub mod d3d;
@@ -196,8 +196,8 @@ pub struct ComObj {
 /// Emulated DirectDraw/Direct3D state: COM objects, surfaces, and the display.
 #[derive(Default)]
 pub struct Registry {
-    pub objs: HashMap<u32, ComObj>,
-    pub surfaces: HashMap<u32, Surface>,
+    pub objs: FastMap<u32, ComObj>,
+    pub surfaces: FastMap<u32, Surface>,
     /// `SetCooperativeLevel` flags (`DDSCL_*`).
     pub coop: u32,
     /// Current guest display mode set with `SetDisplayMode` (width, height, bpp).

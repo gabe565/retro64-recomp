@@ -9,7 +9,6 @@
 
 use super::{arg, iface, qi_result, read_guid, ret, Kind, DDERR_INVALIDPARAMS, DD_OK};
 use crate::{call_guest_stdcall, fatal, with_rt, Cpu, Runtime};
-use std::collections::HashMap;
 
 pub const D3DERR_INVALIDVERTEXTYPE: u32 = 0x8876_0819;
 pub const D3DERR_SCENE_IN_SCENE: u32 = 0x8876_0b5b;
@@ -234,16 +233,16 @@ pub struct Draw {
 
 #[derive(Default)]
 pub struct State {
-    pub devices: HashMap<u32, Device>,
-    pub viewports: HashMap<u32, ViewportObj>,
-    pub lights: HashMap<u32, Light>,
-    pub materials: HashMap<u32, Material>,
+    pub devices: crate::fastmap::FastMap<u32, Device>,
+    pub viewports: crate::fastmap::FastMap<u32, ViewportObj>,
+    pub lights: crate::fastmap::FastMap<u32, Light>,
+    pub materials: crate::fastmap::FastMap<u32, Material>,
     /// `IDirect3DTexture2` object → surface object.
-    pub textures: HashMap<u32, u32>,
+    pub textures: crate::fastmap::FastMap<u32, u32>,
     /// Material handles (`D3DMATERIALHANDLE`) → material objects.
-    pub material_handles: HashMap<u32, u32>,
+    pub material_handles: crate::fastmap::FastMap<u32, u32>,
     /// Texture handles (`D3DTEXTUREHANDLE`) → texture objects.
-    pub texture_handles: HashMap<u32, u32>,
+    pub texture_handles: crate::fastmap::FastMap<u32, u32>,
     next_handle: u32,
     /// Commands recorded since the renderer last consumed them.
     pub commands: Vec<Command>,

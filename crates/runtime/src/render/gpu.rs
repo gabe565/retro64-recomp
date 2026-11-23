@@ -97,9 +97,9 @@ pub struct Gpu {
     pipelines: HashMap<PipelineKey, *mut SDL_GPUGraphicsPipeline>,
     samplers: HashMap<SamplerKey, *mut SDL_GPUSampler>,
     /// Render targets and Z-buffers by guest storage address.
-    storage: HashMap<u32, Storage>,
+    storage: crate::fastmap::FastMap<u32, Storage>,
     /// Texture surfaces by surface object.
-    textures: HashMap<u32, Texture>,
+    textures: crate::fastmap::FastMap<u32, Texture>,
     white: *mut SDL_GPUTexture,
     vbuf: (*mut SDL_GPUBuffer, u32),
     ibuf: (*mut SDL_GPUBuffer, u32),
@@ -150,7 +150,7 @@ impl Gpu {
             }
             let mut g = Gpu {
                 device, window, vs: null_mut(), fs: null_mut(),
-                pipelines: HashMap::new(), samplers: HashMap::new(), storage: HashMap::new(), textures: HashMap::new(),
+                pipelines: HashMap::new(), samplers: HashMap::new(), storage: Default::default(), textures: Default::default(),
                 white: null_mut(), vbuf: (null_mut(), 0), ibuf: (null_mut(), 0), overlay: None,
             };
             g.vs = g.shader(SDL_GPU_SHADERSTAGE_VERTEX, 0, 0);
@@ -567,7 +567,7 @@ fn flush_with(g: &mut Gpu, rt: &mut Runtime, commands: Vec<Command>) {
             g.textures.insert(obj, Texture { tex, w: s.w, h: s.h, generation: s.generation, keyed: p.keyed });
         }
     }
-    let mut first_use: HashMap<u32, bool> = HashMap::new(); // storage → first command is a full colour clear
+    let mut first_use: crate::fastmap::FastMap<u32, bool> = Default::default(); // storage → first command is a full colour clear
     for c in &commands {
         let (target, full_clear) = match c {
             Command::Clear { target, rects, flags, .. } => {

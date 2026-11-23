@@ -24,6 +24,7 @@ pub mod ddraw;
 pub mod devil;
 pub mod dialog;
 pub mod display;
+pub mod fastmap;
 pub mod files;
 pub mod game;
 pub mod gamepad;
@@ -106,7 +107,7 @@ pub struct Diagnostics {
     /// Calls made by name (tests) rather than through the import table.
     pub named_import_calls: BTreeMap<String, u64>,
     /// COM calls per (interface id, vtable slot).
-    pub com_counts: HashMap<(u32, u32), u64>,
+    pub com_counts: fastmap::FastMap<(u32, u32), u64>,
     pub host_to_guest_calls: u64,
     pub guest_indirect_targets: BTreeMap<u32, u64>,
     pub guest_indirect_sites: BTreeMap<u32, std::collections::BTreeSet<u32>>,
