@@ -93,6 +93,8 @@ fn main() {
     let report = Rc::new(RefCell::new(Report::default()));
     REFERENCE_X87.with(|r| *r.borrow_mut() = json!({"probe": reference.x87_probe, "control_word_histogram": reference.cw_hist}));
 
+    // The report lists the guest-to-guest indirect call sites.
+    bugatron_runtime::RECORD_INDIRECT.store(true, std::sync::atomic::Ordering::Relaxed);
     let mut rt = Runtime::load(&exe).expect("load");
     println!("guest base {:p}; translated functions: {}", rt.mem.base(), Runtime::function_count());
     pre_run_memory_checks(&rt, &report);

@@ -519,8 +519,15 @@ pub extern "C" fn rt_div_error(_c: *mut Cpu, site: u32) {
 
 /// Guest-to-guest indirect call (function pointer, vtable, or tail jump) reached
 /// translated code. Recorded so tests can show real indirect dispatch.
+/// Record guest-to-guest indirect calls in `Diagnostics` (the proof of concept's
+/// report); off otherwise, as the games make them constantly.
+pub static RECORD_INDIRECT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 #[no_mangle]
 pub extern "C" fn rt_note_indirect(target: u32, site: u32) {
+    if !RECORD_INDIRECT.load(std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
     RT.with(|r| {
         if let Ok(mut g) = r.try_borrow_mut() {
             if let Some(rt) = g.as_mut() {
