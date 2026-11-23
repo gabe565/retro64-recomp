@@ -85,6 +85,12 @@ pub fn run(exe: &str, crate_dir: &str, s: &Scenario) {
     let frame = |f: u64| -> Vec<u8> {
         std::fs::read(dir.join("frames").join(format!("frame-{f:05}.png"))).unwrap_or_else(|_| fail(format!("no frame after flip {f} (did the run reach it?)")))
     };
+    // Without a GPU (some CI runners) the game runs but draws nothing: frame
+    // checks are skipped, the rest still apply.
+    let no_gpu = log.contains("no SDL3 GPU device available");
+    if no_gpu {
+        eprintln!("{}: no GPU device; frame checks skipped", s.name);
+    }
     let hashes_path = PathBuf::from(crate_dir).join("tests/frames.json");
     let platform = std::env::consts::OS;
     let read_hashes = || -> serde_json::Value { std::fs::read(&hashes_path).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or(serde_json::json!({})) };
@@ -92,6 +98,7 @@ pub fn run(exe: &str, crate_dir: &str, s: &Scenario) {
     let mut record = Vec::new();
     for c in s.checks {
         match *c {
+            Check::FrameSize(..) | Check::FrameHash(_) if no_gpu => {}
             Check::FrameSize(f, w, h) => {
                 let png = frame(f);
                 let size = (u32::from_be_bytes(png[16..20].try_into().unwrap()), u32::from_be_bytes(png[20..24].try_into().unwrap()));
