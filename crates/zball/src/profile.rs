@@ -6,7 +6,7 @@
 //! states (`ScreenList`); it has no loading screen to skip.
 
 use bugatron_runtime::bindings::{sc, Action};
-use bugatron_runtime::game::{Difficulty, Font, Game, ScreenList, Volumes};
+use bugatron_runtime::game::{Difficulty, Font, FrameWait, Game, ScreenList, Volumes};
 
 pub const ZBALL: Game = Game {
     name: "Z-Ball",
@@ -40,8 +40,9 @@ pub const ZBALL: Game = Game {
     // updates or is drawn; the music plays on.
     pause: Some(0x756958),
     screens: None,
-    // Its frames wait with Sleep, which takes virtual time without spinning.
-    frame_wait: None,
+    // Bugatron's frame wait (0x41b300): QPC (returning to 0x41b48b), Sleep(0),
+    // against the last frame's counter 0x8a2448 and the period 0x8a2460.
+    frame_wait: Some(FrameWait { site: 0x41b48b, last: 0x8a2448, period: 0x8a2460 }),
     // One node per screen, built from CONFIG.XML.lev (0x419430): the intro, the
     // title, the menus and every level of every set, then "LEVEL SET COMPLETED!"
     // and last the high scores (name entry when there is a new one). The main loop

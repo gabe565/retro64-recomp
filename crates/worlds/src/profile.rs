@@ -12,7 +12,7 @@
 //! in it (0x406470). So the first start gets prefs whose mode is missing.
 
 use bugatron_runtime::bindings::{sc, Action};
-use bugatron_runtime::game::Game;
+use bugatron_runtime::game::{FrameWait, Game};
 
 /// The first start's prefs (see `first_run_saves`).
 const PREFS: [u8; 32] = {
@@ -60,6 +60,9 @@ pub const TRIAL: Game = Game {
         Action { id: "frame_time", label: "Show FPS", key: sc::DELETE, defaults: &["Delete"] },
     ],
     bindings_note: "Space always fires and can't be rebound: high-score names use it.",
+    // Bugatron's frame wait (0x4225a0): QPC (returning to 0x422747), Sleep(0),
+    // against the last frame's counter 0x1227160 and the period 0x1227168.
+    frame_wait: Some(FrameWait { site: 0x422747, last: 0x1227160, period: 0x1227168 }),
     ..Game::NONE
 };
 
