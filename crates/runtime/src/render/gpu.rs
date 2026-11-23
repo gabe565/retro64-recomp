@@ -534,22 +534,20 @@ fn flush_with(g: &mut Gpu, rt: &mut Runtime, commands: Vec<Command>) {
             prepared.push(None);
             continue;
         };
-        let mesh = match tnl::process(d) {
-            Ok(m) => m,
-            Err(e) => fatal(&format!("draw: {e}")),
-        };
+        let (first_index, base_vertex) = (indices.len() as u32, verts.len() as i32);
+        if let Err(e) = tnl::process_into(d, &mut verts, &mut indices) {
+            fatal(&format!("draw: {e}"));
+        }
         let (uniforms, pipeline, sampler, keyed) = prepare(d);
         let v = d.viewport;
         prepared.push(Some(Prepared {
             pipeline, sampler, keyed, uniforms,
             texture: d.textures[0].map(|(s, _)| s),
             viewport: SDL_GPUViewport { x: v.x as f32, y: v.y as f32, w: v.w as f32, h: v.h as f32, min_depth: 0.0, max_depth: 1.0 },
-            first_index: indices.len() as u32,
-            count: mesh.indices.len() as u32,
-            base_vertex: verts.len() as i32,
+            first_index,
+            count: indices.len() as u32 - first_index,
+            base_vertex,
         }));
-        verts.extend_from_slice(&mesh.vertices);
-        indices.extend_from_slice(&mesh.indices);
     }
 
     // 2. Uploads: changed textures, CPU-newer render targets, geometry.

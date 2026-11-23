@@ -213,14 +213,23 @@ fn light_direction(l: &Light, p: [f32; 3], view: &Matrix) -> Option<([f32; 3], f
 
 /// Transform, light and assemble one draw.
 pub fn process(d: &Draw) -> Result<Mesh, String> {
+    let mut mesh = Mesh { vertices: Vec::new(), indices: Vec::new() };
+    process_into(d, &mut mesh.vertices, &mut mesh.indices)?;
+    Ok(mesh)
+}
+
+/// `process`, appending to a frame's vertex and index buffers (indices count from
+/// the draw's first vertex), without buffers of its own.
+pub fn process_into(d: &Draw, out: &mut Vec<GpuVertex>, indices: &mut Vec<u32>) -> Result<(), String> {
     let lay = layout(d.fvf)?;
     let n = d.vertices.len() / lay.stride;
+    let (v0, i0) = (out.len(), indices.len());
     let world_view = mat_mul(&d.world, &d.view);
     let wvp = mat_mul(&world_view, &d.projection);
     let vp = &d.viewport;
     let (vw, vh) = (vp.w.max(1) as f32, vp.h.max(1) as f32);
     let lit = lay.normal.is_some() && lay.diffuse.is_none() && d.flags & 0x10 == 0 && !lay.pretransformed;
-    let mut out = Vec::with_capacity(n);
+    out.reserve(n);
     for i in 0..n {
         let b = &d.vertices[i * lay.stride..(i + 1) * lay.stride];
         let pos = [rd(b, 0), rd(b, 4), rd(b, 8)];
@@ -271,56 +280,61 @@ pub fn process(d: &Draw) -> Result<Mesh, String> {
             _pad: [0.0; 2],
         });
     }
-    let order: Vec<u32> = match &d.indices {
-        Some(ix) => ix.iter().map(|&i| i as u32).collect(),
-        None => (0..n as u32).collect(),
-    };
-    let tris = triangles(d.primitive, &order)?;
-    let mut mesh = Mesh { vertices: out, indices: tris };
-    if d.render[rs::SHADEMODE] == 1 {
-        flat_shade(&mut mesh);
+    match &d.indices {
+        Some(ix) => triangles_into(d.primitive, ix.len(), |k| ix[k] as u32, indices)?,
+        None => triangles_into(d.primitive, n, |k| k as u32, indices)?,
     }
-    Ok(mesh)
+    if d.render[rs::SHADEMODE] == 1 {
+        flat_shade(out, indices, v0, i0);
+    }
+    Ok(())
 }
 
 /// Expand a primitive to a triangle list with Direct3D winding.
 pub fn triangles(primitive: u32, order: &[u32]) -> Result<Vec<u32>, String> {
     let mut t = Vec::new();
+    triangles_into(primitive, order.len(), |k| order[k], &mut t)?;
+    Ok(t)
+}
+
+/// `triangles` for the `len` vertices `at(0..len)`, appended to `t`.
+fn triangles_into(primitive: u32, len: usize, at: impl Fn(usize) -> u32, t: &mut Vec<u32>) -> Result<(), String> {
     match primitive {
-        4 => t.extend_from_slice(&order[..order.len() / 3 * 3]),
+        4 => t.extend((0..len / 3 * 3).map(&at)),
         5 => {
             // TRIANGLESTRIP: odd triangles swap their first two vertices.
-            for i in 0..order.len().saturating_sub(2) {
+            for i in 0..len.saturating_sub(2) {
                 if i % 2 == 0 {
-                    t.extend_from_slice(&[order[i], order[i + 1], order[i + 2]]);
+                    t.extend_from_slice(&[at(i), at(i + 1), at(i + 2)]);
                 } else {
-                    t.extend_from_slice(&[order[i + 1], order[i], order[i + 2]]);
+                    t.extend_from_slice(&[at(i + 1), at(i), at(i + 2)]);
                 }
             }
         }
         6 => {
             // TRIANGLEFAN
-            for i in 1..order.len().saturating_sub(1) {
-                t.extend_from_slice(&[order[0], order[i], order[i + 1]]);
+            for i in 1..len.saturating_sub(1) {
+                t.extend_from_slice(&[at(0), at(i), at(i + 1)]);
             }
         }
         p => return Err(format!("primitive type {p} (points/lines) is not emulated")),
     }
-    Ok(t)
+    Ok(())
 }
 
-/// D3DSHADE_FLAT: every triangle takes its first vertex's colours.
-fn flat_shade(m: &mut Mesh) {
-    let mut verts = Vec::with_capacity(m.indices.len());
-    for tri in m.indices.chunks(3) {
-        let first = m.vertices[tri[0] as usize];
+/// D3DSHADE_FLAT: every triangle takes its first vertex's colours (the draw's
+/// vertices from `v0` and indices from `i0`, rebuilt one vertex per index).
+fn flat_shade(verts: &mut Vec<GpuVertex>, indices: &mut Vec<u32>, v0: usize, i0: usize) {
+    let own: Vec<GpuVertex> = verts.drain(v0..).collect();
+    let tris: Vec<u32> = indices.drain(i0..).collect();
+    for tri in tris.chunks(3) {
+        let first = own[tri[0] as usize];
         for &i in tri {
-            let mut v = m.vertices[i as usize];
+            let mut v = own[i as usize];
             v.diffuse = first.diffuse;
             v.specular = first.specular;
             verts.push(v);
         }
     }
-    m.indices = (0..verts.len() as u32).collect();
-    m.vertices = verts;
+    indices.extend(0..(verts.len() - v0) as u32);
 }
