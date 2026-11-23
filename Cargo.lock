@@ -147,19 +147,6 @@ name = "bugatron-pe"
 version = "1.0.0"
 
 [[package]]
-name = "bugatron-poc"
-version = "1.0.0"
-dependencies = [
- "bugatron-recomp",
- "bugatron-runtime",
- "bugatron-unpack",
- "cc",
- "crc32fast",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "bugatron-recomp"
 version = "1.0.0"
 dependencies = [

@@ -395,7 +395,7 @@ RecompFn recomp_lookup(uint32_t addr) {{\n\
 void recomp_call_indirect(Cpu *c, uint32_t target, uint32_t site) {{\n\
     if (target >= RT_THUNK_BASE && target < RT_THUNK_END) {{ rt_import(c, target); return; }}\n\
     RecompFn fn = recomp_lookup(target);\n\
-    if (fn) {{ rt_note_indirect(target, site); fn(c); return; }}\n\
+    if (fn) {{ fn(c); return; }}\n\
     rt_unresolved_call(c, target, site);\n\
 }}\n\n\
 uint32_t recomp_function_count(void) {{ return recomp_table_len; }}\n\nuint32_t recomp_flags_get(const Cpu *c) {{ return flags_get((Cpu *)c); }}\n",

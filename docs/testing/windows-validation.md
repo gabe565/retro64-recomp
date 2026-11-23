@@ -138,6 +138,8 @@ Purpose:
 
 ## Kit
 
+> This first kit ran the proof of concept (`bugatron-poc`), removed on 2026-11-23; the steps below record that run.
+
 Built by cross-compiling from this repository with MinGW (see the command at the end). The PoC executable contains code translated from your `Bug3D.exe`, so keep it for your own use.
 
 | File | SHA-256 |

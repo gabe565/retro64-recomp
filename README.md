@@ -195,7 +195,7 @@ cargo test --workspace
 BUGATRON_REQUIRE_GPU=1 cargo test -p bugatron-runtime-tests --test gpu   # fail rather than skip without a GPU
 ```
 
-Building the whole workspace needs every game. Without one, leave its crates out: `--exclude bugatron --exclude bugatron-poc`, `--exclude zball` or `--exclude bugatron-worlds`.
+Building the whole workspace needs every game. Without one, leave its crates out: `--exclude bugatron`, `--exclude zball` or `--exclude bugatron-worlds`.
 
 The tests cover:
 - x86 instruction semantics, checked against results recorded on real x86 hardware;

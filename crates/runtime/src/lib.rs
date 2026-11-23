@@ -112,8 +112,6 @@ pub struct Diagnostics {
     /// COM calls per (interface id, vtable slot).
     pub com_counts: fastmap::FastMap<(u32, u32), u64>,
     pub host_to_guest_calls: u64,
-    pub guest_indirect_targets: BTreeMap<u32, u64>,
-    pub guest_indirect_sites: BTreeMap<u32, std::collections::BTreeSet<u32>>,
 }
 
 pub struct Runtime {
@@ -522,25 +520,6 @@ pub extern "C" fn rt_div_error(_c: *mut Cpu, site: u32) {
 
 /// Guest-to-guest indirect call (function pointer, vtable, or tail jump) reached
 /// translated code. Recorded so tests can show real indirect dispatch.
-/// Record guest-to-guest indirect calls in `Diagnostics` (the proof of concept's
-/// report); off otherwise, as the games make them constantly.
-pub static RECORD_INDIRECT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
-#[no_mangle]
-pub extern "C" fn rt_note_indirect(target: u32, site: u32) {
-    if !RECORD_INDIRECT.load(std::sync::atomic::Ordering::Relaxed) {
-        return;
-    }
-    RT.with(|r| {
-        if let Ok(mut g) = r.try_borrow_mut() {
-            if let Some(rt) = g.as_mut() {
-                *rt.diag.guest_indirect_targets.entry(target).or_default() += 1;
-                rt.diag.guest_indirect_sites.entry(site).or_default().insert(target);
-            }
-        }
-    });
-}
-
 /// x87 behaviour the binary64 machine model cannot reproduce exactly
 /// (precision control other than 53 bits, non-nearest rounding in arithmetic,
 /// stack overflow, 80-bit memory operands, and FSIN/FCOS/FPTAN/FPATAN

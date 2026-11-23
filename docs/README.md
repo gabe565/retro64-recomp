@@ -28,7 +28,7 @@
 | `ghidra/RecompSurvey.java` | Headless Ghidra post-script that counts instruction classes, indirect branches, x87 use, and code outside functions |
 | `ghidra/R3dSurvey.java` | Headless Ghidra post-script that surveys the `r3d` wrapper boundary |
 | `ghidra/ExportRecompHints.java` | Headless Ghidra post-script that exports function entries and jump tables as recompiler hints |
-| `frida/*.js` | Runtime probes for the original game in the VM. `capture_poc_reference.js` produces `tests/fixtures/poc-reference.json`. |
+| `frida/*.js` | Runtime probes for the original game in the VM. |
 | `ghidra/ExportDecomp.java` | Headless Ghidra post-script that dumps every function's decompilation plus an index |
 
 Original game files live in `reference/` (gitignored) and are never modified. Extracted and decoded copies live in `_work/` (gitignored). No copyrighted game data is committed.
@@ -40,7 +40,6 @@ Original game files live in `reference/` (gitignored) and are never modified. Ex
 | `pe` | Minimal PE32 reader |
 | `recomp` | Static recompiler (x86 → C) and the `bugatron-recomp` CLI |
 | `runtime` | Rust runtime plus the C machine model (`c/recomp.h`) |
-| `poc` | Proof of concept: `cargo run -p bugatron-poc` (needs your `Bug3D.exe` and hints) |
 | `x86-cases` | Instruction-semantics regression cases (iced-x86 assembly + expectations) |
 | `x86-tests` | `cargo test -p bugatron-x86-tests`: runs the cases through the recompiler and compares with expectations and oracle fixtures |
 | `x86-oracle` | Runs the cases natively on a real 32-bit x86 CPU (Windows or Linux) |

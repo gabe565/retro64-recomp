@@ -141,6 +141,8 @@ The plan is differential testing. Drive the original and the recompiled build wi
 
 ## 5. Minimal proof of concept
 
+> The proof of concept (`crates/poc`, with its reference capture) was removed on 2026-11-23: the full game programs, their scripted scenarios, the runtime tests and the x86 semantics suite cover what it checked. This section and §7 record it as it was.
+
 **Goal:** prove the full pipeline on real game code: decoder, control flow, C emission, flags, x87, string instructions, the guest memory model, thread data through `fs:`, stdcall import thunks, COM dispatch through guest vtables, and host-to-guest calls. Graphics, audio, and the message loop are out of scope.
 
 **Deliverable:** `cargo run -p bugatron-poc -- --exe <path to Bug3D.exe> --data <app dir>` on macOS arm64, Linux x86-64, and Windows. The Windows arm64 build can be tested in the VM.

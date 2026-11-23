@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/pe", "crates/recomp", "crates/runtime", "crates/poc", "crates/game", "crates/zball", "crates/worlds", "crates/launcher", "crates/build", "crates/unpack", "crates/scenario", "crates/xmp-sys", "crates/runtime-tests", "crates/x86-cases", "crates/x86-tests", "crates/x86-oracle"]
+members = ["crates/pe", "crates/recomp", "crates/runtime", "crates/game", "crates/zball", "crates/worlds", "crates/launcher", "crates/build", "crates/unpack", "crates/scenario", "crates/xmp-sys", "crates/runtime-tests", "crates/x86-cases", "crates/x86-tests", "crates/x86-oracle"]
 
 [workspace.package]
 edition = "2021"
@@ -25,7 +25,6 @@ toml = "1"
 toml_edit = "0.25"
 lewton = "0.10"
 sha2 = "0.10"
-crc32fast = "1"
 cc = "1"
 sdl3-sys = { version = "0.7", features = ["use-pkg-config"] }
 naga = { version = "30", features = ["wgsl-in", "msl-out", "spv-out"] }

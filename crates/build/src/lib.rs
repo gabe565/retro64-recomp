@@ -1,6 +1,5 @@
 //! A game crate's build script: translates the user's copy of the game's executable
-//! and compiles the generated C (same pipeline as crates/poc/build.rs, with every
-//! function translated).
+//! and compiles the generated C, every function translated.
 //!
 //! Inputs (environment, prefixed with the game's `env_prefix`, e.g. `BUGATRON_`):
 //!   <PREFIX>EXE     the user's game (never committed): the executable, the installer,

@@ -114,7 +114,7 @@ jobs:
           SCENARIO_UPDATE: "1"
         run: |
           skip=()
-          if [ -z "$BUGATRON_URL" ]; then skip+=(--exclude bugatron --exclude bugatron-poc); fi
+          if [ -z "$BUGATRON_URL" ]; then skip+=(--exclude bugatron); fi
           if [ -z "$ZBALL_URL" ]; then skip+=(--exclude zball); fi
           if [ -z "$BUGATRON_WORLDS_URL" ]; then skip+=(--exclude bugatron-worlds); fi
           ${{ matrix.run }} cargo test --release --workspace "${skip[@]}" ${{ matrix.features }}

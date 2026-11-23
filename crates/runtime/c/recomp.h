@@ -48,7 +48,6 @@ void rt_bad_jump(Cpu *c, uint32_t site, uint32_t target);
 void rt_div_error(Cpu *c, uint32_t site);
 void rt_trap(Cpu *c, uint32_t site, const char *reason);
 void rt_x87_note(Cpu *c, uint32_t kind);
-void rt_note_indirect(uint32_t target, uint32_t site);
 
 #define RT_THUNK_BASE 0xF0000000u
 #define RT_THUNK_END  0xF1000000u
