@@ -9,7 +9,8 @@ publish.workspace = true
 [dependencies]
 bugatron-runtime.workspace = true
 bugatron-x86-cases.workspace = true
-serde.workspace = true
+
+[dev-dependencies]
 serde_json.workspace = true
 
 [build-dependencies]

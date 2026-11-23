@@ -183,7 +183,6 @@ dependencies = [
  "num-integer",
  "num-traits",
  "sdl3-sys",
- "serde",
  "spirv-cross2",
  "toml",
  "toml_edit",
@@ -252,7 +251,6 @@ dependencies = [
  "bugatron-runtime",
  "bugatron-x86-cases",
  "cc",
- "serde",
  "serde_json",
 ]
 

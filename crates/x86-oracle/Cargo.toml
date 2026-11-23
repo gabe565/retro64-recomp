@@ -6,11 +6,12 @@ version.workspace = true
 license.workspace = true
 publish.workspace = true
 
-[dependencies]
+# The oracle only does anything on 32-bit x86 (elsewhere main says so).
+[target.'cfg(target_arch = "x86")'.dependencies]
 bugatron-x86-cases.workspace = true
 
-[target.'cfg(windows)'.dependencies]
+[target.'cfg(all(windows, target_arch = "x86"))'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_System_Memory"] }
 
-[target.'cfg(unix)'.dependencies]
+[target.'cfg(all(unix, target_arch = "x86"))'.dependencies]
 libc.workspace = true
