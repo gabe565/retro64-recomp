@@ -115,10 +115,13 @@ pub fn build(t: Target) {
     } else {
         build.flag("-ffp-contract=off").flag("-fno-fast-math");
     }
-    // Generated code and the Rust runtime reference each other; link the whole
-    // archive so order-sensitive linkers (GNU ld) resolve both directions.
-    build.link_lib_modifier("+whole-archive");
+    // The archive is linked by the game program itself (its main.rs `#[link]`,
+    // whole-archive: the generated code and the runtime reference each other),
+    // not into every target of the crate: the scenario tests only run the
+    // program, and MSVC's linker refuses the generated code without the runtime.
+    build.cargo_metadata(false);
     build.compile("game_gen");
+    println!("cargo:rustc-link-search=native={}", std::env::var("OUT_DIR").unwrap());
     println!("cargo:rustc-env=GAME_GEN_STATS={}", gen.join("stats.json").display());
 }
 

@@ -3,6 +3,10 @@
 
 mod profile;
 
+// The translated game (bugatron-build), linked into this program only.
+#[link(name = "game_gen", kind = "static", modifiers = "+whole-archive")]
+extern "C" {}
+
 /// The game folder built into this program (`--features embed-game`; empty without it).
 mod embedded {
     include!(concat!(env!("OUT_DIR"), "/pack.rs"));
