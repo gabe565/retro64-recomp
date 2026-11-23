@@ -25,6 +25,11 @@
 //! (IE, result = the default QNaN "indefinite"); NaN propagates (quieted).
 //! All of these were confirmed on an AMD Ryzen 7 9800X3D (oracle kit 3).
 //!
+//! FSIN/FCOS/FPTAN take a fast path first (`fast`): the same steps in 128-bit
+//! integers and double-double arithmetic, kept only when the result's distance
+//! from every 64-bit rounding point proves the rounding (and C1) the same as
+//! here; otherwise, and outside its range, the arbitrary-precision model above.
+//!
 //! Validated against an AMD Ryzen 7 9800X3D (tests/fixtures/x86-oracle-*.json).
 //! The CPU's own polynomial can still differ by one ULP of the 64-bit result in
 //! rare cases; none has been observed so far (docs/recompilation-feasibility.md).
@@ -78,6 +83,14 @@ pub fn x87_trig(op: TrigOp, x: f64) -> TrigOutcome {
         let value = if op == TrigOp::Cos { 1.0 } else { x };
         return TrigOutcome::Value { value, c1: false, ext_inexact: false, inexact: false };
     }
+    if let Some(v) = fast::trig(op, x) {
+        return v;
+    }
+    exact_trig(op, x)
+}
+
+/// The arbitrary-precision model, for finite nonzero |x| < 2⁶³.
+pub(crate) fn exact_trig(op: TrigOp, x: f64) -> TrigOutcome {
     let frac = if x.abs() < 8.271806125530277e-25 { FRAC_TINY } else { FRAC_NORMAL }; // 2^-80
     let xf = to_fixed(x, frac);
     let half_pi = BigInt::from(PI66_SCALED) << (frac - 65);
@@ -340,6 +353,12 @@ fn round_fixed_to_x87(v: &BigInt, frac: u32) -> (f64, bool, bool) {
         m64 >>= 1;
         e64 += 1;
     }
+    let (f, ext_inexact) = round64_to_f64(m64, e64);
+    (if neg { -f } else { f }, c1, ext_inexact)
+}
+
+/// `m64 · 2^e64` (2^63 ≤ m64 < 2^64) rounded to binary64; and whether that was inexact.
+fn round64_to_f64(m64: u128, e64: i64) -> (f64, bool) {
     // value = m64 · 2^e64 with 2^63 ≤ m64 < 2^64. Round to binary64 (RNE),
     // including the subnormal range: keep 53 bits, or fewer so that the result's
     // exponent is not below 2^-1074.
@@ -368,7 +387,206 @@ fn round_fixed_to_x87(v: &BigInt, frac: u32) -> (f64, bool, bool) {
         assert!((1..2047).contains(&biased), "x87 trig result outside the binary64 range");
         f64::from_bits(((biased as u64) << 52) | (m & ((1u64 << 52) - 1)))
     };
-    (if neg { -f } else { f }, c1, ext_inexact)
+    (f, ext_inexact)
+}
+
+/// The fast path: exact argument reduction in i128 and the series in
+/// double-double (about 106 bits), accepted only when provably rounded as the
+/// exact model rounds.
+mod fast {
+    use super::{round64_to_f64, TrigOp, TrigOutcome, PI66_SCALED};
+
+    /// A double-double: `hi + lo`, |lo| ≤ ulp(hi)/2.
+    #[derive(Clone, Copy)]
+    struct Dd(f64, f64);
+
+    fn two_sum(a: f64, b: f64) -> Dd {
+        let s = a + b;
+        let bb = s - a;
+        Dd(s, (a - (s - bb)) + (b - bb))
+    }
+    fn split(a: f64) -> (f64, f64) {
+        let t = 134_217_729.0 * a; // 2^27 + 1
+        let hi = t - (t - a);
+        (hi, a - hi)
+    }
+    fn two_prod(a: f64, b: f64) -> Dd {
+        let p = a * b;
+        let (ah, al) = split(a);
+        let (bh, bl) = split(b);
+        Dd(p, ((ah * bh - p) + ah * bl + al * bh) + al * bl)
+    }
+    fn add(a: Dd, b: Dd) -> Dd {
+        let s = two_sum(a.0, b.0);
+        let t = two_sum(a.1, b.1);
+        let s = two_sum(s.0, s.1 + t.0);
+        two_sum(s.0, s.1 + t.1)
+    }
+    fn mul(a: Dd, b: Dd) -> Dd {
+        let p = two_prod(a.0, b.0);
+        two_sum(p.0, p.1 + (a.0 * b.1 + a.1 * b.0))
+    }
+    fn div(a: Dd, b: Dd) -> Dd {
+        let q1 = a.0 / b.0;
+        let r = add(a, neg(mul(b, Dd(q1, 0.0))));
+        let q2 = r.0 / b.0;
+        let r = add(r, neg(mul(b, Dd(q2, 0.0))));
+        let q3 = r.0 / b.0;
+        add(two_sum(q1, q2), Dd(q3, 0.0))
+    }
+    fn div_small(a: Dd, n: f64) -> Dd {
+        div(a, Dd(n, 0.0))
+    }
+    fn neg(a: Dd) -> Dd {
+        Dd(-a.0, -a.1)
+    }
+
+    /// Taylor terms kept: for |r| ≤ 0.79 the first left out is below 2⁻⁹⁷ of the
+    /// result, well inside the 2⁻⁹⁰ that `round` allows for.
+    const TERMS: usize = 13;
+
+    /// (−1)ᵏ/(2k+1)! and (−1)ᵏ/(2k)! for k < TERMS, as double-doubles.
+    fn coefficients() -> &'static ([Dd; TERMS], [Dd; TERMS]) {
+        static C: std::sync::OnceLock<([Dd; TERMS], [Dd; TERMS])> = std::sync::OnceLock::new();
+        C.get_or_init(|| {
+            let (mut sin, mut cos) = ([Dd(0.0, 0.0); TERMS], [Dd(0.0, 0.0); TERMS]);
+            let mut f = Dd(1.0, 0.0); // 1/n!
+            for n in 0..2 * TERMS {
+                if n > 0 {
+                    f = div_small(f, n as f64);
+                }
+                let signed = if (n / 2) % 2 == 0 { f } else { neg(f) };
+                if n % 2 == 0 { cos[n / 2] = signed } else { sin[n / 2] = signed }
+            }
+            (sin, cos)
+        })
+    }
+
+    /// sin r and cos r for |r| ≤ π/4 (Horner, in r²).
+    fn sin_cos(r: Dd, want_sin: bool, want_cos: bool) -> (Dd, Dd) {
+        let r2 = mul(r, r);
+        let (cs, cc) = coefficients();
+        let horner = |c: &[Dd; TERMS]| c.iter().rev().fold(Dd(0.0, 0.0), |acc, &k| add(mul(acc, r2), k));
+        let s = if want_sin { mul(r, horner(cs)) } else { Dd(0.0, 0.0) };
+        let c = if want_cos { horner(cc) } else { Dd(0.0, 0.0) };
+        (s, c)
+    }
+
+    /// x − k·π₆₆/2 for |x| ≥ 0.78 (exact: x and π₆₆/2 are integers at 2⁻⁶⁵ there),
+    /// as a double-double, with k mod 4.
+    fn reduce(x: f64) -> (Dd, u32) {
+        let bits = x.to_bits();
+        let mant = ((bits & ((1u64 << 52) - 1)) | (1u64 << 52)) as i128;
+        let e = ((bits >> 52) & 0x7ff) as i32 - 1075 + 65;
+        let xi = if e >= 0 { mant << e } else { mant >> -e };
+        let xi = if x < 0.0 { -xi } else { xi };
+        let p = PI66_SCALED as i128; // π₆₆/2 · 2⁶⁵
+        // k = round(x / (π₆₆/2)), ties to even.
+        let (q, rem) = (xi.div_euclid(p), xi.rem_euclid(p));
+        let k = match (2 * rem).cmp(&p) {
+            std::cmp::Ordering::Greater => q + 1,
+            std::cmp::Ordering::Less => q,
+            std::cmp::Ordering::Equal => q + (q & 1),
+        };
+        let ri = xi - k * p;
+        let quadrant = k.rem_euclid(4) as u32;
+        let r = {
+            let hi = ri as f64;
+            let lo = (ri - hi as i128) as f64;
+            let scale = 2f64.powi(-65);
+            Dd(hi * scale, lo * scale)
+        };
+        (r, quadrant)
+    }
+
+    pub(super) fn trig(op: TrigOp, x: f64) -> Option<TrigOutcome> {
+        let ax = x.abs();
+        // Tiny: the correction (x³/6, x²/2, x³/3) is below half a 64-bit ULP, so
+        // the result rounds to x (or 1), and C1 follows its sign.
+        if ax < 1.164_153_218_269_348_1e-10 {
+            // 2⁻³³
+            let (value, c1) = match op {
+                TrigOp::Sin => (x, true),
+                TrigOp::Tan => (x, false),
+                TrigOp::Cos => (1.0, true),
+            };
+            return Some(TrigOutcome::Value { value, c1, ext_inexact: false, inexact: true });
+        }
+        if ax >= 1.099_511_627_776e12 {
+            return None; // |x| ≥ 2⁴⁰
+        }
+        let (r, quadrant) = if ax < 0.78 {
+            // Below π₆₆/4 (≈ 0.785): k = 0, r = x exactly.
+            (Dd(x, 0.0), 0)
+        } else {
+            reduce(x)
+        };
+        let (need_sin, need_cos) = match (op, quadrant % 2) {
+            (TrigOp::Tan, _) => (true, true),
+            (TrigOp::Sin, 0) | (TrigOp::Cos, 1) => (true, false),
+            _ => (false, true),
+        };
+        let (s, c) = sin_cos(r, need_sin, need_cos);
+        let v = match (op, quadrant) {
+            (TrigOp::Sin, 0) => s,
+            (TrigOp::Sin, 1) => c,
+            (TrigOp::Sin, 2) => neg(s),
+            (TrigOp::Sin, _) => neg(c),
+            (TrigOp::Cos, 0) => c,
+            (TrigOp::Cos, 1) => neg(s),
+            (TrigOp::Cos, 2) => neg(c),
+            (TrigOp::Cos, _) => s,
+            (TrigOp::Tan, q) => if q % 2 == 0 { div(s, c) } else { neg(div(c, s)) },
+        };
+        round(v)
+    }
+
+    /// Round `v` to a 64-bit significand and then to binary64, as the exact model
+    /// does, if `v` is far enough (2⁻⁹⁰ relative) from every 64-bit rounding
+    /// point for its error not to matter; None otherwise.
+    fn round(v: Dd) -> Option<TrigOutcome> {
+        if v.0 == 0.0 || !v.0.is_finite() {
+            return None;
+        }
+        let neg = v.0 < 0.0;
+        let (hi, lo) = if neg { (-v.0, -v.1) } else { (v.0, v.1) };
+        // v · 2^(105 − E) as an integer, E = ⌊log2 hi⌋ (truncation error < 1 unit).
+        let e = ((hi.to_bits() >> 52) & 0x7ff) as i32 - 1023;
+        if e < -1000 {
+            return None;
+        }
+        let scale = 2f64.powi(105 - e);
+        let hi_i = (hi * scale) as i128; // exact: hi has 53 bits
+        let lo_i = (lo * scale).trunc() as i128;
+        let a = hi_i + lo_i;
+        if a <= 0 {
+            return None;
+        }
+        let bits = 128 - a.leading_zeros() as i32;
+        let sh = bits - 64;
+        if sh < 2 {
+            return None;
+        }
+        let rem = a & ((1i128 << sh) - 1);
+        let half = 1i128 << (sh - 1);
+        // Uncertainty: 2⁻⁹⁰ relative plus the truncation.
+        let err = (a >> 90) + 2;
+        let near = |p: i128| (rem - p).abs() <= err;
+        if near(0) || near(half) || near(2 * half) {
+            return None;
+        }
+        let up = rem > half;
+        let m64 = ((a >> sh) + up as i128) as u128;
+        let mut e64 = (e - 105 + sh) as i64;
+        let m64 = if m64 >> 64 != 0 {
+            e64 += 1;
+            m64 >> 1
+        } else {
+            m64
+        };
+        let (f, ext_inexact) = round64_to_f64(m64, e64);
+        Some(TrigOutcome::Value { value: if neg { -f } else { f }, c1: up, ext_inexact, inexact: true })
+    }
 }
 
 #[cfg(test)]
@@ -488,6 +706,53 @@ mod tests {
             assert_eq!(val(TrigOp::Tan, x), x, "tan({x})");
             assert_eq!(val(TrigOp::Cos, x), 1.0, "cos({x})");
         }
+    }
+
+    /// The fast path, where it answers, matches the arbitrary-precision model bit
+    /// for bit (value, C1, inexactness): across magnitudes, both signs, and right
+    /// next to multiples of π/2, where the reduction cancels most.
+    #[test]
+    fn fast_path_matches_the_exact_model() {
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        let n = if cfg!(debug_assertions) { 20_000 } else { 400_000 };
+        let (mut answered, mut declined) = (0u32, 0u32);
+        for i in 0..n {
+            let r = next();
+            let x = match i % 4 {
+                // Any magnitude from 2⁻⁴⁰ to 2⁴⁰.
+                0 | 1 => (((r >> 11) as f64) / (1u64 << 53) as f64 + 0.5) * 2f64.powi((r % 80) as i32 - 40),
+                // Next to k·π/2.
+                2 => {
+                    let k = (r % 2000) as f64;
+                    let base = k * std::f64::consts::FRAC_PI_2;
+                    f64::from_bits(base.to_bits().wrapping_add((r >> 40) % 64).wrapping_sub(32))
+                }
+                // Typical game angles.
+                _ => ((r >> 11) as f64) / (1u64 << 53) as f64 * 20.0 - 10.0,
+            };
+            let x = if r & (1 << 62) != 0 { -x } else { x };
+            if x == 0.0 || !x.is_finite() {
+                continue;
+            }
+            for op in [TrigOp::Sin, TrigOp::Cos, TrigOp::Tan] {
+                match fast::trig(op, x) {
+                    Some(f) => {
+                        answered += 1;
+                        assert_eq!(f, exact_trig(op, x), "{op:?}({x:e}) = {:#x}", x.to_bits());
+                    }
+                    None => declined += 1,
+                }
+            }
+        }
+        let rate = declined as f64 / (answered + declined) as f64;
+        println!("fast path: {answered} answered, {declined} declined ({:.4}%)", rate * 100.0);
+        assert!(answered > 0);
     }
 
     /// Cost check: `cargo test --release -p bugatron-runtime -- --ignored --nocapture`.
