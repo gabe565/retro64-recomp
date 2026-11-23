@@ -109,9 +109,13 @@ jobs:
       # Everything, less the crates of games without a copy (they need it to build).
       # Scenario frame hashes this platform lacks are recorded (SCENARIO_UPDATE)
       # and uploaded below; recorded ones are checked.
+      # One test at a time: on Linux and Windows the GPU is emulated in software,
+      # so each scenario plays for minutes, and several at once exhausted the
+      # Linux runner.
       - name: Test
         env:
           SCENARIO_UPDATE: "1"
+          RUST_TEST_THREADS: "1"
         run: |
           skip=()
           if [ -z "$BUGATRON_URL" ]; then skip+=(--exclude bugatron); fi
