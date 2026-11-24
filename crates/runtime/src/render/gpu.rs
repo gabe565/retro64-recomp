@@ -103,6 +103,8 @@ pub struct Gpu {
     white: *mut SDL_GPUTexture,
     vbuf: (*mut SDL_GPUBuffer, u32),
     ibuf: (*mut SDL_GPUBuffer, u32),
+    /// Fences of the frames submitted and maybe not finished (`flush`).
+    in_flight: std::collections::VecDeque<*mut SDL_GPUFence>,
     /// Settings overlay: its image, and the frame with the overlay drawn on it
     /// (both at the guest frame's size).
     overlay: Option<(*mut SDL_GPUTexture, *mut SDL_GPUTexture, u32, u32)>,
@@ -151,7 +153,7 @@ impl Gpu {
             let mut g = Gpu {
                 device, window, vs: null_mut(), fs: null_mut(),
                 pipelines: HashMap::new(), samplers: HashMap::new(), storage: Default::default(), textures: Default::default(),
-                white: null_mut(), vbuf: (null_mut(), 0), ibuf: (null_mut(), 0), overlay: None,
+                white: null_mut(), vbuf: (null_mut(), 0), ibuf: (null_mut(), 0), in_flight: Default::default(), overlay: None,
             };
             g.vs = g.shader(SDL_GPU_SHADERSTAGE_VERTEX, 0, 0);
             g.fs = g.shader(SDL_GPU_SHADERSTAGE_FRAGMENT, 1, 1);
@@ -664,14 +666,27 @@ fn flush_with(g: &mut Gpu, rt: &mut Runtime, commands: Vec<Command>) {
         if !pass.is_null() {
             SDL_EndGPURenderPass(pass);
         }
-        if !SDL_SubmitGPUCommandBuffer(cmd) {
-            sdl_err("SDL_SubmitGPUCommandBuffer");
+        let fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
+        if fence.is_null() {
+            sdl_err("SDL_SubmitGPUCommandBufferAndAcquireFence");
         }
         for tb in staging {
             SDL_ReleaseGPUTransferBuffer(g.device, tb);
         }
+        // At most a few frames in flight: nothing else waits for the GPU when the
+        // run is unpaced and offscreen, and a software GPU (lavapipe) falls behind,
+        // each queued frame holding its uploads, until memory runs out.
+        g.in_flight.push_back(fence);
+        while g.in_flight.len() > MAX_IN_FLIGHT {
+            let f = g.in_flight.pop_front().unwrap();
+            SDL_WaitForGPUFences(g.device, true, &f, 1);
+            SDL_ReleaseGPUFence(g.device, f);
+        }
     }
 }
+
+/// Frames that may be submitted to the GPU and not yet finished.
+const MAX_IN_FLIGHT: usize = 3;
 
 unsafe fn begin_pass(g: &Gpu, cmd: *mut SDL_GPUCommandBuffer, target: u32, z: Option<u32>, clear: Option<[f32; 4]>, clear_z: Option<f32>) -> *mut SDL_GPURenderPass {
     let ct = SDL_GPUColorTargetInfo {
