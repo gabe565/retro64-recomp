@@ -25,6 +25,8 @@ mod no_generated_code {
     extern "C" fn recomp_function_count() -> u32 {
         0
     }
+    #[no_mangle]
+    static mut recomp_mem: *mut u8 = std::ptr::null_mut();
 }
 
 use bugatron_runtime::files::Pack;
